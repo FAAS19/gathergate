@@ -40,6 +40,8 @@ export function NewRequestPage({
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initialTemplateId = searchParams.get("templateId");
+  const initialClientName = searchParams.get("clientName") || "";
+  const initialClientEmail = searchParams.get("clientEmail") || "";
 
   const [templates, setTemplates] = useState<TemplateDto[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
@@ -48,8 +50,8 @@ export function NewRequestPage({
   const [title, setTitle] = useState("");
   const [clientSubject, setClientSubject] = useState("");
   const [welcomeNote, setWelcomeNote] = useState("");
-  const [clientName, setClientName] = useState("");
-  const [clientEmail, setClientEmail] = useState("");
+  const [clientName, setClientName] = useState(initialClientName);
+  const [clientEmail, setClientEmail] = useState(initialClientEmail);
   const [dueAt, setDueAt] = useState("");
   const [cadence, setCadence] = useState("3");
   const [maxReminders, setMaxReminders] = useState("4");

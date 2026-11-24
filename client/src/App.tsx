@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useTheme } from "@/hooks/use-theme";
 import { apiJson, type SessionResponse } from "@/lib/api";
 import { ClientPortalPage } from "@/pages/client-portal-page";
+import { ClientsPage } from "@/pages/clients-page";
 import { DashboardPage } from "@/pages/dashboard-page";
 import { LoginPage } from "@/pages/login-page";
 import { NewRequestPage } from "@/pages/new-request-page";
@@ -79,6 +80,17 @@ function AppRoutes() {
         path="/"
         element={
           <DashboardPage
+            session={session}
+            onSessionRefresh={refreshSession}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+          />
+        }
+      />
+      <Route
+        path="/clients"
+        element={
+          <ClientsPage
             session={session}
             onSessionRefresh={refreshSession}
             theme={theme}

@@ -227,14 +227,27 @@ test("operator creates, customises, reviews via continuous preview, verifies ZIP
   await page.getByRole("button", { name: "Resume reminders" }).click();
   await expect(page.locator("tr").filter({ hasText: "Bulk Pause Test Pack" }).getByText("Paused")).toHaveCount(0);
 
-  // The outbox preview sandbox refusing axe's injected script confirms sandbox protection is active.
-  expect(
-    errors.filter((e) => !e.includes("frame is sandboxed and the 'allow-scripts' permission is not set"))
-  ).toEqual([]);
+  // 9. Clients directory & repeat request prefill + sidebar collapse toggle
+  await page.getByRole("link", { name: "Clients" }).click();
+  await expect(page).toHaveURL("/clients");
+  await expect(page.getByRole("heading", { name: "Clients" })).toBeVisible();
+  await page.locator("tr").filter({ hasText: "Maya Patel" }).click();
+  const drawer = page.getByRole("dialog");
+  await expect(drawer.getByText("FY26 Operator Review Pack")).toBeVisible();
+  await drawer.getByRole("link", { name: "New request" }).click();
+  await expect(page).toHaveURL(/\/requests\/new\?/);
+  await expect(page.getByLabel("Client name")).toHaveValue("Maya Patel");
+  await expect(page.getByLabel("Client email", { exact: true })).toHaveValue("maya+m2@client.test");
+
+  await page.getByRole("button", { name: "Collapse sidebar" }).click();
+  await expect(page.getByRole("button", { name: "Expand sidebar" })).toBeVisible();
+  await page.getByRole("button", { name: "Expand sidebar" }).click();
+
+  expect(errors).toEqual([]);
 });
 
 test("all 5 operator routes pass WCAG 2.2 AA in Light and Dark themes", async ({ page }, testInfo) => {
-  test.setTimeout(60_000);
+  test.setTimeout(75_000);
   const errors = trackErrors(page);
 
   const listRes = await page.request.get("/api/requests");
@@ -245,6 +258,10 @@ test("all 5 operator routes pass WCAG 2.2 AA in Light and Dark themes", async ({
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "Intake Requests" })).toBeVisible();
     await expectAccessible(page, testInfo, `dashboard-${themeLabel}`);
+
+    await page.goto("/clients");
+    await expect(page.getByRole("heading", { name: "Clients" })).toBeVisible();
+    await expectAccessible(page, testInfo, `clients-${themeLabel}`);
 
     await page.goto(`/requests/${sampleId}`);
     await expect(page.getByText("Checklist Items")).toBeVisible();

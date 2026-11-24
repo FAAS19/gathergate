@@ -12,12 +12,13 @@ import {
   Moon,
   Palette,
   Plus,
-  ShieldCheck,
+  SidebarSimple,
   SignOut,
   Sun,
   Trash,
   Tray,
   UserCircle,
+  Users,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { BrandMark } from "@/components/brand-mark";
@@ -66,27 +67,54 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { apiJson, formatBytes, type SessionResponse } from "@/lib/api";
+import { apiJson, type SessionResponse } from "@/lib/api";
+import { getInitials, operatorDisplayName } from "@/lib/identity";
 
-function SidebarLogo() {
-  const { state } = useSidebar();
-  return <BrandMark collapsed={state === "collapsed"} />;
-}
+function SidebarBrandHeader({ workspaceName }: { workspaceName?: string }) {
+  const { state, toggleSidebar } = useSidebar();
+  const collapsed = state === "collapsed";
 
-function getInitials(value: string | null | undefined): string {
-  const clean = (value || "").trim();
-  if (!clean) return "GG";
-  const words = clean.split(/[\s@._-]+/).filter(Boolean);
-  if (words.length >= 2) {
-    return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  if (collapsed) {
+    return (
+      <div className="flex flex-col items-center gap-2 py-0.5">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          onClick={toggleSidebar}
+          aria-label="Expand sidebar"
+          title="Expand sidebar ([)"
+          className="size-8 text-muted-foreground hover:text-foreground"
+        >
+          <SidebarSimple className="size-4" />
+        </Button>
+      </div>
+    );
   }
-  return clean.slice(0, 2).toUpperCase();
+
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <Link to="/" className="min-w-0 flex-1 focus:outline-none">
+        <BrandMark subtitle={workspaceName} />
+      </Link>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={toggleSidebar}
+        aria-label="Collapse sidebar"
+        title="Collapse sidebar ([)"
+        className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
+      >
+        <SidebarSimple className="size-4" />
+      </Button>
+    </div>
+  );
 }
 
-export function AppShell({
+function AppShellInner({
   session,
   breadcrumbs,
-  storageBytes,
   demoPortalUrl,
   onSessionRefresh,
   onDemoChanged,
@@ -96,7 +124,6 @@ export function AppShell({
 }: {
   session: SessionResponse;
   breadcrumbs: Array<{ label: string; to?: string }>;
-  storageBytes?: number;
   demoPortalUrl?: string | null;
   onSessionRefresh: () => Promise<void>;
   onDemoChanged?: () => Promise<void>;
@@ -106,6 +133,7 @@ export function AppShell({
 }) {
   const location = useLocation();
   const navigate = useNavigate();
+  const { toggleSidebar } = useSidebar();
   const [cmdOpen, setCmdOpen] = useState(false);
   const [clearingDemo, setClearingDemo] = useState(false);
 
@@ -125,21 +153,21 @@ export function AppShell({
         return;
       }
 
-      if (
-        !isEditable &&
-        !e.metaKey &&
-        !e.ctrlKey &&
-        !e.altKey &&
-        e.key.toLowerCase() === "c" &&
-        !document.querySelector('[role="dialog"]')
-      ) {
+      if (isEditable || e.metaKey || e.ctrlKey || e.altKey || document.querySelector('[role="dialog"]')) {
+        return;
+      }
+
+      if (e.key === "[") {
+        e.preventDefault();
+        toggleSidebar();
+      } else if (e.key.toLowerCase() === "c") {
         e.preventDefault();
         navigate("/requests/new");
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigate]);
+  }, [navigate, toggleSidebar]);
 
   async function handleLogout() {
     await apiJson("/api/logout", { method: "POST" });
@@ -161,12 +189,23 @@ export function AppShell({
     }
   }
 
-  const navItems = [
+  const awaitingReview = session.readiness.awaitingReviewCount ?? 0;
+  const showOutbox =
+    session.readiness.emailBackend === "console" || session.readiness.outboxCount > 0;
+
+  const primaryNav = [
     {
       label: "Requests",
       to: "/",
       icon: Folders,
       active: location.pathname === "/" || location.pathname.startsWith("/requests"),
+      badge: awaitingReview > 0 ? String(awaitingReview) : undefined,
+    },
+    {
+      label: "Clients",
+      to: "/clients",
+      icon: Users,
+      active: location.pathname.startsWith("/clients"),
     },
     {
       label: "Templates",
@@ -174,13 +213,23 @@ export function AppShell({
       icon: ListChecks,
       active: location.pathname.startsWith("/templates"),
     },
-    {
-      label: "Local Outbox",
-      to: "/outbox",
-      icon: Tray,
-      active: location.pathname === "/outbox",
-      badge: session.readiness.outboxCount > 0 ? String(session.readiness.outboxCount) : undefined,
-    },
+  ];
+
+  const secondaryNav = [
+    ...(showOutbox
+      ? [
+          {
+            label: "Local Outbox",
+            to: "/outbox",
+            icon: Tray,
+            active: location.pathname === "/outbox",
+            badge:
+              session.readiness.outboxCount > 0
+                ? String(session.readiness.outboxCount)
+                : undefined,
+          },
+        ]
+      : []),
     {
       label: "Settings",
       to: "/settings",
@@ -191,20 +240,14 @@ export function AppShell({
 
   const workspace = session.workspace;
   const user = session.user;
-  const emailModeLabel =
-    session.readiness.emailBackend === "console"
-      ? "Local outbox"
-      : session.readiness.emailBackend.toUpperCase();
-  const displayLabel = user?.displayName || workspace?.name || "Workspace";
-  const initials = getInitials(user?.displayName || workspace?.name || user?.email);
+  const opName = operatorDisplayName(user?.displayName, user?.email);
+  const initials = getInitials(opName);
 
   return (
-    <SidebarProvider>
+    <>
       <Sidebar collapsible="icon" className="border-r border-sidebar-border">
         <SidebarHeader className="border-b border-sidebar-border px-3 py-3">
-          <Link to="/" className="flex items-center focus:outline-none">
-            <SidebarLogo />
-          </Link>
+          <SidebarBrandHeader workspaceName={workspace?.name} />
         </SidebarHeader>
 
         <SidebarContent>
@@ -212,7 +255,25 @@ export function AppShell({
             <SidebarGroupLabel>Workspace</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {navItems.map((item) => (
+                {primaryNav.map((item) => (
+                  <SidebarMenuItem key={item.to}>
+                    <SidebarMenuButton asChild isActive={item.active} tooltip={item.label}>
+                      <Link to={item.to}>
+                        <item.icon className="size-4" weight={item.active ? "duotone" : "regular"} />
+                        <span>{item.label}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                    {item.badge && <SidebarMenuBadge className="tabular-nums">{item.badge}</SidebarMenuBadge>}
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+
+          <SidebarGroup className="mt-auto border-t border-sidebar-border/70 pt-2">
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {secondaryNav.map((item) => (
                   <SidebarMenuItem key={item.to}>
                     <SidebarMenuButton asChild isActive={item.active} tooltip={item.label}>
                       <Link to={item.to}>
@@ -229,19 +290,6 @@ export function AppShell({
         </SidebarContent>
 
         <SidebarFooter className="border-t border-sidebar-border p-2">
-          <Link
-            to="/settings?section=instance"
-            className="mb-1 flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground group-data-[collapsible=icon]:hidden"
-          >
-            <span className="flex items-center gap-1.5 truncate">
-              <ShieldCheck className="size-3.5 shrink-0 text-primary" weight="duotone" />
-              <span className="truncate">Vault · {emailModeLabel}</span>
-            </span>
-            {storageBytes !== undefined && (
-              <span className="shrink-0 font-mono tabular-nums">{formatBytes(storageBytes)}</span>
-            )}
-          </Link>
-
           <SidebarMenu>
             <SidebarMenuItem>
               <DropdownMenu>
@@ -252,7 +300,7 @@ export function AppShell({
                     </span>
                     <div className="flex min-w-0 flex-1 flex-col text-left leading-tight">
                       <span className="truncate text-xs font-semibold text-foreground">
-                        {displayLabel}
+                        {opName}
                       </span>
                       <span className="truncate text-[11px] text-muted-foreground">
                         {user?.email}
@@ -263,23 +311,23 @@ export function AppShell({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="top" align="start" className="w-60">
                   <DropdownMenuLabel className="font-normal">
-                    <p className="truncate text-xs font-semibold text-foreground">
-                      {workspace?.name || displayLabel}
+                    <p className="truncate text-xs font-semibold text-foreground">{opName}</p>
+                    <p className="truncate text-[11px] text-muted-foreground">
+                      {workspace?.name || user?.email}
                     </p>
-                    <p className="truncate text-[11px] text-muted-foreground">{user?.email}</p>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => navigate("/settings?section=account")}>
                     <UserCircle className="mr-2 size-4" />
                     Account & password
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => navigate("/settings?section=branding")}>
-                    <Palette className="mr-2 size-4" />
-                    Portal branding
-                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate("/settings?section=email")}>
                     <EnvelopeSimple className="mr-2 size-4" />
                     Email delivery
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate("/settings?section=branding")}>
+                    <Palette className="mr-2 size-4" />
+                    Portal branding
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
@@ -332,8 +380,8 @@ export function AppShell({
 
         <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-card/90 px-4 backdrop-blur sm:px-6">
           <div className="flex min-w-0 items-center gap-2.5">
-            <SidebarTrigger className="-ml-1" />
-            <div className="h-4 w-px bg-border" />
+            <SidebarTrigger className="-ml-1 md:hidden" />
+            <div className="h-4 w-px bg-border md:hidden" />
             <Breadcrumb>
               <BreadcrumbList>
                 {breadcrumbs.map((crumb, idx) => {
@@ -418,6 +466,15 @@ export function AppShell({
               <CommandItem
                 onSelect={() => {
                   setCmdOpen(false);
+                  navigate("/clients");
+                }}
+              >
+                <Users className="mr-2 size-4" />
+                Clients Directory
+              </CommandItem>
+              <CommandItem
+                onSelect={() => {
+                  setCmdOpen(false);
                   navigate("/requests/new");
                 }}
               >
@@ -433,15 +490,17 @@ export function AppShell({
                 <ListChecks className="mr-2 size-4" />
                 Checklist Templates & Visual Builder
               </CommandItem>
-              <CommandItem
-                onSelect={() => {
-                  setCmdOpen(false);
-                  navigate("/outbox");
-                }}
-              >
-                <Tray className="mr-2 size-4" />
-                Local Email Outbox
-              </CommandItem>
+              {showOutbox && (
+                <CommandItem
+                  onSelect={() => {
+                    setCmdOpen(false);
+                    navigate("/outbox");
+                  }}
+                >
+                  <Tray className="mr-2 size-4" />
+                  Local Email Outbox
+                </CommandItem>
+              )}
               <CommandItem
                 onSelect={() => {
                   setCmdOpen(false);
@@ -471,6 +530,44 @@ export function AppShell({
           </CommandList>
         </Command>
       </CommandDialog>
+    </>
+  );
+}
+
+export function AppShell({
+  session,
+  breadcrumbs,
+  storageBytes: _storageBytes,
+  demoPortalUrl,
+  onSessionRefresh,
+  onDemoChanged,
+  theme,
+  onToggleTheme,
+  children,
+}: {
+  session: SessionResponse;
+  breadcrumbs: Array<{ label: string; to?: string }>;
+  storageBytes?: number;
+  demoPortalUrl?: string | null;
+  onSessionRefresh: () => Promise<void>;
+  onDemoChanged?: () => Promise<void>;
+  theme: "light" | "dark";
+  onToggleTheme: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <SidebarProvider>
+      <AppShellInner
+        session={session}
+        breadcrumbs={breadcrumbs}
+        demoPortalUrl={demoPortalUrl}
+        onSessionRefresh={onSessionRefresh}
+        onDemoChanged={onDemoChanged}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
+      >
+        {children}
+      </AppShellInner>
     </SidebarProvider>
   );
 }

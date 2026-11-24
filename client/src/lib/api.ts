@@ -52,7 +52,31 @@ export interface SessionResponse {
     defaultPurgeDays: number;
     hasDemoData: boolean;
     outboxCount: number;
+    awaitingReviewCount?: number;
   };
+}
+
+export interface ClientRequestBriefDto {
+  id: string;
+  title: string;
+  status: "open" | "in_review" | "completed" | "expired" | "purged";
+  due_at: string | null;
+  created_at: string;
+  total_items: number;
+  approved_items: number;
+  submitted_items: number;
+  rejected_items: number;
+}
+
+export interface ClientSummaryDto {
+  email: string;
+  name: string;
+  totalRequests: number;
+  activeRequests: number;
+  awaitingReviewRequests: number;
+  completedRequests: number;
+  lastActivityAt: string;
+  requests: ClientRequestBriefDto[];
 }
 
 export interface RequestSummaryDto {

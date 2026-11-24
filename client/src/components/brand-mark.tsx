@@ -32,12 +32,12 @@ export function BrandMark({
         />
       </svg>
       {!collapsed && (
-        <div className="flex flex-col leading-none">
-          <span className="font-display text-[17px] font-semibold tracking-[-0.025em] text-foreground">
+        <div className="flex min-w-0 flex-col leading-none">
+          <span className="truncate font-display text-[17px] font-semibold tracking-[-0.025em] text-foreground">
             GatherGate
           </span>
           {subtitle && (
-            <span className="mt-0.5 text-[11px] font-medium text-muted-foreground">
+            <span className="mt-0.5 truncate text-[11px] font-medium text-muted-foreground">
               {subtitle}
             </span>
           )}

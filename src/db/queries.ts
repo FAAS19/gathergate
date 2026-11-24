@@ -129,6 +129,29 @@ export interface OutboxEmailRow {
   created_at: string;
 }
 
+export interface ClientRequestBrief {
+  id: string;
+  title: string;
+  status: RequestRow["status"];
+  due_at: string | null;
+  created_at: string;
+  total_items: number;
+  approved_items: number;
+  submitted_items: number;
+  rejected_items: number;
+}
+
+export interface ClientSummary {
+  email: string;
+  name: string;
+  totalRequests: number;
+  activeRequests: number;
+  awaitingReviewRequests: number;
+  completedRequests: number;
+  lastActivityAt: string;
+  requests: ClientRequestBrief[];
+}
+
 export function slugify(input: string, fallback = "item"): string {
   const s = input
     .toLowerCase()
@@ -1159,6 +1182,69 @@ export class Store {
       .prepare("SELECT COUNT(*) as c FROM outbox_emails WHERE workspace_id = ?")
       .get(workspaceId) as { c: number };
     return Number(row.c);
+  }
+
+  countAwaitingReview(workspaceId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(DISTINCT r.id) as c
+         FROM requests r
+         JOIN request_items ri ON ri.request_id = r.id
+         WHERE r.workspace_id = ?
+           AND r.status IN ('open', 'in_review')
+           AND ri.status = 'submitted'`
+      )
+      .get(workspaceId) as { c: number };
+    return Number(row.c);
+  }
+
+  listClients(workspaceId: string): ClientSummary[] {
+    const rows = this.listRequests(workspaceId);
+    const byEmail = new Map<string, ClientSummary>();
+
+    for (const r of rows) {
+      const email = r.client_email.trim().toLowerCase();
+      const activity =
+        r.last_opened_at && r.last_opened_at > r.created_at ? r.last_opened_at : r.created_at;
+      const isActive = r.status === "open" || r.status === "in_review";
+      const submittedCount = Number(r.submitted_items);
+      const brief: ClientRequestBrief = {
+        id: r.id,
+        title: r.title,
+        status: r.status,
+        due_at: r.due_at,
+        created_at: r.created_at,
+        total_items: Number(r.total_items),
+        approved_items: Number(r.approved_items),
+        submitted_items: submittedCount,
+        rejected_items: Number(r.rejected_items),
+      };
+
+      const existing = byEmail.get(email);
+      if (!existing) {
+        byEmail.set(email, {
+          email,
+          name: r.client_name,
+          totalRequests: 1,
+          activeRequests: isActive ? 1 : 0,
+          awaitingReviewRequests: isActive && submittedCount > 0 ? 1 : 0,
+          completedRequests: r.status === "completed" ? 1 : 0,
+          lastActivityAt: activity,
+          requests: [brief],
+        });
+      } else {
+        existing.totalRequests += 1;
+        if (isActive) existing.activeRequests += 1;
+        if (isActive && submittedCount > 0) existing.awaitingReviewRequests += 1;
+        if (r.status === "completed") existing.completedRequests += 1;
+        if (activity > existing.lastActivityAt) existing.lastActivityAt = activity;
+        existing.requests.push(brief);
+      }
+    }
+
+    return Array.from(byEmail.values()).sort((a, b) =>
+      b.lastActivityAt.localeCompare(a.lastActivityAt)
+    );
   }
 
   hasDemoData(workspaceId: string): boolean {

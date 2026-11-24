@@ -261,6 +261,7 @@ export function createApp(deps: GatherGateAppDeps) {
         defaultPurgeDays: config.defaultPurgeDays,
         hasDemoData: auth ? store.hasDemoData(auth.workspace.id) : false,
         outboxCount: auth ? store.countOutboxEmails(auth.workspace.id) : 0,
+        awaitingReviewCount: auth ? store.countAwaitingReview(auth.workspace.id) : 0,
       },
     });
   });
@@ -403,6 +404,12 @@ export function createApp(deps: GatherGateAppDeps) {
   // ---------------------------------------------------------------------------
   // Requests, Review & Exports
   // ---------------------------------------------------------------------------
+  app.get("/api/clients", (c) => {
+    const auth = requireAuth(c);
+    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    return c.json({ clients: store.listClients(auth.workspace.id) });
+  });
+
   app.get("/api/requests", (c) => {
     const auth = requireAuth(c);
     if (!auth) return c.json({ error: "Unauthorized" }, 401);
