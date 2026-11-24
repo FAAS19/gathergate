@@ -7,9 +7,14 @@ import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { DatabaseSync } from "node:sqlite";
 import { ZipFile } from "yazl";
-import type { EmailAdapter } from "./adapters/email.js";
+import {
+  createEmailAdapterFromOptions,
+  resolveWorkspaceEmail,
+  type EmailAdapter,
+  type WorkspaceEmailSecrets,
+} from "./adapters/email.js";
 import type { StorageAdapter } from "./adapters/storage.js";
-import type { AppConfig } from "./config.js";
+import type { AppConfig, EmailBackend } from "./config.js";
 import { slugify, Store, type UserRow, type WorkspaceRow } from "./db/queries.js";
 import {
   emailBrand,
@@ -18,6 +23,7 @@ import {
   otpEmail,
   reminderEmail,
   revisionEmail,
+  testDeliveryEmail,
   type RenderedEmail,
 } from "./emails/templates.js";
 import { seedDemoWorkspace } from "./jobs/demo.js";
@@ -99,6 +105,15 @@ function publicBranding(ws: WorkspaceRow) {
   };
 }
 
+function hasCrLf(value: string): boolean {
+  return /[\r\n]/.test(value);
+}
+
+function extractAddress(raw: string): string {
+  const match = raw.match(/^[^<>]*<([^<>]+)>$/);
+  return (match ? match[1] : raw).trim();
+}
+
 function resolveDefaultClientDistDir(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
   return path.resolve(here, "..", "client", "dist");
@@ -162,7 +177,28 @@ export function createApp(deps: GatherGateAppDeps) {
     return store.getUserBySessionToken(token);
   }
 
+  function summarizeWorkspaceEmail(ws: WorkspaceRow) {
+    const resolved = resolveWorkspaceEmail(ws, config, config.masterKey);
+    return {
+      source: resolved.source,
+      backend: resolved.backend,
+      from: resolved.from,
+      replyTo: resolved.replyTo,
+      smtp: {
+        host: resolved.smtp?.host || "",
+        port: resolved.smtp?.port ?? 587,
+        secure: Boolean(resolved.smtp?.secure),
+        user: resolved.smtp?.user || "",
+        hasPass: Boolean(resolved.smtp?.pass),
+      },
+      resend: {
+        hasApiKey: Boolean(resolved.resendApiKey),
+      },
+    };
+  }
+
   async function sendEmailTracked(params: {
+    workspace?: WorkspaceRow;
     workspaceId: string;
     requestId: string | null;
     to: string;
@@ -170,9 +206,29 @@ export function createApp(deps: GatherGateAppDeps) {
     kind: string;
     isDemo?: boolean;
   }) {
+    const ws = params.workspace ?? store.getWorkspaceById(params.workspaceId);
+    const resolved = ws ? resolveWorkspaceEmail(ws, config, config.masterKey) : null;
     const { subject, text, html } = params.message;
-    await email.send({ to: params.to, subject, text, html });
-    if (config.emailBackend === "console") {
+    if (resolved && resolved.source === "workspace") {
+      const adapter = createEmailAdapterFromOptions({
+        backend: resolved.backend,
+        from: resolved.from,
+        resendApiKey: resolved.resendApiKey,
+        smtp: resolved.smtp,
+        fetchImpl: deps.fetchImpl,
+      });
+      await adapter.send({
+        to: params.to,
+        subject,
+        text,
+        html,
+        replyTo: resolved.replyTo || undefined,
+      });
+    } else {
+      await email.send({ to: params.to, subject, text, html });
+    }
+    const effectiveBackend = resolved?.backend ?? config.emailBackend;
+    if (effectiveBackend === "console") {
       store.saveOutboxEmail({
         workspaceId: params.workspaceId,
         requestId: params.requestId,
@@ -192,14 +248,15 @@ export function createApp(deps: GatherGateAppDeps) {
   app.get("/api/session", (c) => {
     const needsSetup = store.countUsers() === 0;
     const auth = needsSetup ? null : requireAuth(c);
+    const resolvedEmail = auth ? resolveWorkspaceEmail(auth.workspace, config, config.masterKey) : null;
     return c.json({
       needsSetup,
       multiTenant: config.multiTenant,
-      user: auth ? { id: auth.user.id, email: auth.user.email } : null,
+      user: auth ? { id: auth.user.id, email: auth.user.email, displayName: auth.user.display_name } : null,
       workspace: auth ? sanitizeWorkspace(auth.workspace) : null,
       readiness: {
         storageBackend: config.storageBackend,
-        emailBackend: config.emailBackend,
+        emailBackend: resolvedEmail ? resolvedEmail.backend : config.emailBackend,
         cronIntervalMinutes: config.cronIntervalMinutes,
         defaultPurgeDays: config.defaultPurgeDays,
         hasDemoData: auth ? store.hasDemoData(auth.workspace.id) : false,
@@ -257,7 +314,11 @@ export function createApp(deps: GatherGateAppDeps) {
       path: "/",
       maxAge: 14 * 86400,
     });
-    return c.json({ ok: true, user: { id: user.id, email: user.email }, workspace: sanitizeWorkspace(workspace) });
+    return c.json({
+      ok: true,
+      user: { id: user.id, email: user.email, displayName: user.display_name },
+      workspace: sanitizeWorkspace(workspace),
+    });
   });
 
   app.post("/api/login", async (c) => {
@@ -279,7 +340,11 @@ export function createApp(deps: GatherGateAppDeps) {
       maxAge: 14 * 86400,
     });
     const workspace = store.getWorkspaceById(user.workspace_id)!;
-    return c.json({ ok: true, user: { id: user.id, email: user.email }, workspace: sanitizeWorkspace(workspace) });
+    return c.json({
+      ok: true,
+      user: { id: user.id, email: user.email, displayName: user.display_name },
+      workspace: sanitizeWorkspace(workspace),
+    });
   });
 
   app.post("/api/signup", async (c) => {
@@ -321,7 +386,11 @@ export function createApp(deps: GatherGateAppDeps) {
       path: "/",
       maxAge: 14 * 86400,
     });
-    return c.json({ ok: true, user: { id: user.id, email: user.email }, workspace: sanitizeWorkspace(workspace) });
+    return c.json({
+      ok: true,
+      user: { id: user.id, email: user.email, displayName: user.display_name },
+      workspace: sanitizeWorkspace(workspace),
+    });
   });
 
   app.post("/api/logout", (c) => {
@@ -1058,15 +1127,23 @@ export function createApp(deps: GatherGateAppDeps) {
   app.get("/api/settings", (c) => {
     const auth = requireAuth(c);
     if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const emailSummary = summarizeWorkspaceEmail(auth.workspace);
     return c.json({
       webhookUrl: auth.workspace.webhook_url || "",
       webhookSecret: auth.workspace.webhook_secret || "",
       branding: publicBranding(auth.workspace),
+      account: {
+        id: auth.user.id,
+        email: auth.user.email,
+        displayName: auth.user.display_name || "",
+        workspaceName: auth.workspace.name,
+      },
+      email: emailSummary,
       readiness: {
         masterKeyConfigured: Boolean(config.masterKey && config.masterKey.byteLength === 32),
         storageBackend: config.storageBackend,
-        emailBackend: config.emailBackend,
-        emailFrom: config.emailFrom,
+        emailBackend: emailSummary.backend,
+        emailFrom: emailSummary.from,
         cronIntervalMinutes: config.cronIntervalMinutes,
         defaultPurgeDays: config.defaultPurgeDays,
         hasDemoData: store.hasDemoData(auth.workspace.id),
@@ -1178,11 +1255,241 @@ export function createApp(deps: GatherGateAppDeps) {
     return c.json({ ok: true, status: result.status });
   });
 
+  app.put("/api/settings/email", async (c) => {
+    const auth = requireAuth(c);
+    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const body = (await c.req.json().catch(() => ({}))) as {
+      backend?: unknown;
+      from?: unknown;
+      replyTo?: unknown;
+      smtp?: {
+        host?: unknown;
+        port?: unknown;
+        secure?: unknown;
+        user?: unknown;
+        pass?: unknown;
+        clearPass?: unknown;
+      };
+      resend?: {
+        apiKey?: unknown;
+      };
+    };
+
+    const backend = String(body.backend || "") as EmailBackend;
+    if (backend !== "console" && backend !== "smtp" && backend !== "resend") {
+      return c.json({ error: "Choose console, smtp, or resend for email delivery." }, 400);
+    }
+
+    const from = String(body.from || "").trim();
+    const replyTo = String(body.replyTo || "").trim();
+    if (hasCrLf(from) || hasCrLf(replyTo)) {
+      return c.json({ error: "Email headers cannot contain line breaks." }, 400);
+    }
+    if (backend !== "console") {
+      const fromAddr = extractAddress(from);
+      if (!from || !validateTextValue("email", fromAddr).valid) {
+        return c.json({ error: "Enter a valid sender email (e.g. Practice <hello@domain.com>)." }, 400);
+      }
+    } else if (from && !validateTextValue("email", extractAddress(from)).valid) {
+      return c.json({ error: "Sender email format is invalid." }, 400);
+    }
+    if (replyTo && !validateTextValue("email", extractAddress(replyTo)).valid) {
+      return c.json({ error: "Reply-to address is invalid." }, 400);
+    }
+
+    const existing = resolveWorkspaceEmail(auth.workspace, config, config.masterKey);
+    let encryptedSecrets: string | null = null;
+
+    if (backend === "smtp") {
+      const host = String(body.smtp?.host || "").trim();
+      const user = String(body.smtp?.user || "").trim();
+      const port = Number(body.smtp?.port ?? 587);
+      const secure = Boolean(body.smtp?.secure);
+      if (!host || hasCrLf(host) || /\s/.test(host)) {
+        return c.json({ error: "Enter a valid SMTP host." }, 400);
+      }
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        return c.json({ error: "SMTP port must be between 1 and 65535." }, 400);
+      }
+      if (hasCrLf(user)) {
+        return c.json({ error: "SMTP username cannot contain line breaks." }, 400);
+      }
+      const clearPass = body.smtp?.clearPass === true;
+      const rawPass = typeof body.smtp?.pass === "string" ? body.smtp.pass : "";
+      const pass = clearPass ? "" : rawPass.length > 0 ? rawPass : existing.smtp?.pass || "";
+      const secrets: WorkspaceEmailSecrets = {
+        smtpHost: host,
+        smtpPort: port,
+        smtpSecure: secure,
+        smtpUser: user,
+        smtpPass: pass,
+      };
+      encryptedSecrets = encryptField(
+        config.masterKey,
+        JSON.stringify(secrets),
+        `${auth.workspace.id}:email`
+      );
+    } else if (backend === "resend") {
+      const rawKey = typeof body.resend?.apiKey === "string" ? body.resend.apiKey.trim() : "";
+      const apiKey = rawKey || existing.resendApiKey || "";
+      if (!apiKey) {
+        return c.json({ error: "Resend API key is required." }, 400);
+      }
+      if (hasCrLf(apiKey)) {
+        return c.json({ error: "Resend API key cannot contain line breaks." }, 400);
+      }
+      const secrets: WorkspaceEmailSecrets = { resendApiKey: apiKey };
+      encryptedSecrets = encryptField(
+        config.masterKey,
+        JSON.stringify(secrets),
+        `${auth.workspace.id}:email`
+      );
+    }
+
+    store.updateWorkspaceEmailConfig(auth.workspace.id, {
+      emailBackend: backend,
+      emailFrom: from || null,
+      emailReplyTo: replyTo || null,
+      emailConfigEncrypted: encryptedSecrets,
+    });
+    store.logAudit(auth.workspace.id, null, "operator", "settings.email_updated", {
+      actorEmail: auth.user.email,
+      backend,
+    });
+    const updated = store.getWorkspaceById(auth.workspace.id)!;
+    return c.json({ ok: true, email: summarizeWorkspaceEmail(updated) });
+  });
+
+  app.post("/api/settings/email/test", async (c) => {
+    const auth = requireAuth(c);
+    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const body = (await c.req.json().catch(() => ({}))) as { to?: string };
+    const to = String(body.to || auth.user.email).trim();
+    if (!to || hasCrLf(to) || !validateTextValue("email", to).valid) {
+      return c.json({ error: "Enter a valid recipient email." }, 400);
+    }
+    const resolved = resolveWorkspaceEmail(auth.workspace, config, config.masterKey);
+    if (resolved.backend === "smtp" && !resolved.smtp?.host) {
+      return c.json({ error: "Configure an SMTP host before sending a test email." }, 400);
+    }
+    if (resolved.backend === "resend" && !resolved.resendApiKey) {
+      return c.json({ error: "Configure a Resend API key before sending a test email." }, 400);
+    }
+    const backendLabel =
+      resolved.backend === "console"
+        ? "Local Outbox"
+        : resolved.backend === "smtp"
+          ? `SMTP (${resolved.smtp?.host})`
+          : "Resend";
+    const msg = testDeliveryEmail({
+      brand: emailBrand(auth.workspace, config.baseUrl),
+      backendLabel,
+    });
+    try {
+      await sendEmailTracked({
+        workspace: auth.workspace,
+        workspaceId: auth.workspace.id,
+        requestId: null,
+        to,
+        message: msg,
+        kind: "test",
+      });
+      return c.json({ ok: true, backend: resolved.backend, to });
+    } catch (err) {
+      return c.json(
+        { ok: false, error: err instanceof Error ? err.message : "Email send failed" },
+        400
+      );
+    }
+  });
+
+  app.put("/api/account", async (c) => {
+    const auth = requireAuth(c);
+    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const body = (await c.req.json().catch(() => ({}))) as {
+      displayName?: unknown;
+      workspaceName?: unknown;
+      email?: unknown;
+    };
+
+    if (body.workspaceName !== undefined) {
+      const nextWsName = String(body.workspaceName || "").trim();
+      if (!nextWsName || nextWsName.length > 100) {
+        return c.json({ error: "Practice name must be between 1 and 100 characters." }, 400);
+      }
+      store.updateWorkspaceName(auth.workspace.id, nextWsName);
+    }
+
+    let nextDisplayName = auth.user.display_name;
+    if (body.displayName !== undefined) {
+      const trimmed = String(body.displayName || "").trim();
+      if (trimmed.length > 100) {
+        return c.json({ error: "Display name cannot exceed 100 characters." }, 400);
+      }
+      nextDisplayName = trimmed || null;
+    }
+
+    let nextEmail = auth.user.email;
+    if (body.email !== undefined) {
+      const candidate = String(body.email || "").trim().toLowerCase();
+      if (!candidate || hasCrLf(candidate) || !validateTextValue("email", candidate).valid) {
+        return c.json({ error: "Enter a valid email address." }, 400);
+      }
+      if (candidate !== auth.user.email) {
+        const conflict = store.getUserByEmail(candidate);
+        if (conflict && conflict.id !== auth.user.id) {
+          return c.json({ error: "An account with this email already exists." }, 409);
+        }
+      }
+      nextEmail = candidate;
+    }
+
+    store.updateUserProfile(auth.user.id, { displayName: nextDisplayName, email: nextEmail });
+    const updatedUser = store.getUserById(auth.user.id)!;
+    const updatedWorkspace = store.getWorkspaceById(auth.workspace.id)!;
+    return c.json({
+      ok: true,
+      user: {
+        id: updatedUser.id,
+        email: updatedUser.email,
+        displayName: updatedUser.display_name,
+      },
+      workspace: sanitizeWorkspace(updatedWorkspace),
+    });
+  });
+
+  app.put("/api/account/password", async (c) => {
+    const auth = requireAuth(c);
+    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const body = (await c.req.json().catch(() => ({}))) as {
+      currentPassword?: unknown;
+      newPassword?: unknown;
+    };
+    const currentPassword = String(body.currentPassword || "");
+    const newPassword = String(body.newPassword || "");
+    if (!verifyPassword(currentPassword, auth.user.password_hash)) {
+      return c.json({ error: "Current password is incorrect." }, 400);
+    }
+    if (newPassword.length < 10) {
+      return c.json({ error: "New password must be at least 10 characters." }, 400);
+    }
+    store.updateUserPassword(auth.user.id, hashPassword(newPassword));
+    const currentToken = getCookie(c, SESSION_COOKIE) || "";
+    if (currentToken) {
+      store.deleteOtherSessions(auth.user.id, currentToken);
+    }
+    store.logAudit(auth.workspace.id, null, "operator", "account.password_changed", {
+      actorEmail: auth.user.email,
+    });
+    return c.json({ ok: true });
+  });
+
   app.get("/api/outbox", (c) => {
     const auth = requireAuth(c);
     if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const resolvedEmail = resolveWorkspaceEmail(auth.workspace, config, config.masterKey);
     return c.json({
-      emailBackend: config.emailBackend,
+      emailBackend: resolvedEmail.backend,
       emails: store.listOutboxEmails(auth.workspace.id, 100),
     });
   });

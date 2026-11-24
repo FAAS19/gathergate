@@ -36,6 +36,7 @@ if (config.cronIntervalMinutes > 0) {
         email,
         baseUrl: config.baseUrl,
         masterKey: config.masterKey,
+        config,
         saveToOutbox: config.emailBackend === "console",
       });
       const purged = await runPurgeSweep({ store, storage });

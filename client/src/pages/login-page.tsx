@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Loader2 } from "lucide-react";
+import { CircleNotch } from "@phosphor-icons/react";
 import { BrandMark } from "@/components/brand-mark";
 import { PasswordInput } from "@/components/password-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -106,7 +106,7 @@ export function LoginPage({
           </div>
 
           <Button type="submit" className="h-10 w-full" disabled={submitting}>
-            {submitting && <Loader2 className="size-4 animate-spin" />}
+            {submitting && <CircleNotch className="size-4 animate-spin" />}
             {signup ? "Create workspace" : "Sign in"}
           </Button>
         </form>

@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import {
+  CaretLeft as ChevronLeft,
+  CaretRight as ChevronRight,
   Check,
-  ChevronLeft,
-  ChevronRight,
-  Download,
+  DownloadSimple as Download,
   Lock,
+  MagnifyingGlassMinus as ZoomOut,
+  MagnifyingGlassPlus as ZoomIn,
   XCircle,
-  ZoomIn,
-  ZoomOut,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";

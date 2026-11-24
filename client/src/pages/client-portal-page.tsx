@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams } from "react-router";
-import { AlertTriangle, Check, CheckCircle2, Lock, ListChecks, ShieldCheck } from "lucide-react";
+import {
+  Check,
+  CheckCircle as CheckCircle2,
+  ListChecks,
+  Lock,
+  ShieldCheck,
+  Warning as AlertTriangle,
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { FileField } from "@/components/portal/file-field";
 import { ItemNote } from "@/components/portal/item-note";
@@ -55,7 +62,7 @@ function StatusDot({ item }: { item: RequestItemDto }) {
         className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground animate-in zoom-in-50 fade-in duration-200 motion-reduce:animate-none"
         title="Done"
       >
-        <Check className="size-3.5" strokeWidth={3} />
+        <Check className="size-3.5" weight="bold" />
       </span>
     );
   }

@@ -43,7 +43,7 @@ export interface BrandingDto {
 export interface SessionResponse {
   needsSetup: boolean;
   multiTenant: boolean;
-  user: { id: string; email: string } | null;
+  user: { id: string; email: string; displayName?: string | null } | null;
   workspace: WorkspaceDto | null;
   readiness: {
     storageBackend: string;
@@ -187,10 +187,34 @@ export interface OutboxEmailDto {
   created_at: string;
 }
 
+export interface EmailSettingsDto {
+  source: "workspace" | "env";
+  backend: "console" | "smtp" | "resend";
+  from: string;
+  replyTo: string;
+  smtp: {
+    host: string;
+    port: number;
+    secure: boolean;
+    user: string;
+    hasPass: boolean;
+  };
+  resend: {
+    hasApiKey: boolean;
+  };
+}
+
 export interface SettingsResponse {
   webhookUrl: string;
   webhookSecret: string;
   branding: BrandingDto;
+  account: {
+    id: string;
+    email: string;
+    displayName: string;
+    workspaceName: string;
+  };
+  email: EmailSettingsDto;
   readiness: {
     masterKeyConfigured: boolean;
     storageBackend: string;

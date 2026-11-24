@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { Mail, ShieldCheck } from "lucide-react";
+import { EnvelopeSimple as Mail, ShieldCheck } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, MessageSquare, Undo2 } from "lucide-react";
+import { ArrowCounterClockwise, ChatText, CircleNotch } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { apiJson, ApiError, type RequestItemDto } from "@/lib/api";
@@ -74,7 +74,7 @@ export function ItemNote({
             Cancel
           </Button>
           <Button type="button" size="sm" onClick={() => save(draft.trim(), isNa)} disabled={saving || (isNa && !draft.trim())}>
-            {saving && <Loader2 className="size-3.5 animate-spin" />}
+            {saving && <CircleNotch className="size-3.5 animate-spin" />}
             {isNa ? "Mark as not applicable" : "Save note"}
           </Button>
         </div>
@@ -91,7 +91,7 @@ export function ItemNote({
         </p>
         {!locked && (
           <Button type="button" variant="ghost" size="sm" className="-my-1 shrink-0" onClick={() => save("", false)} disabled={saving}>
-            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Undo2 className="size-3.5" />} Undo
+            {saving ? <CircleNotch className="size-3.5 animate-spin" /> : <ArrowCounterClockwise className="size-3.5" />} Undo
           </Button>
         )}
       </div>
@@ -102,7 +102,7 @@ export function ItemNote({
     <div className="space-y-2">
       {item.client_note && (
         <p className="flex items-start gap-2 text-sm text-muted-foreground">
-          <MessageSquare className="mt-0.5 size-3.5 shrink-0" />
+          <ChatText className="mt-0.5 size-3.5 shrink-0" />
           <span className="whitespace-pre-line">{item.client_note}</span>
         </p>
       )}

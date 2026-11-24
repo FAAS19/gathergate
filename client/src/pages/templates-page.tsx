@@ -20,13 +20,13 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   ArrowLeft,
   Copy,
-  FileUp,
-  GripVertical,
-  Pencil,
+  DotsSixVertical as GripVertical,
+  MagnifyingGlass as Search,
+  PencilSimple as Pencil,
   Plus,
-  Search,
-  Trash2,
-} from "lucide-react";
+  Trash as Trash2,
+  UploadSimple as FileUp,
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import {

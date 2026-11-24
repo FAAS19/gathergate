@@ -17,6 +17,10 @@ export interface WorkspaceRow {
   logo_b64: string | null;
   support_email: string | null;
   support_phone: string | null;
+  email_backend: string | null;
+  email_from: string | null;
+  email_reply_to: string | null;
+  email_config_encrypted: string | null;
   created_at: string;
 }
 
@@ -24,6 +28,7 @@ export interface UserRow {
   id: string;
   workspace_id: string;
   email: string;
+  display_name: string | null;
   password_hash: string;
   created_at: string;
 }
@@ -217,6 +222,42 @@ export class Store {
     this.db
       .prepare("UPDATE workspaces SET webhook_url = ?, webhook_secret = ? WHERE id = ?")
       .run(webhookUrl || null, webhookSecret || null, workspaceId);
+  }
+
+  updateWorkspaceName(workspaceId: string, name: string): void {
+    this.db.prepare("UPDATE workspaces SET name = ? WHERE id = ?").run(name.trim(), workspaceId);
+  }
+
+  updateWorkspaceEmailConfig(
+    workspaceId: string,
+    params: {
+      emailBackend: string | null;
+      emailFrom: string | null;
+      emailReplyTo: string | null;
+      emailConfigEncrypted: string | null;
+    }
+  ): void {
+    this.db
+      .prepare(
+        "UPDATE workspaces SET email_backend = ?, email_from = ?, email_reply_to = ?, email_config_encrypted = ? WHERE id = ?"
+      )
+      .run(params.emailBackend, params.emailFrom, params.emailReplyTo, params.emailConfigEncrypted, workspaceId);
+  }
+
+  updateUserProfile(userId: string, params: { displayName: string | null; email: string }): void {
+    this.db
+      .prepare("UPDATE users SET display_name = ?, email = ? WHERE id = ?")
+      .run(params.displayName, params.email.trim().toLowerCase(), userId);
+  }
+
+  updateUserPassword(userId: string, passwordHash: string): void {
+    this.db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(passwordHash, userId);
+  }
+
+  deleteOtherSessions(userId: string, keepRawToken: string): void {
+    this.db
+      .prepare("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?")
+      .run(userId, sha256Hex(keepRawToken));
   }
 
   updateWorkspaceBranding(

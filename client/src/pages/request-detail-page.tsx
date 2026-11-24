@@ -1,25 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useParams } from "react-router";
 import {
-  AlertTriangle,
-  Calendar,
-  CheckCheck,
+  ArrowSquareOut as ExternalLink,
+  CalendarBlank as Calendar,
+  Checks as CheckCheck,
+  ClockCounterClockwise as History,
   Copy,
-  Download,
-  ExternalLink,
+  DownloadSimple as Download,
   Eye,
-  EyeOff,
+  EyeSlash as EyeOff,
   FileText,
-  History,
   Keyboard,
   Lock,
+  PaperPlaneTilt as Send,
   Pause,
   Play,
   Plus,
-  Send,
   ShieldCheck,
+  Warning as AlertTriangle,
   XCircle,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { findNextReviewUploadId, ReviewSheet, type ReviewDoc } from "@/components/review-sheet";

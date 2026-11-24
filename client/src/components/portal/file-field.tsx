@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
-import { Camera, FileText, Loader2, RefreshCw, Trash2, UploadCloud } from "lucide-react";
+import { ArrowsClockwise, Camera, CircleNotch, CloudArrowUp, FileText, Trash } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { apiJson, apiUploadWithProgress, ApiError, formatBytes, type RequestItemDto } from "@/lib/api";
@@ -159,9 +159,9 @@ export function FileField({
               </div>
               {!locked && (
                 <div className="flex shrink-0 items-center gap-1">
-                  {!item.config.multiple && (
+                    {!item.config.multiple && (
                     <Button type="button" variant="ghost" size="sm" onClick={() => replace(u.id)} disabled={busy}>
-                      <RefreshCw className="size-3.5" /> Replace
+                      <ArrowsClockwise className="size-3.5" /> Replace
                     </Button>
                   )}
                   <Button
@@ -173,7 +173,7 @@ export function FileField({
                     onClick={() => remove(u.id, u.original_name)}
                     disabled={busy || removingId === u.id}
                   >
-                    {removingId === u.id ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                    {removingId === u.id ? <CircleNotch className="size-4 animate-spin" /> : <Trash className="size-4" />}
                   </Button>
                 </div>
               )}
@@ -220,7 +220,7 @@ export function FileField({
         })}
       >
         <input {...getInputProps({ "aria-label": `Choose files for ${item.label}` })} data-testid={`file-input-${item.id}`} />
-        <UploadCloud
+        <CloudArrowUp
           className={cn("size-6 text-primary transition-transform duration-200", isDragActive && "-translate-y-0.5")}
         />
         <p className="mt-2 text-sm font-medium">

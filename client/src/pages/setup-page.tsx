@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { ArrowRight, Check, Loader2 } from "lucide-react";
+import { ArrowRight, Check, CircleNotch } from "@phosphor-icons/react";
 import { BrandMark } from "@/components/brand-mark";
 import { PasswordInput } from "@/components/password-input";
 import { PortalPreview } from "@/components/portal-preview";
@@ -118,7 +118,7 @@ export function SetupPage({ onComplete }: { onComplete: () => Promise<void> }) {
             <Button type="submit" className="group h-10 w-full" disabled={submitting}>
               {submitting ? (
                 <>
-                  <Loader2 className="size-4 animate-spin" /> Creating workspace
+                  <CircleNotch className="size-4 animate-spin" /> Creating workspace
                 </>
               ) : (
                 <>

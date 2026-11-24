@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { REGEXP_ONLY_DIGITS } from "input-otp";
-import { Loader2 } from "lucide-react";
+import { CircleNotch } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { apiJson, ApiError } from "@/lib/api";
@@ -79,7 +79,7 @@ export function OtpGate({
 
       {!sent ? (
         <Button type="button" className="mt-6 h-10 w-full" onClick={send} disabled={sending}>
-          {sending && <Loader2 className="size-4 animate-spin" />}
+          {sending && <CircleNotch className="size-4 animate-spin" />}
           Email me a code
         </Button>
       ) : (
@@ -107,7 +107,7 @@ export function OtpGate({
           <p className="min-h-5 text-center text-sm" aria-live="polite">
             {verifying ? (
               <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-                <Loader2 className="size-3.5 animate-spin" /> Checking
+                <CircleNotch className="size-3.5 animate-spin" /> Checking
               </span>
             ) : error ? (
               <span className="font-medium text-destructive" role="alert">

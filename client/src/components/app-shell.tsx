@@ -1,21 +1,24 @@
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import {
-  ChevronUp,
-  ExternalLink,
-  FolderCheck,
-  Inbox,
-  LayoutList,
-  LogOut,
-  Moon,
-  Plus,
-  Search,
-  Settings,
-  ShieldCheck,
+  ArrowSquareOut,
+  CaretUp,
+  EnvelopeSimple,
+  Folders,
+  Gear,
   Info,
+  ListChecks,
+  MagnifyingGlass,
+  Moon,
+  Palette,
+  Plus,
+  ShieldCheck,
+  SignOut,
   Sun,
-  Trash2,
-} from "lucide-react";
+  Trash,
+  Tray,
+  UserCircle,
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { BrandMark } from "@/components/brand-mark";
 import {
@@ -41,6 +44,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -67,6 +71,16 @@ import { apiJson, formatBytes, type SessionResponse } from "@/lib/api";
 function SidebarLogo() {
   const { state } = useSidebar();
   return <BrandMark collapsed={state === "collapsed"} />;
+}
+
+function getInitials(value: string | null | undefined): string {
+  const clean = (value || "").trim();
+  if (!clean) return "GG";
+  const words = clean.split(/[\s@._-]+/).filter(Boolean);
+  if (words.length >= 2) {
+    return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  }
+  return clean.slice(0, 2).toUpperCase();
 }
 
 export function AppShell({
@@ -151,33 +165,38 @@ export function AppShell({
     {
       label: "Requests",
       to: "/",
-      icon: FolderCheck,
+      icon: Folders,
       active: location.pathname === "/" || location.pathname.startsWith("/requests"),
     },
     {
       label: "Templates",
       to: "/templates",
-      icon: LayoutList,
+      icon: ListChecks,
       active: location.pathname.startsWith("/templates"),
     },
     {
       label: "Local Outbox",
       to: "/outbox",
-      icon: Inbox,
+      icon: Tray,
       active: location.pathname === "/outbox",
       badge: session.readiness.outboxCount > 0 ? String(session.readiness.outboxCount) : undefined,
     },
     {
       label: "Settings",
       to: "/settings",
-      icon: Settings,
+      icon: Gear,
       active: location.pathname === "/settings",
     },
   ];
 
   const workspace = session.workspace;
   const user = session.user;
-  const isLocalOutbox = session.readiness.emailBackend === "console";
+  const emailModeLabel =
+    session.readiness.emailBackend === "console"
+      ? "Local outbox"
+      : session.readiness.emailBackend.toUpperCase();
+  const displayLabel = user?.displayName || workspace?.name || "Workspace";
+  const initials = getInitials(user?.displayName || workspace?.name || user?.email);
 
   return (
     <SidebarProvider>
@@ -197,7 +216,7 @@ export function AppShell({
                   <SidebarMenuItem key={item.to}>
                     <SidebarMenuButton asChild isActive={item.active} tooltip={item.label}>
                       <Link to={item.to}>
-                        <item.icon className="size-4" />
+                        <item.icon className="size-4" weight={item.active ? "duotone" : "regular"} />
                         <span>{item.label}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -207,54 +226,64 @@ export function AppShell({
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-
-          <SidebarGroup className="mt-auto group-data-[collapsible=icon]:hidden">
-            <div className="mx-2 rounded-lg border border-sidebar-border bg-card/70 p-3 text-xs">
-              <div className="flex items-center gap-1.5 font-medium text-foreground">
-                <ShieldCheck className="size-3.5 text-primary" />
-                <span>Self-hosted · Vault active</span>
-              </div>
-              <p className="mt-1 text-[11px] text-muted-foreground tabular-nums">
-                {storageBytes !== undefined ? `Encrypted store: ${formatBytes(storageBytes)}` : `AES-256-GCM (${session.readiness.storageBackend})`}
-              </p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                Email: {isLocalOutbox ? "Local preview outbox" : session.readiness.emailBackend.toUpperCase()}
-              </p>
-            </div>
-          </SidebarGroup>
         </SidebarContent>
 
         <SidebarFooter className="border-t border-sidebar-border p-2">
+          <Link
+            to="/settings?section=instance"
+            className="mb-1 flex items-center justify-between gap-2 rounded-md px-2 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground group-data-[collapsible=icon]:hidden"
+          >
+            <span className="flex items-center gap-1.5 truncate">
+              <ShieldCheck className="size-3.5 shrink-0 text-primary" weight="duotone" />
+              <span className="truncate">Vault · {emailModeLabel}</span>
+            </span>
+            {storageBytes !== undefined && (
+              <span className="shrink-0 font-mono tabular-nums">{formatBytes(storageBytes)}</span>
+            )}
+          </Link>
+
           <SidebarMenu>
             <SidebarMenuItem>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <SidebarMenuButton size="lg" className="justify-between">
-                    <div className="flex min-w-0 flex-col text-left leading-tight">
+                  <SidebarMenuButton size="lg" className="justify-between gap-2.5">
+                    <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-semibold text-primary">
+                      {initials}
+                    </span>
+                    <div className="flex min-w-0 flex-1 flex-col text-left leading-tight">
                       <span className="truncate text-xs font-semibold text-foreground">
-                        {workspace?.name || "Workspace"}
+                        {displayLabel}
                       </span>
                       <span className="truncate text-[11px] text-muted-foreground">
                         {user?.email}
                       </span>
                     </div>
-                    <ChevronUp className="size-4 shrink-0 text-muted-foreground" />
+                    <CaretUp className="size-3.5 shrink-0 text-muted-foreground" />
                   </SidebarMenuButton>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent side="top" align="start" className="w-56">
-                  {onToggleTheme && (
-                    <DropdownMenuItem onClick={onToggleTheme}>
-                      {theme === "dark" ? <Sun className="mr-2 size-4" /> : <Moon className="mr-2 size-4" />}
-                      {theme === "dark" ? "Switch to daylight mode" : "Switch to dark mode"}
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem onClick={() => navigate("/settings")}>
-                    <Settings className="mr-2 size-4" />
-                    Instance & webhook settings
+                <DropdownMenuContent side="top" align="start" className="w-60">
+                  <DropdownMenuLabel className="font-normal">
+                    <p className="truncate text-xs font-semibold text-foreground">
+                      {workspace?.name || displayLabel}
+                    </p>
+                    <p className="truncate text-[11px] text-muted-foreground">{user?.email}</p>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => navigate("/settings?section=account")}>
+                    <UserCircle className="mr-2 size-4" />
+                    Account & password
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate("/settings?section=branding")}>
+                    <Palette className="mr-2 size-4" />
+                    Portal branding
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate("/settings?section=email")}>
+                    <EnvelopeSimple className="mr-2 size-4" />
+                    Email delivery
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
-                    <LogOut className="mr-2 size-4" />
+                    <SignOut className="mr-2 size-4" />
                     Sign out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -283,7 +312,7 @@ export function AppShell({
                 <Button asChild size="xs" variant="outline" className="h-7 bg-card text-foreground hover:bg-muted dark:bg-card dark:hover:bg-muted">
                   <a href={demoPortalUrl} target="_blank" rel="noopener noreferrer">
                     Open client portal
-                    <ExternalLink className="ml-1 size-3" />
+                    <ArrowSquareOut className="ml-1 size-3" />
                   </a>
                 </Button>
               )}
@@ -294,7 +323,7 @@ export function AppShell({
                 disabled={clearingDemo}
                 className="h-7 text-amber-900 hover:bg-amber-200/60 dark:text-amber-200 dark:hover:bg-amber-900/50"
               >
-                <Trash2 className="mr-1 size-3" />
+                <Trash className="mr-1 size-3" />
                 {clearingDemo ? "Clearing..." : "Clear demo data"}
               </Button>
             </div>
@@ -329,13 +358,26 @@ export function AppShell({
           </div>
 
           <div className="flex items-center gap-2">
+            {onToggleTheme && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={onToggleTheme}
+                aria-label={theme === "dark" ? "Switch to daylight mode" : "Switch to dark mode"}
+                title={theme === "dark" ? "Switch to daylight mode" : "Switch to dark mode"}
+                className="size-8 text-muted-foreground hover:text-foreground"
+              >
+                {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
               onClick={() => setCmdOpen(true)}
               className="hidden h-8 gap-2 text-xs text-muted-foreground sm:inline-flex"
             >
-              <Search className="size-3.5" />
+              <MagnifyingGlass className="size-3.5" />
               <span>Quick jump</span>
               <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">
                 Ctrl K
@@ -370,7 +412,7 @@ export function AppShell({
                   navigate("/");
                 }}
               >
-                <FolderCheck className="mr-2 size-4" />
+                <Folders className="mr-2 size-4" />
                 Intake Requests
               </CommandItem>
               <CommandItem
@@ -388,7 +430,7 @@ export function AppShell({
                   navigate("/templates");
                 }}
               >
-                <LayoutList className="mr-2 size-4" />
+                <ListChecks className="mr-2 size-4" />
                 Checklist Templates & Visual Builder
               </CommandItem>
               <CommandItem
@@ -397,7 +439,7 @@ export function AppShell({
                   navigate("/outbox");
                 }}
               >
-                <Inbox className="mr-2 size-4" />
+                <Tray className="mr-2 size-4" />
                 Local Email Outbox
               </CommandItem>
               <CommandItem
@@ -406,8 +448,8 @@ export function AppShell({
                   navigate("/settings");
                 }}
               >
-                <Settings className="mr-2 size-4" />
-                Settings & Webhooks
+                <Gear className="mr-2 size-4" />
+                Settings & Email Delivery
               </CommandItem>
             </CommandGroup>
             {onToggleTheme && (

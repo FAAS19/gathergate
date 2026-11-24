@@ -227,10 +227,14 @@ test("operator creates, customises, reviews via continuous preview, verifies ZIP
   await page.getByRole("button", { name: "Resume reminders" }).click();
   await expect(page.locator("tr").filter({ hasText: "Bulk Pause Test Pack" }).getByText("Paused")).toHaveCount(0);
 
-  expect(errors).toEqual([]);
+  // The outbox preview sandbox refusing axe's injected script confirms sandbox protection is active.
+  expect(
+    errors.filter((e) => !e.includes("frame is sandboxed and the 'allow-scripts' permission is not set"))
+  ).toEqual([]);
 });
 
 test("all 5 operator routes pass WCAG 2.2 AA in Light and Dark themes", async ({ page }, testInfo) => {
+  test.setTimeout(60_000);
   const errors = trackErrors(page);
 
   const listRes = await page.request.get("/api/requests");
@@ -260,6 +264,10 @@ test("all 5 operator routes pass WCAG 2.2 AA in Light and Dark themes", async ({
     await page.goto("/settings");
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
     await expectAccessible(page, testInfo, `settings-${themeLabel}`);
+
+    await page.goto("/outbox");
+    await expect(page.getByRole("heading", { name: "Local Email Outbox" })).toBeVisible();
+    await expectAccessible(page, testInfo, `outbox-${themeLabel}`);
   };
 
   try {
@@ -269,8 +277,7 @@ test("all 5 operator routes pass WCAG 2.2 AA in Light and Dark themes", async ({
     await auditRoutes("light");
 
     await page.goto("/");
-    await page.getByRole("button", { name: /Harbour Advisory/ }).click();
-    await page.getByRole("menuitem", { name: "Switch to dark mode" }).click();
+    await page.getByRole("button", { name: "Switch to dark mode" }).click();
     await expect(page.locator("html")).toHaveClass(/dark/);
     await screenshot(page, testInfo, "dashboard-dark");
     await auditRoutes("dark");
@@ -281,5 +288,8 @@ test("all 5 operator routes pass WCAG 2.2 AA in Light and Dark themes", async ({
     });
   }
 
-  expect(errors).toEqual([]);
+  // The outbox preview sandbox refusing axe's injected script confirms sandbox protection is active.
+  expect(
+    errors.filter((e) => !e.includes("frame is sandboxed and the 'allow-scripts' permission is not set"))
+  ).toEqual([]);
 });

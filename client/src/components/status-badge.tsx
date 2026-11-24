@@ -1,4 +1,4 @@
-import { CheckCircle2, Clock, Eye, Lock, AlertTriangle, Trash2 } from "lucide-react";
+import { CheckCircle, Clock, Eye, Lock, Trash, Warning } from "@phosphor-icons/react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +31,7 @@ const CONFIG: Record<
   rejected: {
     label: "Revision needed",
     className: "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/60 dark:text-amber-300",
-    icon: AlertTriangle,
+    icon: Warning,
   },
   approved: {
     label: "Locked",
@@ -41,17 +41,17 @@ const CONFIG: Record<
   completed: {
     label: "Completed",
     className: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/60 dark:text-emerald-300",
-    icon: CheckCircle2,
+    icon: CheckCircle,
   },
   expired: {
     label: "Expired",
     className: "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/60 dark:text-red-300",
-    icon: AlertTriangle,
+    icon: Warning,
   },
   purged: {
     label: "Purged",
     className: "border-border bg-muted text-muted-foreground",
-    icon: Trash2,
+    icon: Trash,
   },
 };
 

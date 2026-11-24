@@ -8,6 +8,7 @@ import { ClientPortalPage } from "@/pages/client-portal-page";
 import { DashboardPage } from "@/pages/dashboard-page";
 import { LoginPage } from "@/pages/login-page";
 import { NewRequestPage } from "@/pages/new-request-page";
+import { OutboxPage } from "@/pages/outbox-page";
 import { RequestDetailPage } from "@/pages/request-detail-page";
 import { SettingsPage } from "@/pages/settings-page";
 import { SetupPage } from "@/pages/setup-page";
@@ -123,7 +124,6 @@ function AppRoutes() {
         element={
           <SettingsPage
             session={session}
-            defaultTab="branding"
             onSessionRefresh={refreshSession}
             theme={theme}
             onToggleTheme={toggleTheme}
@@ -133,9 +133,8 @@ function AppRoutes() {
       <Route
         path="/outbox"
         element={
-          <SettingsPage
+          <OutboxPage
             session={session}
-            defaultTab="outbox"
             onSessionRefresh={refreshSession}
             theme={theme}
             onToggleTheme={toggleTheme}

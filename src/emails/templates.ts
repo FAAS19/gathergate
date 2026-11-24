@@ -262,3 +262,22 @@ export function reminderEmail(params: {
   });
   return { subject, text, html };
 }
+
+export function testDeliveryEmail(params: { brand: EmailBrand; backendLabel: string }): RenderedEmail {
+  const subject = `${params.brand.name} test email`;
+  const text = [
+    `This is a test email from ${params.brand.name} via GatherGate (${params.backendLabel}).`,
+    "",
+    "Your outbound email settings are working.",
+  ].join("\n");
+  const html = layout({
+    brand: params.brand,
+    preheader: `Test email from ${params.brand.name}`,
+    heading: "Outbound email is connected",
+    bodyHtml: [
+      p(`This is a test message sent from <strong>${escapeHtml(params.brand.name)}</strong> using <strong>${escapeHtml(params.backendLabel)}</strong>.`),
+      p(`<span style="color:${MUTED};font-size:13px;">Client portal invites, 6-digit verification codes, revision notices and scheduled reminders use this configuration.</span>`),
+    ].join(""),
+  });
+  return { subject, text, html };
+}

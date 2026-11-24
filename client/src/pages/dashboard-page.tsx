@@ -9,21 +9,21 @@ import {
   type SortingState,
 } from "@tanstack/react-table";
 import {
-  AlertTriangle,
-  ArrowUpDown,
-  CheckCircle2,
+  ArrowsDownUp as ArrowUpDown,
+  ArrowSquareOut as ExternalLink,
+  CheckCircle as CheckCircle2,
   Clock,
   Copy,
-  Download,
-  ExternalLink,
+  DotsThree as MoreHorizontal,
+  DownloadSimple as Download,
   Eye,
   FolderOpen,
-  MoreHorizontal,
+  MagnifyingGlass as Search,
   Pause,
   Play,
   Plus,
-  Search,
-} from "lucide-react";
+  Warning as AlertTriangle,
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
@@ -538,7 +538,7 @@ export function DashboardPage({
               >
                 <div className="flex w-full items-center justify-between pb-2">
                   <span className="text-xs font-medium text-muted-foreground">{kpi.label}</span>
-                  <Icon className={`size-4 ${kpi.accent}`} />
+                  <Icon className={`size-4 ${kpi.accent}`} weight="duotone" />
                 </div>
                 <div className="text-2xl font-semibold tracking-tight text-foreground tabular-nums">
                   {loading ? <Skeleton className="h-8 w-12" /> : kpi.value}

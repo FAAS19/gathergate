@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ImageUp, Loader2, X } from "lucide-react";
+import { CircleNotch, ImageSquare, X } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { ColorPicker } from "@/components/color-picker";
 import { PortalPreview } from "@/components/portal-preview";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,7 +80,7 @@ export function BrandingSettings({ branding, onSaved }: { branding: BrandingDto;
               {logo ? (
                 <img src={logo} alt="Current logo" className="max-h-10 max-w-24 object-contain" />
               ) : (
-                <ImageUp className="size-5 text-muted-foreground" />
+                <ImageSquare className="size-5 text-muted-foreground" />
               )}
             </div>
             <div className="flex gap-2">
@@ -111,28 +112,13 @@ export function BrandingSettings({ branding, onSaved }: { branding: BrandingDto;
 
         <div className="space-y-2">
           <Label htmlFor="brand-hex">Accent colour</Label>
-          <div className="flex items-center gap-2">
-            <input
-              type="color"
-              aria-label="Pick accent colour"
-              value={validHex ? color : DEFAULT_COLOR}
-              onChange={(e) => setColor(e.target.value.toUpperCase())}
-              className="size-10 shrink-0 cursor-pointer rounded-md border border-input bg-background p-1"
-            />
-            <Input
-              id="brand-hex"
-              value={color}
-              onChange={(e) => setColor(e.target.value.trim())}
-              className="h-10 w-32 font-mono uppercase"
-              maxLength={7}
-              aria-invalid={!validHex || lowContrast || undefined}
-            />
-            {color.toUpperCase() !== DEFAULT_COLOR && (
-              <Button type="button" variant="ghost" size="sm" onClick={() => setColor(DEFAULT_COLOR)}>
-                Reset
-              </Button>
-            )}
-          </div>
+          <ColorPicker
+            id="brand-hex"
+            value={color}
+            defaultColor={DEFAULT_COLOR}
+            onChange={setColor}
+            invalid={!validHex || lowContrast}
+          />
           <p className={!validHex || lowContrast ? "text-xs font-medium text-destructive" : "text-xs text-muted-foreground"}>
             {!validHex
               ? "Use a hex value like #0F5243."
@@ -167,7 +153,7 @@ export function BrandingSettings({ branding, onSaved }: { branding: BrandingDto;
         <p className="-mt-4 text-xs text-muted-foreground">Clients see these if they get stuck.</p>
 
         <Button type="submit" disabled={saving || !validHex || lowContrast}>
-          {saving && <Loader2 className="size-4 animate-spin" />}
+          {saving && <CircleNotch className="size-4 animate-spin" />}
           Save branding
         </Button>
       </form>

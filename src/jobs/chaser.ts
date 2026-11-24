@@ -1,4 +1,5 @@
-import type { EmailAdapter } from "../adapters/email.js";
+import { createEmailAdapterFromOptions, resolveWorkspaceEmail, type EmailAdapter } from "../adapters/email.js";
+import type { AppConfig } from "../config.js";
 import type { Store } from "../db/queries.js";
 import { emailBrand, reminderEmail } from "../emails/templates.js";
 import { decryptField } from "../security/crypto.js";
@@ -8,6 +9,7 @@ export async function runReminderSweep(params: {
   email: EmailAdapter;
   baseUrl: string;
   masterKey: Buffer;
+  config?: AppConfig;
   nowIso?: string;
   saveToOutbox?: boolean;
 }): Promise<number> {
@@ -37,8 +39,20 @@ export async function runReminderSweep(params: {
       })),
     });
 
-    await params.email.send({ to: req.client_email, ...message });
-    if (params.saveToOutbox) {
+    const resolved = params.config
+      ? resolveWorkspaceEmail(workspace, params.config, params.masterKey)
+      : null;
+    const adapter =
+      resolved && resolved.source === "workspace"
+        ? createEmailAdapterFromOptions(resolved)
+        : params.email;
+    await adapter.send({
+      to: req.client_email,
+      replyTo: resolved?.replyTo || undefined,
+      ...message,
+    });
+    const shouldSaveOutbox = resolved ? resolved.backend === "console" : Boolean(params.saveToOutbox);
+    if (shouldSaveOutbox) {
       params.store.saveOutboxEmail({
         workspaceId: req.workspace_id,
         requestId: req.id,

@@ -16,6 +16,10 @@ CREATE TABLE IF NOT EXISTS workspaces (
   max_storage_bytes INTEGER NOT NULL DEFAULT 0,
   webhook_url TEXT,
   webhook_secret TEXT,
+  email_backend TEXT,
+  email_from TEXT,
+  email_reply_to TEXT,
+  email_config_encrypted TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -23,6 +27,7 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   email TEXT NOT NULL UNIQUE,
+  display_name TEXT,
   password_hash TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
@@ -175,7 +180,12 @@ const COLUMN_MIGRATIONS: Record<string, Array<[string, string]>> = {
     ["logo_b64", "TEXT"],
     ["support_email", "TEXT"],
     ["support_phone", "TEXT"],
+    ["email_backend", "TEXT"],
+    ["email_from", "TEXT"],
+    ["email_reply_to", "TEXT"],
+    ["email_config_encrypted", "TEXT"],
   ],
+  users: [["display_name", "TEXT"]],
   request_items: [
     ["client_note_encrypted", "TEXT"],
     ["client_na", "INTEGER NOT NULL DEFAULT 0"],

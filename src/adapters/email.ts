@@ -1,11 +1,32 @@
 import nodemailer from "nodemailer";
-import type { AppConfig } from "../config.js";
+import type { AppConfig, EmailBackend } from "../config.js";
+import type { WorkspaceRow } from "../db/queries.js";
+import { decryptField } from "../security/crypto.js";
 
 export interface EmailMessage {
   to: string;
   subject: string;
   text: string;
   html?: string;
+  replyTo?: string;
+}
+
+export interface WorkspaceEmailSecrets {
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpSecure?: boolean;
+  smtpUser?: string;
+  smtpPass?: string;
+  resendApiKey?: string;
+}
+
+export interface ResolvedWorkspaceEmail {
+  source: "workspace" | "env";
+  backend: EmailBackend;
+  from: string;
+  replyTo: string;
+  smtp?: AppConfig["smtp"];
+  resendApiKey?: string;
 }
 
 export interface EmailAdapter {
@@ -30,11 +51,12 @@ class ConsoleEmailAdapter implements EmailAdapter {
 class ResendEmailAdapter implements EmailAdapter {
   constructor(
     private readonly apiKey: string,
-    private readonly from: string
+    private readonly from: string,
+    private readonly fetchImpl: typeof fetch = fetch
   ) {}
 
   async send(msg: EmailMessage): Promise<void> {
-    const res = await fetch("https://api.resend.com/emails", {
+    const res = await this.fetchImpl("https://api.resend.com/emails", {
       method: "POST",
       headers: {
         authorization: `Bearer ${this.apiKey}`,
@@ -47,6 +69,7 @@ class ResendEmailAdapter implements EmailAdapter {
         subject: msg.subject,
         text: msg.text,
         ...(msg.html ? { html: msg.html } : {}),
+        ...(msg.replyTo ? { reply_to: msg.replyTo } : {}),
       }),
     });
     if (!res.ok) {
@@ -77,16 +100,74 @@ class SmtpEmailAdapter implements EmailAdapter {
       subject: msg.subject,
       text: msg.text,
       html: msg.html,
+      ...(msg.replyTo ? { replyTo: msg.replyTo } : {}),
     });
   }
 }
 
-export function createEmailAdapter(config: AppConfig): EmailAdapter {
-  if (config.emailBackend === "resend" && config.resendApiKey) {
-    return new ResendEmailAdapter(config.resendApiKey, config.emailFrom);
+export function createEmailAdapterFromOptions(opts: {
+  backend: EmailBackend;
+  from: string;
+  resendApiKey?: string;
+  smtp?: AppConfig["smtp"];
+  fetchImpl?: typeof fetch;
+}): EmailAdapter {
+  if (opts.backend === "resend" && opts.resendApiKey) {
+    return new ResendEmailAdapter(opts.resendApiKey, opts.from, opts.fetchImpl);
   }
-  if (config.emailBackend === "smtp" && config.smtp) {
-    return new SmtpEmailAdapter(config.smtp, config.emailFrom);
+  if (opts.backend === "smtp" && opts.smtp?.host) {
+    return new SmtpEmailAdapter(opts.smtp, opts.from);
   }
   return new ConsoleEmailAdapter();
+}
+
+export function createEmailAdapter(config: AppConfig): EmailAdapter {
+  return createEmailAdapterFromOptions({
+    backend: config.emailBackend,
+    from: config.emailFrom,
+    resendApiKey: config.resendApiKey,
+    smtp: config.smtp,
+  });
+}
+
+export function resolveWorkspaceEmail(
+  ws: Pick<WorkspaceRow, "id" | "email_backend" | "email_from" | "email_reply_to" | "email_config_encrypted">,
+  config: AppConfig,
+  masterKey: Buffer
+): ResolvedWorkspaceEmail {
+  if (ws.email_backend === "console" || ws.email_backend === "smtp" || ws.email_backend === "resend") {
+    let secrets: WorkspaceEmailSecrets = {};
+    if (ws.email_config_encrypted) {
+      try {
+        secrets = JSON.parse(decryptField(masterKey, ws.email_config_encrypted, `${ws.id}:email`)) as WorkspaceEmailSecrets;
+      } catch {
+        secrets = {};
+      }
+    }
+    return {
+      source: "workspace",
+      backend: ws.email_backend,
+      from: ws.email_from || config.emailFrom,
+      replyTo: ws.email_reply_to || "",
+      smtp: secrets.smtpHost
+        ? {
+            host: secrets.smtpHost,
+            port: secrets.smtpPort ?? 587,
+            secure: Boolean(secrets.smtpSecure),
+            user: secrets.smtpUser || "",
+            pass: secrets.smtpPass || "",
+          }
+        : undefined,
+      resendApiKey: secrets.resendApiKey,
+    };
+  }
+
+  return {
+    source: "env",
+    backend: config.emailBackend,
+    from: config.emailFrom,
+    replyTo: "",
+    smtp: config.smtp,
+    resendApiKey: config.resendApiKey,
+  };
 }

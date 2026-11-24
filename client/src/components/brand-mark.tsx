@@ -19,11 +19,11 @@ export function BrandMark({
         aria-hidden="true"
       >
         <path
-          className="fill-[#11181C] dark:fill-[#EDF2EF]"
+          className="fill-foreground"
           d="M4 6H12V10H8V22H12V26H4V6ZM28 6H20V10H24V22H20V26H28V6Z"
         />
         <rect
-          className="fill-[#0F5243] dark:fill-[#2A9D7C]"
+          className="fill-primary"
           x="14"
           y="10"
           width="4"

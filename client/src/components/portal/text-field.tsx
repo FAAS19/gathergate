@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { Check, Loader2, Lock } from "lucide-react";
+import { Check, CircleNotch, Lock } from "@phosphor-icons/react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { apiJson, ApiError, VALIDATOR_OPTIONS, type RequestItemDto } from "@/lib/api";
@@ -106,7 +106,7 @@ export function TextField({
       <p id={hintId} className="flex min-h-5 items-center gap-1.5 text-xs" aria-live="polite">
         {state === "saving" ? (
           <span className="flex items-center gap-1.5 text-muted-foreground">
-            <Loader2 className="size-3.5 animate-spin" /> Checking
+            <CircleNotch className="size-3.5 animate-spin" /> Checking
           </span>
         ) : state === "error" ? (
           <span className="font-medium text-destructive">{error}</span>

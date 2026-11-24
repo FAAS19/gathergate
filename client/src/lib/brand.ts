@@ -27,6 +27,35 @@ export function readableTextOn(hex: string): string {
 /** Minimum contrast against white so brand-coloured text and icons stay legible (WCAG 1.4.11). */
 export const MIN_BRAND_CONTRAST = 3;
 
+export const BRAND_PRESETS: ReadonlyArray<{ name: string; hex: string }> = [
+  { name: "Forest Pine", hex: "#0F5243" },
+  { name: "Deep Navy", hex: "#1E3A5F" },
+  { name: "Cobalt", hex: "#1D4ED8" },
+  { name: "Indigo", hex: "#4338CA" },
+  { name: "Slate", hex: "#334155" },
+  { name: "Charcoal", hex: "#18181B" },
+  { name: "Plum", hex: "#6D28D9" },
+  { name: "Burgundy", hex: "#881337" },
+  { name: "Burnt Sienna", hex: "#9A3412" },
+  { name: "Teal", hex: "#0F766E" },
+];
+
+export function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  if (!isHexColor(hex)) return null;
+  return {
+    r: parseInt(hex.slice(1, 3), 16),
+    g: parseInt(hex.slice(3, 5), 16),
+    b: parseInt(hex.slice(5, 7), 16),
+  };
+}
+
+export function rgbToHex(r: number, g: number, b: number): string {
+  const clamp = (n: number) => Math.max(0, Math.min(255, Math.round(Number.isFinite(n) ? n : 0)));
+  return `#${[clamp(r), clamp(g), clamp(b)]
+    .map((n) => n.toString(16).padStart(2, "0").toUpperCase())
+    .join("")}`;
+}
+
 /** CSS variables that re-theme shadcn tokens for a client-facing brand colour. */
 export function brandStyle(color: string | null | undefined): CSSProperties | undefined {
   if (!isHexColor(color) || contrastRatio(color, "#FFFFFF") < MIN_BRAND_CONTRAST) return undefined;

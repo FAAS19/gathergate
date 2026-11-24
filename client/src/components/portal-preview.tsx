@@ -1,4 +1,4 @@
-import { Check, FileText, UploadCloud } from "lucide-react";
+import { Check, CloudArrowUp, FileText } from "@phosphor-icons/react";
 import { brandStyle } from "@/lib/brand";
 import { cn } from "@/lib/utils";
 
@@ -48,7 +48,7 @@ export function PortalPreview({
 
         <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5">
           <span className="flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
-            <Check className="size-3" strokeWidth={3} />
+            <Check className="size-3" weight="bold" />
           </span>
           <div className="min-w-0 flex-1">
             <p className="text-[12px] font-medium">Driver licence</p>
@@ -60,7 +60,7 @@ export function PortalPreview({
 
         <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5">
           <span className="flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground">
-            <Check className="size-3" strokeWidth={3} />
+            <Check className="size-3" weight="bold" />
           </span>
           <div className="min-w-0 flex-1">
             <p className="text-[12px] font-medium">ABN</p>
@@ -71,7 +71,7 @@ export function PortalPreview({
         <div className="rounded-lg border border-border bg-card px-3 py-2.5">
           <p className="text-[12px] font-medium">Bank statements</p>
           <div className="mt-2 flex items-center justify-center gap-1.5 rounded-md border border-dashed border-input bg-accent/50 py-3 text-[11px] text-muted-foreground">
-            <UploadCloud className="size-3.5 text-primary" />
+            <CloudArrowUp className="size-3.5 text-primary" />
             Drop files or take a photo
           </div>
         </div>

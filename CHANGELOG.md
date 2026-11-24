@@ -7,10 +7,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ### Added
 - Trunk-based contributor workflow (`CONTRIBUTING.md`), security policy and threat model (`SECURITY.md`), GitHub Actions CI (`ci.yml`), SemVer multi-arch GHCR release workflow (`release.yml`), issue/PR templates, and Dependabot configuration.
+- In-app **Email Delivery** configuration (`PUT /api/settings/email`, `POST /api/settings/email/test`) supporting Local Outbox, SMTP (Gmail, Outlook/M365, Fastmail, Amazon SES, Custom presets), and Resend with AES-256-GCM encrypted credentials and non-echoed secrets.
+- **Account & Security** settings (`PUT /api/account`, `PUT /api/account/password`) for workspace name, display name, sign-in email, and password updates with automatic revocation of other sessions.
+- Custom popover colour picker (`react-colorful`) with synced HEX, `R`/`G`/`B` numeric inputs, live `rgb(...)` readout, and 10 WCAG-AA preset swatches.
+- Standalone `/outbox` route (`OutboxPage`) and backend `tests/settings.test.ts` coverage.
 
 ### Changed
+- Neutral zinc dark-mode tokens (`#09090b` canvas, `#121215` cards, `#0e0e11` sidebar) reserving pine/emerald strictly for primary actions and focus rings.
+- Redesigned `/settings` with vertical left sub-navigation (`?section=branding|email|account|webhooks|instance`), upgraded `AppShell` with a 1-click header theme toggle, compact Vault footer row, and initials avatar menu.
+- Migrated app and portal icons to `@phosphor-icons/react` and removed unused `next-themes` and `@fontsource-variable/geist` client packages.
 
 ### Fixed
+- Linked Outbox preview tabs to `TabsContent` ARIA panels and included `/outbox` in Light/Dark WCAG 2.2 AA `axe-core` E2E verification.
 
 ### Security
 
