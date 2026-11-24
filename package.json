@@ -21,7 +21,7 @@
   "dependencies": {
     "@hono/node-server": "^2.1.11",
     "aws4fetch": "^1.0.20",
-    "hono": "^4.7.10",
+    "hono": "^4.13.21",
     "nodemailer": "^10.6.1",
     "yazl": "^3.3.1"
   },
@@ -29,7 +29,7 @@
     "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.65.1",
     "@types/node": "^24.19.2",
-    "@types/nodemailer": "^6.4.17",
+    "@types/nodemailer": "^8.0.2",
     "tsx": "^4.19.4",
     "typescript": "^7.0.2"
   }
