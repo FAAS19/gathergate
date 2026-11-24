@@ -69,6 +69,14 @@ For hot-reloading UI work during development, run `npm run dev` (backend on `:30
 
 ---
 
+## Contributing, Security & Changelog
+
+- **Feature & Bug-Fix Workflow:** See [CONTRIBUTING.md](CONTRIBUTING.md) (trunk-based `main`, verification gate, and Validator Pack guide).
+- **Security & Threat Model:** See [SECURITY.md](SECURITY.md) (zero telemetry, AES-256-GCM boundaries, responsible disclosure).
+- **Release History:** See [CHANGELOG.md](CHANGELOG.md).
+
+---
+
 ## License & Contact
 
 MIT License. See [LICENSE](LICENSE).
