@@ -19,18 +19,18 @@
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
-    "@hono/node-server": "^2.1.9",
+    "@hono/node-server": "^2.1.11",
     "aws4fetch": "^1.0.20",
     "hono": "^4.7.10",
-    "nodemailer": "^10.6.0",
+    "nodemailer": "^10.6.1",
     "yazl": "^3.3.1"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.14.0",
     "@playwright/test": "^1.65.1",
-    "@types/node": "^22.15.0",
+    "@types/node": "^24.19.2",
     "@types/nodemailer": "^6.4.17",
     "tsx": "^4.19.4",
-    "typescript": "^5.8.3"
+    "typescript": "^7.0.2"
   }
 }
