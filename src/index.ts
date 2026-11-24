@@ -1,0 +1,66 @@
+import { serve } from "@hono/node-server";
+import { createEmailAdapter } from "./adapters/email.js";
+import { createStorageAdapter } from "./adapters/storage.js";
+import { createApp } from "./app.js";
+import { loadConfig } from "./config.js";
+import { openDatabase } from "./db/client.js";
+import { runReminderSweep } from "./jobs/chaser.js";
+import { runPurgeSweep } from "./jobs/purge.js";
+
+const config = loadConfig();
+const db = openDatabase(config.dbPath);
+const storage = createStorageAdapter(config);
+const email = createEmailAdapter(config);
+
+const { app, store } = createApp({ config, db, storage, email });
+
+const server = serve(
+  {
+    fetch: app.fetch,
+    hostname: config.host,
+    port: config.port,
+  },
+  (info) => {
+    console.log(
+      `GatherGate listening on http://${info.address}:${info.port} (base: ${config.baseUrl}, storage: ${config.storageBackend}, email: ${config.emailBackend})`
+    );
+  }
+);
+
+let cronTimer: NodeJS.Timeout | undefined;
+if (config.cronIntervalMinutes > 0) {
+  const runJobs = async () => {
+    try {
+      const sent = await runReminderSweep({
+        store,
+        email,
+        baseUrl: config.baseUrl,
+        masterKey: config.masterKey,
+        saveToOutbox: config.emailBackend === "console",
+      });
+      const purged = await runPurgeSweep({ store, storage });
+      if (sent > 0 || purged.requestsPurged > 0) {
+        console.log(
+          `[GatherGate Cron] reminders_sent=${sent} requests_purged=${purged.requestsPurged} files_deleted=${purged.filesDeleted}`
+        );
+      }
+    } catch (err) {
+      console.error("[GatherGate Cron] sweep failed:", err);
+    }
+  };
+  cronTimer = setInterval(runJobs, config.cronIntervalMinutes * 60_000);
+  cronTimer.unref();
+}
+
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => {
+    if (cronTimer) clearInterval(cronTimer);
+    server.close(() => {
+      db.close();
+      process.exit(0);
+    });
+    if ("closeAllConnections" in server && typeof server.closeAllConnections === "function") {
+      server.closeAllConnections();
+    }
+  });
+}

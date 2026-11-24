@@ -1,0 +1,36 @@
+{
+  "name": "gathergate",
+  "version": "0.1.0",
+  "description": "Self-hosted magic-link client document checklist, deterministic validator, and auto-chaser.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "dev:client": "npm --prefix client run dev",
+    "build:client": "npm --prefix client run build",
+    "build:server": "tsc",
+    "build": "npm run build:client && npm run build:server",
+    "typecheck": "tsc --noEmit && npm --prefix client run typecheck",
+    "start": "node dist/index.js",
+    "test": "tsx --test tests/*.test.ts && npm --prefix client test",
+    "test:e2e": "npm run build && playwright test"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.9",
+    "aws4fetch": "^1.0.20",
+    "hono": "^4.7.10",
+    "nodemailer": "^10.6.0",
+    "yazl": "^3.3.1"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^22.15.0",
+    "@types/nodemailer": "^6.4.17",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

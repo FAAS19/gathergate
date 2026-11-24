@@ -1,0 +1,27 @@
+services:
+  gathergate:
+    build: .
+    container_name: gathergate
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3080:3080"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      HOST: "0.0.0.0"
+      PORT: "3080"
+      DATA_DIR: /data
+      TZ: Australia/Melbourne
+    volumes:
+      - gathergate_data:/data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+
+volumes:
+  gathergate_data:

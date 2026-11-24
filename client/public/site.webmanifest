@@ -1,0 +1,16 @@
+{
+  "name": "GatherGate",
+  "short_name": "GatherGate",
+  "lang": "en-AU",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#0F5243",
+  "background_color": "#F8F9F7",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

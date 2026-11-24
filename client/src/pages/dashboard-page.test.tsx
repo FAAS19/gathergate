@@ -1,0 +1,150 @@
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
+import { describe, expect, it, vi } from "vitest";
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import type { RequestsListResponse, SessionResponse } from "@/lib/api";
+import { DashboardPage } from "@/pages/dashboard-page";
+
+const SESSION: SessionResponse = {
+  needsSetup: false,
+  multiTenant: false,
+  user: { id: "usr_1", email: "ops@harbour.test" },
+  workspace: {
+    id: "ws_1",
+    name: "Harbour Advisory",
+    slug: "harbour",
+    plan: "self_hosted",
+    max_active_requests: 0,
+    max_storage_bytes: 0,
+    webhook_url: null,
+    has_webhook_secret: false,
+    brand_color: null,
+    has_logo: false,
+    support_email: null,
+    support_phone: null,
+    created_at: "2026-11-22T00:00:00.000Z",
+  },
+  readiness: {
+    storageBackend: "local",
+    emailBackend: "console",
+    cronIntervalMinutes: 5,
+    defaultPurgeDays: 30,
+    hasDemoData: false,
+    outboxCount: 0,
+  },
+};
+
+const LIST_RESPONSE: RequestsListResponse = {
+  requests: [
+    {
+      id: "req_a",
+      title: "Req Alpha",
+      client_name: "Alice",
+      client_email: "alice@test.au",
+      status: "open",
+      require_otp: false,
+      reminders_sent: 0,
+      max_reminders: 4,
+      reminders_paused: false,
+      next_reminder_at: null,
+      purge_at: null,
+      due_at: null,
+      last_opened_at: null,
+      is_demo: false,
+      created_at: "2026-11-22T00:00:00.000Z",
+      total_items: 2,
+      approved_items: 0,
+      submitted_items: 0,
+      rejected_items: 0,
+      portal_url: "http://localhost:3080/c/a",
+    },
+    {
+      id: "req_b",
+      title: "Req Beta",
+      client_name: "Bob",
+      client_email: "bob@test.au",
+      status: "open",
+      require_otp: false,
+      reminders_sent: 1,
+      max_reminders: 4,
+      reminders_paused: false,
+      next_reminder_at: null,
+      purge_at: null,
+      due_at: null,
+      last_opened_at: null,
+      is_demo: false,
+      created_at: "2026-11-22T00:00:00.000Z",
+      total_items: 3,
+      approved_items: 1,
+      submitted_items: 0,
+      rejected_items: 0,
+      portal_url: "http://localhost:3080/c/b",
+    },
+  ],
+  kpis: { active: 2, awaitingReview: 0, needsRevision: 0, completed: 0 },
+  storageBytes: 0,
+  activeCount: 2,
+  workspace: SESSION.workspace!,
+  hasDemoData: false,
+  demoPortalUrl: null,
+};
+
+function jsonResponse(status: number, body: unknown) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+describe("DashboardPage", () => {
+  it("rolls back optimistic bulk pause when server returns 500", async () => {
+    const user = userEvent.setup();
+    let resolveBulk!: (res: Response) => void;
+
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+      const url = String(input);
+      if (url === "/api/requests") {
+        return Promise.resolve(jsonResponse(200, LIST_RESPONSE));
+      }
+      if (url === "/api/requests/bulk-reminders") {
+        return new Promise<Response>((resolve) => {
+          resolveBulk = resolve;
+        });
+      }
+      return Promise.resolve(jsonResponse(404, { error: "Not mocked" }));
+    });
+
+    render(
+      <TooltipProvider>
+        <MemoryRouter>
+          <DashboardPage
+            session={SESSION}
+            onSessionRefresh={vi.fn().mockResolvedValue(undefined)}
+            theme="light"
+            onToggleTheme={vi.fn()}
+          />
+        </MemoryRouter>
+        <Toaster />
+      </TooltipProvider>
+    );
+
+    await screen.findByText("Req Alpha");
+
+    await user.click(screen.getByRole("checkbox", { name: "Select Req Alpha" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select Req Beta" }));
+    expect(screen.getByText("2 selected")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Pause reminders" }));
+    // Optimistically shows Paused on both rows
+    expect(screen.getAllByText("Paused")).toHaveLength(2);
+
+    await act(async () => {
+      resolveBulk(jsonResponse(500, { error: "Bulk update failed" }));
+    });
+
+    await waitFor(() => expect(screen.queryByText("Paused")).not.toBeInTheDocument());
+    expect(await screen.findByText("Bulk update failed")).toBeInTheDocument();
+  });
+});
