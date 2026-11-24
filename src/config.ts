@@ -5,6 +5,8 @@ import path from "node:path";
 export type StorageBackend = "local" | "s3";
 export type EmailBackend = "console" | "smtp" | "resend";
 
+export const SENSITIVE_DEFAULT_PURGE_DAYS = 14;
+
 export interface AppConfig {
   port: number;
   host: string;
@@ -12,6 +14,9 @@ export interface AppConfig {
   dataDir: string;
   dbPath: string;
   masterKey: Buffer;
+  masterKeySource: "env" | "file";
+  masterKeyFilePath?: string;
+  trustProxy: boolean;
   multiTenant: boolean;
   freeMaxActiveRequests: number;
   freeMaxStorageBytes: number;
@@ -49,29 +54,38 @@ function parseIntSafe(val: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
-function resolveMasterKey(env: NodeJS.ProcessEnv, dataDir: string): Buffer {
+function readValidatedKeyFile(filePath: string): Buffer {
+  const stored = fs.readFileSync(filePath, "utf8").trim();
+  if (!/^[0-9a-fA-F]{64}$/.test(stored)) {
+    throw new Error(`Invalid MASTER_KEY file at ${filePath}; expected 64 hex characters.`);
+  }
+  return Buffer.from(stored, "hex");
+}
+
+function resolveMasterKey(
+  env: NodeJS.ProcessEnv,
+  dataDir: string
+): { key: Buffer; source: "env" | "file"; filePath?: string } {
   const raw = env.MASTER_KEY?.trim();
   if (raw) {
     if (!/^[0-9a-fA-F]{64}$/.test(raw)) {
       throw new Error("MASTER_KEY must be a 64-character hex string (32 bytes)");
     }
-    return Buffer.from(raw, "hex");
+    return { key: Buffer.from(raw, "hex"), source: "env" };
   }
-  if (env.NODE_ENV === "production") {
-    throw new Error("MASTER_KEY is required when NODE_ENV=production");
-  }
-  // Persist auto-generated dev key under dataDir so restarts can still decrypt local test blobs.
+  // Auto-generate and persist in dataDir so single-command Docker starts cleanly; fail closed if file is corrupt.
   fs.mkdirSync(dataDir, { recursive: true });
-  const keyFile = path.join(dataDir, ".dev-master.key");
+  const keyFile = path.join(dataDir, ".master.key");
   if (fs.existsSync(keyFile)) {
-    const stored = fs.readFileSync(keyFile, "utf8").trim();
-    if (/^[0-9a-fA-F]{64}$/.test(stored)) {
-      return Buffer.from(stored, "hex");
-    }
+    return { key: readValidatedKeyFile(keyFile), source: "file", filePath: keyFile };
+  }
+  const legacyKeyFile = path.join(dataDir, ".dev-master.key");
+  if (fs.existsSync(legacyKeyFile)) {
+    return { key: readValidatedKeyFile(legacyKeyFile), source: "file", filePath: legacyKeyFile };
   }
   const generated = crypto.randomBytes(32);
   fs.writeFileSync(keyFile, generated.toString("hex") + "\n", { mode: 0o600 });
-  return generated;
+  return { key: generated, source: "file", filePath: keyFile };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -79,6 +93,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const dbPath = env.DB_PATH || path.join(dataDir, "gathergate.sqlite");
   const storageBackend = (env.STORAGE_BACKEND || "local") as StorageBackend;
   const emailBackend = (env.EMAIL_BACKEND || "console") as EmailBackend;
+  const resolvedKey = resolveMasterKey(env, dataDir);
 
   const config: AppConfig = {
     port: parseIntSafe(env.PORT, 3080),
@@ -86,7 +101,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     baseUrl: (env.BASE_URL || `http://localhost:${parseIntSafe(env.PORT, 3080)}`).replace(/\/+$/, ""),
     dataDir,
     dbPath,
-    masterKey: resolveMasterKey(env, dataDir),
+    masterKey: resolvedKey.key,
+    masterKeySource: resolvedKey.source,
+    masterKeyFilePath: resolvedKey.filePath,
+    trustProxy: parseBool(env.TRUST_PROXY, false),
     multiTenant: parseBool(env.MULTI_TENANT, false),
     freeMaxActiveRequests: parseIntSafe(env.FREE_MAX_ACTIVE_REQUESTS, 5),
     freeMaxStorageBytes: parseIntSafe(env.FREE_MAX_STORAGE_BYTES, 1024 * 1024 * 1024),

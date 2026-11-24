@@ -1,7 +1,10 @@
 import crypto from "node:crypto";
 import { Readable } from "node:stream";
 
+export const CURRENT_ENC_VERSION = "v1";
+
 export interface EncryptedBlobMeta {
+  version: string;
   ivHex: string;
   tagHex: string;
   saltHex: string;
@@ -33,9 +36,17 @@ export function safeEqualHex(a: string, b: string): boolean {
   return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
 }
 
-function deriveKey(masterKey: Buffer, salt: Buffer, purpose: string): Buffer {
+function deriveKey(
+  masterKey: Buffer,
+  salt: Buffer,
+  purpose: string,
+  version = CURRENT_ENC_VERSION
+): Buffer {
+  if (version !== CURRENT_ENC_VERSION) {
+    throw new Error(`Unsupported encryption version: ${version}`);
+  }
   return Buffer.from(
-    crypto.hkdfSync("sha256", masterKey, salt, Buffer.from(`gathergate:${purpose}:v1`, "utf8"), 32)
+    crypto.hkdfSync("sha256", masterKey, salt, Buffer.from(`gathergate:${purpose}:${version}`, "utf8"), 32)
   );
 }
 
@@ -79,6 +90,7 @@ export function encryptBuffer(
   return {
     ciphertext,
     meta: {
+      version: CURRENT_ENC_VERSION,
       ivHex: iv.toString("hex"),
       tagHex: tag.toString("hex"),
       saltHex: salt.toString("hex"),
@@ -91,10 +103,10 @@ export function encryptBuffer(
 export function createDecryptStream(
   masterKey: Buffer,
   encryptedStream: Readable,
-  meta: Pick<EncryptedBlobMeta, "ivHex" | "tagHex" | "saltHex">,
+  meta: Pick<EncryptedBlobMeta, "ivHex" | "tagHex" | "saltHex"> & { version?: string },
   aad = ""
 ): Readable {
-  const key = deriveKey(masterKey, Buffer.from(meta.saltHex, "hex"), "blob");
+  const key = deriveKey(masterKey, Buffer.from(meta.saltHex, "hex"), "blob", meta.version ?? CURRENT_ENC_VERSION);
   const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(meta.ivHex, "hex"));
   if (aad) decipher.setAAD(Buffer.from(aad, "utf8"));
   decipher.setAuthTag(Buffer.from(meta.tagHex, "hex"));
@@ -105,10 +117,10 @@ export function createDecryptStream(
 export async function decryptBuffer(
   masterKey: Buffer,
   ciphertext: Buffer,
-  meta: Pick<EncryptedBlobMeta, "ivHex" | "tagHex" | "saltHex">,
+  meta: Pick<EncryptedBlobMeta, "ivHex" | "tagHex" | "saltHex"> & { version?: string },
   aad = ""
 ): Promise<Buffer> {
-  const key = deriveKey(masterKey, Buffer.from(meta.saltHex, "hex"), "blob");
+  const key = deriveKey(masterKey, Buffer.from(meta.saltHex, "hex"), "blob", meta.version ?? CURRENT_ENC_VERSION);
   const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(meta.ivHex, "hex"));
   if (aad) decipher.setAAD(Buffer.from(aad, "utf8"));
   decipher.setAuthTag(Buffer.from(meta.tagHex, "hex"));

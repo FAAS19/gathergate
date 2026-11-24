@@ -6,7 +6,8 @@ services:
     ports:
       - "127.0.0.1:3080:3080"
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       NODE_ENV: production
       HOST: "0.0.0.0"

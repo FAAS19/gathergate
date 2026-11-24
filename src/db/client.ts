@@ -2,11 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-const SCHEMA_SQL = `
+const PRAGMAS_SQL = `
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
+`;
 
+const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -109,6 +111,7 @@ CREATE TABLE IF NOT EXISTS uploads (
   detected_mime TEXT NOT NULL,
   size_bytes INTEGER NOT NULL,
   storage_key TEXT NOT NULL,
+  enc_version TEXT NOT NULL DEFAULT 'v1',
   enc_iv TEXT NOT NULL,
   enc_tag TEXT NOT NULL,
   enc_salt TEXT NOT NULL,
@@ -164,43 +167,133 @@ CREATE TABLE IF NOT EXISTS outbox_emails (
 CREATE INDEX IF NOT EXISTS idx_outbox_workspace ON outbox_emails(workspace_id, created_at DESC);
 `;
 
-// Additive, idempotent column migrations. Append only; never rename or drop.
-const COLUMN_MIGRATIONS: Record<string, Array<[string, string]>> = {
-  requests: [
-    ["is_demo", "INTEGER NOT NULL DEFAULT 0"],
-    ["due_at", "TEXT"],
-    ["client_subject", "TEXT"],
-    ["welcome_note", "TEXT"],
-    ["last_opened_at", "TEXT"],
-    ["last_manual_reminder_at", "TEXT"],
-  ],
-  workspaces: [
-    ["brand_color", "TEXT"],
-    ["logo_mime", "TEXT"],
-    ["logo_b64", "TEXT"],
-    ["support_email", "TEXT"],
-    ["support_phone", "TEXT"],
-    ["email_backend", "TEXT"],
-    ["email_from", "TEXT"],
-    ["email_reply_to", "TEXT"],
-    ["email_config_encrypted", "TEXT"],
-  ],
-  users: [["display_name", "TEXT"]],
-  request_items: [
-    ["client_note_encrypted", "TEXT"],
-    ["client_na", "INTEGER NOT NULL DEFAULT 0"],
-  ],
-  outbox_emails: [["html_body", "TEXT"]],
-};
+interface Migration {
+  version: number;
+  name: string;
+  up: (db: DatabaseSync) => void;
+}
 
-function applyAdditiveMigrations(db: DatabaseSync): void {
-  for (const [table, columns] of Object.entries(COLUMN_MIGRATIONS)) {
-    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-    const existing = new Set(cols.map((c) => c.name));
+function ensureColumn(db: DatabaseSync, table: string, col: string, def: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === col)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+  }
+}
+
+function ensureColumns(db: DatabaseSync, tableCols: Record<string, Array<[string, string]>>): void {
+  for (const [table, columns] of Object.entries(tableCols)) {
     for (const [col, def] of columns) {
-      if (!existing.has(col)) {
-        db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
-      }
+      ensureColumn(db, table, col, def);
+    }
+  }
+}
+
+// Append-only versioned migrations; never renumber or alter previously released entries.
+const MIGRATIONS: Migration[] = [
+  {
+    version: 1,
+    name: "001_initial_schema",
+    up: (db) => {
+      db.exec(SCHEMA_SQL);
+    },
+  },
+  {
+    version: 2,
+    name: "002_portal_branding_and_client_notes",
+    up: (db) => {
+      ensureColumns(db, {
+        requests: [
+          ["is_demo", "INTEGER NOT NULL DEFAULT 0"],
+          ["due_at", "TEXT"],
+          ["client_subject", "TEXT"],
+          ["welcome_note", "TEXT"],
+          ["last_opened_at", "TEXT"],
+          ["last_manual_reminder_at", "TEXT"],
+        ],
+        workspaces: [
+          ["brand_color", "TEXT"],
+          ["logo_mime", "TEXT"],
+          ["logo_b64", "TEXT"],
+          ["support_email", "TEXT"],
+          ["support_phone", "TEXT"],
+        ],
+        request_items: [
+          ["client_note_encrypted", "TEXT"],
+          ["client_na", "INTEGER NOT NULL DEFAULT 0"],
+        ],
+        outbox_emails: [["html_body", "TEXT"]],
+      });
+    },
+  },
+  {
+    version: 3,
+    name: "003_workspace_email_and_user_profile",
+    up: (db) => {
+      ensureColumns(db, {
+        workspaces: [
+          ["email_backend", "TEXT"],
+          ["email_from", "TEXT"],
+          ["email_reply_to", "TEXT"],
+          ["email_config_encrypted", "TEXT"],
+        ],
+        users: [["display_name", "TEXT"]],
+      });
+    },
+  },
+  {
+    version: 4,
+    name: "004_upload_enc_version",
+    up: (db) => {
+      ensureColumn(db, "uploads", "enc_version", "TEXT NOT NULL DEFAULT 'v1'");
+    },
+  },
+];
+
+export const LATEST_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
+
+export function getSchemaVersion(db: DatabaseSync): number {
+  const tableExists = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'")
+    .get();
+  if (!tableExists) return 0;
+  const row = db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get() as { v: number | null };
+  return row?.v ?? 0;
+}
+
+function applyVersionedMigrations(db: DatabaseSync): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at TEXT NOT NULL
+    );
+  `);
+
+  const appliedRows = db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: number }>;
+  const applied = new Set(appliedRows.map((r) => Number(r.version)));
+  const maxApplied = appliedRows.reduce((max, r) => Math.max(max, Number(r.version)), 0);
+
+  if (maxApplied > LATEST_SCHEMA_VERSION) {
+    throw new Error(
+      `Database schema version ${maxApplied} is newer than supported version ${LATEST_SCHEMA_VERSION}`
+    );
+  }
+
+  for (const migration of MIGRATIONS) {
+    if (applied.has(migration.version)) continue;
+    db.exec("BEGIN");
+    try {
+      migration.up(db);
+      db.prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)").run(
+        migration.version,
+        migration.name,
+        new Date().toISOString()
+      );
+      db.exec(`PRAGMA user_version = ${migration.version};`);
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
     }
   }
 }
@@ -210,7 +303,12 @@ export function openDatabase(dbPath: string): DatabaseSync {
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   }
   const db = new DatabaseSync(dbPath);
-  db.exec(SCHEMA_SQL);
-  applyAdditiveMigrations(db);
-  return db;
+  try {
+    db.exec(PRAGMAS_SQL);
+    applyVersionedMigrations(db);
+    return db;
+  } catch (err) {
+    db.close();
+    throw err;
+  }
 }

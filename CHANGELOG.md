@@ -6,6 +6,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 ## [Unreleased]
 
 ### Added
+- Versioned SQLite migration runner (`schema_migrations` + `PRAGMA user_version`) supporting clean upgrades from legacy v0.1.0 databases and fail-closed downgrade protection.
+- Versioned blob encryption metadata (`enc_version = "v1"` on `uploads` + HKDF derivation check) for future `MASTER_KEY` rotation.
+- Zero-config `MASTER_KEY` auto-generation (`DATA_DIR/.master.key`) on first boot with a persistent operator reminder banner (`AppShell` + `/settings?section=instance`) and optional `.env` loading in `docker-compose.yml`.
+- Dedicated migration upgrade suite (`tests/migrations.test.ts`) and negative security suite (`tests/security.test.ts`) covering cross-tenant IDOR, OTP lockouts/expiry/replay, rate limits, spoofed uploads, expired/purged tokens, and HMAC webhooks.
 - Trunk-based contributor workflow (`CONTRIBUTING.md`), security policy and threat model (`SECURITY.md`), GitHub Actions CI (`ci.yml`), SemVer multi-arch GHCR release workflow (`release.yml`), issue/PR templates, and Dependabot configuration.
 - In-app **Email Delivery** configuration (`PUT /api/settings/email`, `POST /api/settings/email/test`) supporting Local Outbox, SMTP (Gmail, Outlook/M365, Fastmail, Amazon SES, Custom presets), and Resend with AES-256-GCM encrypted credentials and non-echoed secrets.
 - **Account & Security** settings (`PUT /api/account`, `PUT /api/account/password`) for workspace name, display name, sign-in email, and password updates with automatic revocation of other sessions.
@@ -24,6 +28,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 - Linked Outbox preview tabs to `TabsContent` ARIA panels and included `/outbox` and `/clients` in Light/Dark WCAG 2.2 AA `axe-core` E2E verification.
 
 ### Security
+- In-memory fixed-window per-IP and per-token rate limiting (`429` + `Retry-After`) on `/api/login`, `/api/client/:token/otp/send`, `/api/client/:token/otp/verify`, and file upload endpoints, with opt-in `TRUST_PROXY` header parsing.
+- Immediate 5th-attempt OTP lockout (`429`), strict expired (`410`) and purged (`200` empty items / `403` writes) portal guards, malformed multipart error handling, and unauthenticated file-delete enumeration prevention.
+- Default 14-day auto-purge retention window whenever a request or starter template includes `au_tfn_mod11` or `au_medicare_mod10`.
 
 ## [0.1.0] - 2026-11-22
 

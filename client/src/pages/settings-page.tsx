@@ -289,12 +289,25 @@ export function SettingsPage({
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2 text-sm">
-                    <div className="flex justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="text-muted-foreground">AES-256-GCM Master Key</span>
-                      <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                        {settings.readiness.masterKeyConfigured ? "Active (32-byte HKDF)" : "Missing"}
-                      </Badge>
+                      {settings.readiness.masterKeySource === "file" ? (
+                        <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                          Auto-generated in DATA_DIR
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                          {settings.readiness.masterKeyConfigured ? "Env variable (32-byte HKDF)" : "Missing"}
+                        </Badge>
+                      )}
                     </div>
+                    {settings.readiness.masterKeySource === "file" && (
+                      <p className="rounded-md border border-amber-200 bg-amber-50/70 px-2.5 py-2 text-xs text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+                        Copy the 64-hex key from <code className="font-mono">DATA_DIR/.master.key</code> into your{" "}
+                        <code className="font-mono">MASTER_KEY</code> environment variable, restart GatherGate, then remove{" "}
+                        <code className="font-mono">.master.key</code> from the data directory.
+                      </p>
+                    )}
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Storage Adapter</span>
                       <span className="font-mono text-xs uppercase">{settings.readiness.storageBackend}</span>

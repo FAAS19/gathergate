@@ -47,6 +47,11 @@ export function NewRequestPage({
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [includedIndices, setIncludedIndices] = useState<number[]>([]);
 
+  const defaultPurgeDaysFor = (sensitive: boolean) => {
+    const base = session.readiness.defaultPurgeDays || 30;
+    return String(sensitive ? Math.min(base, 14) : base);
+  };
+
   const [title, setTitle] = useState("");
   const [clientSubject, setClientSubject] = useState("");
   const [welcomeNote, setWelcomeNote] = useState("");
@@ -55,9 +60,8 @@ export function NewRequestPage({
   const [dueAt, setDueAt] = useState("");
   const [cadence, setCadence] = useState("3");
   const [maxReminders, setMaxReminders] = useState("4");
-  const [purgeAfterDays, setPurgeAfterDays] = useState(
-    String(session.readiness.defaultPurgeDays || 30)
-  );
+  const [purgeAfterDays, setPurgeAfterDays] = useState(defaultPurgeDaysFor(false));
+  const [purgeCustomized, setPurgeCustomized] = useState(false);
   const [requireOtp, setRequireOtp] = useState(false);
   const [sendInvite, setSendInvite] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -69,9 +73,14 @@ export function NewRequestPage({
         const target =
           res.templates.find((t) => t.id === initialTemplateId) ?? res.templates[0];
         if (target) {
+          const sensitive = target.items.some(
+            (i) => i.validator === "au_tfn_mod11" || i.validator === "au_medicare_mod10"
+          );
           setSelectedTemplateId(target.id);
           setIncludedIndices(target.items.map((_, i) => i));
           setTitle(target.name);
+          setRequireOtp(sensitive);
+          setPurgeAfterDays(defaultPurgeDaysFor(sensitive));
         }
       })
       .catch(() => toast.error("Failed to load templates."));
@@ -95,6 +104,12 @@ export function NewRequestPage({
     [selectedItems]
   );
 
+  useEffect(() => {
+    if (!purgeCustomized && selectedItems.length > 0) {
+      setPurgeAfterDays(defaultPurgeDaysFor(hasSensitiveFields));
+    }
+  }, [hasSensitiveFields, purgeCustomized, selectedItems.length]);
+
   function selectTemplate(tpl: TemplateDto) {
     setSelectedTemplateId(tpl.id);
     setIncludedIndices(tpl.items.map((_, i) => i));
@@ -105,6 +120,9 @@ export function NewRequestPage({
       (i) => i.validator === "au_tfn_mod11" || i.validator === "au_medicare_mod10"
     );
     setRequireOtp(sensitive);
+    if (!purgeCustomized) {
+      setPurgeAfterDays(defaultPurgeDaysFor(sensitive));
+    }
   }
 
   function toggleItemIndex(idx: number) {
@@ -356,8 +374,16 @@ export function NewRequestPage({
                       min={1}
                       max={365}
                       value={purgeAfterDays}
-                      onChange={(e) => setPurgeAfterDays(e.target.value)}
+                      onChange={(e) => {
+                        setPurgeCustomized(true);
+                        setPurgeAfterDays(e.target.value);
+                      }}
                     />
+                    {hasSensitiveFields && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Defaults to 14 days for TFN/Medicare packs.
+                      </p>
+                    )}
                   </div>
                 </div>
 

@@ -8,6 +8,11 @@ import { runReminderSweep } from "./jobs/chaser.js";
 import { runPurgeSweep } from "./jobs/purge.js";
 
 const config = loadConfig();
+if (config.masterKeySource === "file") {
+  console.warn(
+    `[GatherGate] MASTER_KEY not set in environment; using auto-generated key at ${config.masterKeyFilePath}. Move MASTER_KEY to an environment variable before production use.`
+  );
+}
 const db = openDatabase(config.dbPath);
 const storage = createStorageAdapter(config);
 const email = createEmailAdapter(config);

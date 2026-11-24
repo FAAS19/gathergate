@@ -98,6 +98,7 @@ export interface UploadRow {
   detected_mime: string;
   size_bytes: number;
   storage_key: string;
+  enc_version: string;
   enc_iv: string;
   enc_tag: string;
   enc_salt: string;
@@ -710,6 +711,7 @@ export class Store {
     detectedMime: string;
     sizeBytes: number;
     storageKey: string;
+    encVersion?: string;
     ivHex: string;
     tagHex: string;
     saltHex: string;
@@ -721,8 +723,8 @@ export class Store {
       .prepare(
         `INSERT INTO uploads (
            id, request_item_id, original_name, canonical_name, detected_mime,
-           size_bytes, storage_key, enc_iv, enc_tag, enc_salt, sha256, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           size_bytes, storage_key, enc_version, enc_iv, enc_tag, enc_salt, sha256, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         id,
@@ -732,6 +734,7 @@ export class Store {
         params.detectedMime,
         params.sizeBytes,
         params.storageKey,
+        params.encVersion ?? "v1",
         params.ivHex,
         params.tagHex,
         params.saltHex,
@@ -1044,8 +1047,8 @@ export class Store {
     this.logAudit(req.workspace_id, req.id, "system", "request.purged", { purgedAt: nowIso });
   }
 
-  createOtpCode(requestId: string, codeHash: string, ttlMinutes = 15): void {
-    const now = new Date();
+  createOtpCode(requestId: string, codeHash: string, ttlMinutes = 15, nowMs = Date.now()): void {
+    const now = new Date(nowMs);
     const expires = new Date(now.getTime() + ttlMinutes * 60_000).toISOString();
     this.db
       .prepare("DELETE FROM otp_codes WHERE request_id = ? AND verified_at IS NULL")
