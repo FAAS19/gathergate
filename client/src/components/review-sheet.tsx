@@ -22,7 +22,10 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
+  apiFetchBlob,
   formatBytes,
+  IS_DEMO,
+  triggerDemoDownload,
   type RequestDetailResponse,
   type RequestItemDto,
   type UploadDto,
@@ -92,10 +95,8 @@ export function ReviewSheet({
     let objectUrl: string | null = null;
     setPreview(null);
 
-    fetch(`/api/uploads/${uploadId}/preview`, { credentials: "same-origin" })
-      .then(async (res) => {
-        if (!res.ok) throw new Error("Preview failed");
-        const blob = await res.blob();
+    apiFetchBlob(`/api/uploads/${uploadId}/preview`)
+      .then(async (blob) => {
         if (cancelled) return;
         if (mime.startsWith("text/")) {
           setPreview({ uploadId, url: null, text: await blob.text() });
@@ -255,12 +256,24 @@ export function ReviewSheet({
             </div>
 
             <SheetFooter className="flex-row flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
-              <Button asChild variant="outline" size="sm">
-                <a href={`/api/uploads/${current.upload.id}/download`}>
+              {IS_DEMO ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void triggerDemoDownload("upload", current.upload.id)}
+                >
                   <Download className="mr-1.5 size-3.5" />
                   Download
-                </a>
-              </Button>
+                </Button>
+              ) : (
+                <Button asChild variant="outline" size="sm">
+                  <a href={`/api/uploads/${current.upload.id}/download`}>
+                    <Download className="mr-1.5 size-3.5" />
+                    Download
+                  </a>
+                </Button>
+              )}
               {requestStatus !== "purged" && (
                 <div className="flex items-center gap-2">
                   <Button

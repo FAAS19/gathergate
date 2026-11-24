@@ -55,6 +55,8 @@ import {
   ApiError,
   formatBytes,
   formatRelativeTime,
+  IS_DEMO,
+  triggerDemoDownload,
   VALIDATOR_OPTIONS,
   type AuditEventDto,
   type ItemKind,
@@ -825,12 +827,24 @@ export function RequestDetailPage({
               </Button>
             )}
             {request.status !== "purged" && (
-              <Button asChild variant="outline" size="sm">
-                <a href={`/api/requests/${request.id}/export.zip`}>
+              IS_DEMO ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void triggerDemoDownload("export", request.id)}
+                >
                   <Download className="mr-1.5 size-4" />
                   Download Pack (.zip)
-                </a>
-              </Button>
+                </Button>
+              ) : (
+                <Button asChild variant="outline" size="sm">
+                  <a href={`/api/requests/${request.id}/export.zip`}>
+                    <Download className="mr-1.5 size-4" />
+                    Download Pack (.zip)
+                  </a>
+                </Button>
+              )
             )}
             {request.status === "open" && outstandingCount > 0 && (
               <Button
@@ -1110,12 +1124,25 @@ export function RequestDetailPage({
                                           Preview
                                         </Button>
                                       )}
-                                      <Button asChild size="xs" variant="outline" className="h-7 gap-1 text-xs">
-                                        <a href={`/api/uploads/${u.id}/download`}>
+                                      {IS_DEMO ? (
+                                        <Button
+                                          type="button"
+                                          size="xs"
+                                          variant="outline"
+                                          className="h-7 gap-1 text-xs"
+                                          onClick={() => void triggerDemoDownload("upload", u.id)}
+                                        >
                                           <Download className="size-3" />
                                           Download
-                                        </a>
-                                      </Button>
+                                        </Button>
+                                      ) : (
+                                        <Button asChild size="xs" variant="outline" className="h-7 gap-1 text-xs">
+                                          <a href={`/api/uploads/${u.id}/download`}>
+                                            <Download className="size-3" />
+                                            Download
+                                          </a>
+                                        </Button>
+                                      )}
                                     </div>
                                   </li>
                                 ))}

@@ -54,6 +54,8 @@ import {
   ApiError,
   formatBytes,
   formatRelativeTime,
+  IS_DEMO,
+  triggerDemoDownload,
   type RequestSummaryDto,
   type RequestsListResponse,
   type SessionResponse,
@@ -428,12 +430,21 @@ export function DashboardPage({
                   {r.status !== "purged" && (
                     <>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem asChild>
-                        <a href={`/api/requests/${r.id}/export.zip`}>
+                      {IS_DEMO ? (
+                        <DropdownMenuItem
+                          onClick={() => void triggerDemoDownload("export", r.id)}
+                        >
                           <Download className="mr-2 size-3.5" />
                           Download pack (.zip)
-                        </a>
-                      </DropdownMenuItem>
+                        </DropdownMenuItem>
+                      ) : (
+                        <DropdownMenuItem asChild>
+                          <a href={`/api/requests/${r.id}/export.zip`}>
+                            <Download className="mr-2 size-3.5" />
+                            Download pack (.zip)
+                          </a>
+                        </DropdownMenuItem>
+                      )}
                     </>
                   )}
                 </DropdownMenuContent>

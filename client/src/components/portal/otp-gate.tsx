@@ -3,7 +3,7 @@ import { REGEXP_ONLY_DIGITS } from "input-otp";
 import { CircleNotch } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
-import { apiJson, ApiError } from "@/lib/api";
+import { apiJson, ApiError, IS_DEMO } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export function OtpGate({
@@ -104,6 +104,11 @@ export function OtpGate({
               </InputOTPGroup>
             </InputOTP>
           </div>
+          {IS_DEMO && (
+            <p className="text-center font-mono text-xs text-muted-foreground">
+              Demo verification code: <strong className="text-foreground">482910</strong>
+            </p>
+          )}
           <p className="min-h-5 text-center text-sm" aria-live="polite">
             {verifying ? (
               <span className="inline-flex items-center gap-1.5 text-muted-foreground">

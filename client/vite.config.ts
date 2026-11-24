@@ -5,11 +5,16 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  base: process.env.VITE_BASE || (process.env.VITE_DEMO === "1" ? "./" : "/"),
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
     },
+  },
+  build: {
+    outDir: process.env.VITE_OUT_DIR || "dist",
+    emptyOutDir: true,
   },
   test: {
     environment: "jsdom",

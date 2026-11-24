@@ -11,12 +11,16 @@
     "dev": "tsx watch src/index.ts",
     "dev:client": "npm --prefix client run dev",
     "build:client": "npm --prefix client run build",
+    "build:demo": "npm --prefix client run build:demo",
+    "build:site": "npm --prefix site run build",
+    "build:pages": "npm run build:site && npm run build:demo",
     "build:server": "tsc",
     "build": "npm run build:client && npm run build:server",
     "typecheck": "tsc --noEmit && npm --prefix client run typecheck",
     "start": "node dist/index.js",
     "test": "tsx --test tests/*.test.ts && npm --prefix client test",
-    "test:e2e": "npm run build && playwright test"
+    "test:e2e": "npm run build && playwright test",
+    "test:pages": "npm run build:pages && playwright test --config playwright.pages.config.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.11",

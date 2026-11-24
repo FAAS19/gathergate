@@ -27,17 +27,19 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             client/package-lock.json
+            site/package-lock.json
 
       - name: Install dependencies
         run: |
           npm ci
           npm --prefix client ci
+          npm --prefix site ci
 
       - name: Typecheck
-        run: npm run typecheck
+        run: npm run typecheck && npm --prefix site run typecheck
 
       - name: Build
-        run: npm run build
+        run: npm run build && npm run build:pages
 
       - name: Backend & client unit tests
         run: npm test
@@ -46,12 +48,16 @@ jobs:
         run: |
           npm audit --omit=dev --audit-level=high
           npm --prefix client audit --omit=dev --audit-level=high
+          npm --prefix site audit --omit=dev --audit-level=high
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
       - name: Playwright E2E & WCAG 2.2 AA audit
         run: npm run test:e2e
+
+      - name: GitHub Pages subpath & demo E2E
+        run: npm run test:pages
 
       - name: Upload Playwright artefacts on failure
         if: failure()

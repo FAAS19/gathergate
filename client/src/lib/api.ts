@@ -274,6 +274,8 @@ export interface ClientPortalResponse {
   items?: RequestItemDto[];
 }
 
+export const IS_DEMO = import.meta.env.VITE_DEMO === "1";
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -284,6 +286,10 @@ export class ApiError extends Error {
 }
 
 export async function apiJson<T>(url: string, init?: RequestInit): Promise<T> {
+  if (import.meta.env.VITE_DEMO === "1") {
+    const { demoApiJson } = await import("./demo-api");
+    return demoApiJson<T>(url, init);
+  }
   const hasBody = init?.body !== undefined;
   const res = await fetch(url, {
     credentials: "same-origin",
@@ -303,6 +309,10 @@ export async function apiJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export async function apiUpload<T>(url: string, formData: FormData): Promise<T> {
+  if (import.meta.env.VITE_DEMO === "1") {
+    const { demoApiUpload } = await import("./demo-api");
+    return demoApiUpload<T>(url, formData);
+  }
   const res = await fetch(url, {
     method: "POST",
     credentials: "same-origin",
@@ -321,6 +331,18 @@ export function apiUploadWithProgress<T>(
   formData: FormData,
   onProgress: (loaded: number, total: number) => void
 ): Promise<T> {
+  if (import.meta.env.VITE_DEMO === "1") {
+    return import("./demo-api").then(async ({ demoApiUpload }) => {
+      const files = formData.getAll("file").filter((v): v is File => typeof v !== "string");
+      const total = Math.max(
+        1,
+        files.reduce((sum, f) => sum + (f.size || 0), 0)
+      );
+      const res = await demoApiUpload<T>(url, formData);
+      onProgress(total, total);
+      return res;
+    });
+  }
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", url);
@@ -341,6 +363,25 @@ export function apiUploadWithProgress<T>(
     xhr.onerror = () => reject(new ApiError("Connection lost. Check your internet and try again.", 0));
     xhr.send(formData);
   });
+}
+
+export async function apiFetchBlob(url: string): Promise<Blob> {
+  if (import.meta.env.VITE_DEMO === "1") {
+    const { demoApiBlob } = await import("./demo-api");
+    return demoApiBlob(url);
+  }
+  const res = await fetch(url, { credentials: "same-origin" });
+  if (!res.ok) {
+    throw new ApiError(`Preview failed (${res.status})`, res.status);
+  }
+  return res.blob();
+}
+
+export async function triggerDemoDownload(kind: "upload" | "export", id: string): Promise<void> {
+  if (import.meta.env.VITE_DEMO !== "1") return;
+  const { demoDownloadExport, demoDownloadUpload } = await import("./demo-api");
+  if (kind === "upload") demoDownloadUpload(id);
+  else demoDownloadExport(id);
 }
 
 export const VALIDATOR_OPTIONS: Array<{ value: ValidatorKey; label: string; short: string; hint?: string }> = [
