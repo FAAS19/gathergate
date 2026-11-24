@@ -14,7 +14,7 @@ jobs:
     name: Build & publish multi-arch image
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-qemu-action@v3
 
@@ -52,7 +52,7 @@ jobs:
     needs: publish-container
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: softprops/action-gh-release@v2
         with:
