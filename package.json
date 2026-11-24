@@ -19,7 +19,7 @@
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
-    "@hono/node-server": "^2.1.9",
+    "@hono/node-server": "^2.1.11",
     "aws4fetch": "^1.0.20",
     "hono": "^4.7.10",
     "nodemailer": "^10.6.0",
