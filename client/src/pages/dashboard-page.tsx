@@ -11,18 +11,14 @@ import {
 import {
   ArrowsDownUp as ArrowUpDown,
   ArrowSquareOut as ExternalLink,
-  CheckCircle as CheckCircle2,
-  Clock,
   Copy,
   DotsThree as MoreHorizontal,
   DownloadSimple as Download,
-  Eye,
   FolderOpen,
   MagnifyingGlass as Search,
   Pause,
   Play,
   Plus,
-  Warning as AlertTriangle,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/app-shell";
@@ -199,6 +195,18 @@ export function DashboardPage({
     });
   }, [data, tab, search]);
 
+  const tabCounts = useMemo(() => {
+    const list = data?.requests ?? [];
+    return {
+      all: list.length,
+      awaiting_review: list.filter((r) => r.submitted_items > 0 && r.status !== "purged").length,
+      needs_revision: list.filter((r) => r.rejected_items > 0 && r.status !== "purged").length,
+      open: list.filter((r) => r.status === "open").length,
+      completed: list.filter((r) => r.status === "completed").length,
+      purged: list.filter((r) => r.status === "purged").length,
+    };
+  }, [data]);
+
   const activeVisibleIds = useMemo(
     () => filteredRequests.filter(isActiveRequest).map((r) => r.id),
     [filteredRequests]
@@ -214,44 +222,40 @@ export function DashboardPage({
       {
         id: "select",
         header: () => (
-          <div className="pr-2">
-            <Checkbox
-              aria-label="Select all active requests"
-              disabled={activeVisibleIds.length === 0}
-              checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false}
-              onCheckedChange={(checked) => {
-                setSelectedIds((prev) => {
-                  const next = new Set(prev);
-                  if (checked === true) {
-                    activeVisibleIds.forEach((id) => next.add(id));
-                  } else {
-                    activeVisibleIds.forEach((id) => next.delete(id));
-                  }
-                  return next;
-                });
-              }}
-            />
-          </div>
+          <Checkbox
+            aria-label="Select all active requests"
+            disabled={activeVisibleIds.length === 0}
+            checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false}
+            onCheckedChange={(checked) => {
+              setSelectedIds((prev) => {
+                const next = new Set(prev);
+                if (checked === true) {
+                  activeVisibleIds.forEach((id) => next.add(id));
+                } else {
+                  activeVisibleIds.forEach((id) => next.delete(id));
+                }
+                return next;
+              });
+            }}
+          />
         ),
         cell: ({ row }) => {
           const r = row.original;
           const active = isActiveRequest(r);
           return (
-            <div className="pr-2">
-              <Checkbox
-                aria-label={`Select ${r.title}`}
-                disabled={!active}
-                checked={selectedIds.has(r.id)}
-                onCheckedChange={(checked) => {
-                  setSelectedIds((prev) => {
-                    const next = new Set(prev);
-                    if (checked === true) next.add(r.id);
-                    else next.delete(r.id);
-                    return next;
-                  });
-                }}
-              />
-            </div>
+            <Checkbox
+              aria-label={`Select ${r.title}`}
+              disabled={!active}
+              checked={selectedIds.has(r.id)}
+              onCheckedChange={(checked) => {
+                setSelectedIds((prev) => {
+                  const next = new Set(prev);
+                  if (checked === true) next.add(r.id);
+                  else next.delete(r.id);
+                  return next;
+                });
+              }}
+            />
           );
         },
       },
@@ -261,7 +265,7 @@ export function DashboardPage({
           <Button
             variant="ghost"
             size="sm"
-            className="h-8 px-2 text-xs font-medium"
+            className="-ml-2 h-7 px-2 text-xs font-medium text-muted-foreground hover:text-foreground"
             onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
           >
             Checklist
@@ -275,26 +279,28 @@ export function DashboardPage({
               <div className="flex items-center gap-2">
                 <Link
                   to={`/requests/${r.id}`}
+                  onClick={(e) => e.stopPropagation()}
                   className="truncate font-medium text-foreground hover:text-primary hover:underline"
                 >
                   {r.title}
                 </Link>
                 {r.is_demo && (
-                  <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal">
+                  <Badge variant="secondary" className="px-1.5 py-0 text-[11px] font-normal">
                     Demo
                   </Badge>
                 )}
               </div>
-              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                {r.due_at && (
-                  <span className="tabular-nums">
-                    Due {new Date(r.due_at).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}
-                  </span>
-                )}
-                {r.last_opened_at && (
-                  <span>· Opened {formatRelativeTime(r.last_opened_at)}</span>
-                )}
-              </div>
+              {(r.due_at || r.last_opened_at) && (
+                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                  {r.due_at && (
+                    <span className="tabular-nums">
+                      Due {new Date(r.due_at).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}
+                    </span>
+                  )}
+                  {r.due_at && r.last_opened_at && <span aria-hidden="true">·</span>}
+                  {r.last_opened_at && <span>Opened {formatRelativeTime(r.last_opened_at)}</span>}
+                </div>
+              )}
             </div>
           );
         },
@@ -320,16 +326,16 @@ export function DashboardPage({
           const total = Math.max(1, r.total_items);
           const pct = Math.round((r.approved_items / total) * 100);
           return (
-            <div className="w-36 space-y-1">
+            <div className="w-36 space-y-1.5">
               <div className="flex items-center justify-between text-xs tabular-nums">
                 <span className="font-medium text-foreground">
                   {r.approved_items}/{r.total_items} verified
                 </span>
                 <span className="text-muted-foreground">{pct}%</span>
               </div>
-              <Progress aria-label={`${r.title} completion`} value={pct} className="h-1.5" />
+              <Progress aria-label={`${r.title} completion`} value={pct} className="h-1" />
               {(r.submitted_items > 0 || r.rejected_items > 0) && (
-                <div className="flex gap-2 text-[11px]">
+                <div className="flex gap-2.5 text-[11px] tabular-nums">
                   {r.submitted_items > 0 && (
                     <span className="text-blue-700 dark:text-blue-300">
                       {r.submitted_items} to review
@@ -374,11 +380,15 @@ export function DashboardPage({
           const actionLabel = r.submitted_items > 0 ? "Review" : "Open";
           const active = isActiveRequest(r);
           return (
-            <div className="flex items-center justify-end gap-1.5">
+            <div className="flex items-center justify-end gap-1">
               <Button
                 size="sm"
-                variant={r.submitted_items > 0 ? "default" : "outline"}
-                className="h-7 px-2.5 text-xs"
+                variant={r.submitted_items > 0 ? "outline" : "ghost"}
+                className={
+                  r.submitted_items > 0
+                    ? "h-7 bg-card px-2.5 text-xs"
+                    : "h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground"
+                }
                 onClick={() => navigate(`/requests/${r.id}`)}
               >
                 {actionLabel}
@@ -386,7 +396,7 @@ export function DashboardPage({
               <Button
                 size="icon"
                 variant="ghost"
-                className="size-7"
+                className="size-7 text-muted-foreground hover:text-foreground"
                 title="Copy magic link"
                 aria-label="Copy magic link"
                 onClick={() => void handleCopyLink(r.portal_url)}
@@ -395,19 +405,24 @@ export function DashboardPage({
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button size="icon" variant="ghost" className="size-7" aria-label="More actions">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-7 text-muted-foreground hover:text-foreground"
+                    aria-label="More actions"
+                  >
                     <MoreHorizontal className="size-4" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+                <DropdownMenuContent align="end" className="w-52">
                   <DropdownMenuItem asChild>
                     <a href={r.portal_url} target="_blank" rel="noopener noreferrer">
-                      <ExternalLink className="mr-2 size-3.5" />
+                      <ExternalLink className="size-3.5" />
                       Open client portal
                     </a>
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => void handleCopyLink(r.portal_url)}>
-                    <Copy className="mr-2 size-3.5" />
+                    <Copy className="size-3.5" />
                     Copy magic link
                   </DropdownMenuItem>
                   {active && (
@@ -416,12 +431,12 @@ export function DashboardPage({
                     >
                       {r.reminders_paused ? (
                         <>
-                          <Play className="mr-2 size-3.5" />
+                          <Play className="size-3.5" />
                           Resume reminders
                         </>
                       ) : (
                         <>
-                          <Pause className="mr-2 size-3.5" />
+                          <Pause className="size-3.5" />
                           Pause reminders
                         </>
                       )}
@@ -434,13 +449,13 @@ export function DashboardPage({
                         <DropdownMenuItem
                           onClick={() => void triggerDemoDownload("export", r.id)}
                         >
-                          <Download className="mr-2 size-3.5" />
+                          <Download className="size-3.5" />
                           Download pack (.zip)
                         </DropdownMenuItem>
                       ) : (
                         <DropdownMenuItem asChild>
                           <a href={`/api/requests/${r.id}/export.zip`}>
-                            <Download className="mr-2 size-3.5" />
+                            <Download className="size-3.5" />
                             Download pack (.zip)
                           </a>
                         </DropdownMenuItem>
@@ -479,19 +494,19 @@ export function DashboardPage({
       theme={theme}
       onToggleTheme={onToggleTheme}
     >
-      <div className="space-y-6">
+      <div className="space-y-5">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+            <h1 className="text-xl font-semibold tracking-[-0.02em] text-foreground">
               Intake Requests
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="mt-0.5 text-sm text-muted-foreground">
               Track passwordless client submissions, verify statutory details, and dispatch automated follow-ups.
             </p>
           </div>
           {data && (
             <div className="text-xs text-muted-foreground tabular-nums">
-              Vault storage: <strong className="text-foreground">{formatBytes(data.storageBytes)}</strong>
+              Vault storage: <strong className="font-medium text-foreground">{formatBytes(data.storageBytes)}</strong>
               {data.workspace.max_storage_bytes > 0
                 ? ` / ${formatBytes(data.workspace.max_storage_bytes)}`
                 : " · Self-hosted unlimited"}
@@ -499,43 +514,34 @@ export function DashboardPage({
           )}
         </div>
 
-        {/* 4 Clickable KPI Summary Cards */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* 4-Column Segmented Metric Strip */}
+        <div className="paper-shadow grid overflow-hidden rounded-xl border border-border bg-card sm:grid-cols-2 lg:grid-cols-4">
           {[
             {
               label: "Active Requests",
               value: kpis.active,
-              sub: "Open or in review",
-              icon: Clock,
               targetTab: "open" as FilterTab,
-              accent: "text-foreground",
+              dot: "bg-slate-400 dark:bg-slate-500",
             },
             {
               label: "Awaiting Review",
               value: kpis.awaitingReview,
-              sub: "Packs with new items",
-              icon: Eye,
               targetTab: "awaiting_review" as FilterTab,
-              accent: "text-blue-700 dark:text-blue-300",
+              dot: "bg-blue-600 dark:bg-blue-400",
             },
             {
               label: "Needs Revision",
               value: kpis.needsRevision,
-              sub: "Returned to client",
-              icon: AlertTriangle,
               targetTab: "needs_revision" as FilterTab,
-              accent: "text-amber-700 dark:text-amber-300",
+              dot: "bg-amber-600 dark:bg-amber-400",
             },
             {
               label: "Completed",
               value: kpis.completed,
-              sub: "Approved & exportable",
-              icon: CheckCircle2,
               targetTab: "completed" as FilterTab,
-              accent: "text-primary",
+              dot: "bg-emerald-600 dark:bg-emerald-400",
             },
-          ].map((kpi) => {
-            const Icon = kpi.icon;
+          ].map((kpi, idx) => {
             const isActive = tab === kpi.targetTab;
             return (
               <button
@@ -543,18 +549,22 @@ export function DashboardPage({
                 type="button"
                 aria-pressed={isActive}
                 onClick={() => setTab(isActive ? "all" : kpi.targetTab)}
-                className={`paper-shadow flex w-full cursor-pointer flex-col rounded-xl border border-border bg-card p-5 text-left transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                  isActive ? "border-primary ring-1 ring-primary/30" : ""
-                }`}
+                className={`relative flex w-full cursor-pointer flex-col border-border px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                  idx > 0 ? "border-t sm:border-t-0" : ""
+                } ${idx >= 2 ? "sm:border-t lg:border-t-0" : ""} ${
+                  idx % 2 === 1 ? "sm:border-l lg:border-l-0" : ""
+                } ${idx > 0 ? "lg:border-l" : ""} ${isActive ? "bg-muted/60" : ""}`}
               >
-                <div className="flex w-full items-center justify-between pb-2">
-                  <span className="text-xs font-medium text-muted-foreground">{kpi.label}</span>
-                  <Icon className={`size-4 ${kpi.accent}`} weight="duotone" />
+                <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${kpi.dot}`} />
+                  {kpi.label}
+                </span>
+                <div className="mt-1 text-xl font-semibold tracking-tight text-foreground tabular-nums">
+                  {loading ? <Skeleton className="h-7 w-10" /> : kpi.value}
                 </div>
-                <div className="text-2xl font-semibold tracking-tight text-foreground tabular-nums">
-                  {loading ? <Skeleton className="h-8 w-12" /> : kpi.value}
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">{kpi.sub}</p>
+                {isActive && (
+                  <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-0.5 bg-primary" />
+                )}
               </button>
             );
           })}
@@ -565,7 +575,7 @@ export function DashboardPage({
           <div
             role="group"
             aria-label="Filter requests by status"
-            className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-card p-1 text-xs"
+            className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 text-xs"
           >
             {(
               [
@@ -576,21 +586,30 @@ export function DashboardPage({
                 ["completed", "Completed"],
                 ["purged", "Purged"],
               ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                aria-pressed={tab === key}
-                onClick={() => setTab(key)}
-                className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
-                  tab === key
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
+            ).map(([key, label]) => {
+              const count = tabCounts[key];
+              const active = tab === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setTab(key)}
+                  className={`cursor-pointer rounded-md px-2.5 py-1 font-medium transition-colors ${
+                    active
+                      ? "bg-card text-foreground shadow-xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                  {count > 0 && (
+                    <span className="ml-1.5 text-[11px] font-normal text-muted-foreground tabular-nums">
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
           <div className="relative w-full sm:w-72">
@@ -644,8 +663,8 @@ export function DashboardPage({
 
         {/* Table or Composed Empty State */}
         {loading ? (
-          <Card className="paper-shadow overflow-hidden">
-            <div className="border-b border-border bg-muted/60 px-4 py-3">
+          <Card className="paper-shadow gap-0 overflow-hidden py-0">
+            <div className="border-b border-border bg-muted/50 px-4 py-3">
               <Skeleton className="h-4 w-48" />
             </div>
             <div className="divide-y divide-border">
@@ -672,7 +691,7 @@ export function DashboardPage({
               <div className="flex size-11 items-center justify-center rounded-lg bg-accent text-accent-foreground">
                 <FolderOpen className="size-5" />
               </div>
-              <h2 className="mt-4 text-lg font-semibold tracking-tight text-foreground">
+              <h2 className="mt-4 text-base font-semibold tracking-tight text-foreground">
                 No active intake requests
               </h2>
               <p className="mt-1.5 max-w-md text-sm text-muted-foreground">
@@ -697,13 +716,13 @@ export function DashboardPage({
             </CardContent>
           </Card>
         ) : (
-          <Card className="paper-shadow overflow-hidden">
+          <Card className="paper-shadow gap-0 overflow-hidden py-0">
             <Table>
-              <TableHeader className="bg-muted/60">
+              <TableHeader className="bg-muted/50">
                 {table.getHeaderGroups().map((headerGroup) => (
-                  <TableRow key={headerGroup.id}>
+                  <TableRow key={headerGroup.id} className="hover:bg-transparent">
                     {headerGroup.headers.map((header) => (
-                      <TableHead key={header.id} className="text-xs font-medium text-muted-foreground">
+                      <TableHead key={header.id}>
                         {header.isPlaceholder
                           ? null
                           : flexRender(header.column.columnDef.header, header.getContext())}
@@ -714,7 +733,7 @@ export function DashboardPage({
               </TableHeader>
               <TableBody>
                 {table.getRowModel().rows.length === 0 ? (
-                  <TableRow>
+                  <TableRow className="hover:bg-transparent">
                     <TableCell colSpan={columns.length} className="h-32 text-center">
                       <p className="text-sm text-muted-foreground">
                         No requests match the current filter.
@@ -735,9 +754,20 @@ export function DashboardPage({
                   </TableRow>
                 ) : (
                   table.getRowModel().rows.map((row) => (
-                    <TableRow key={row.id} className="hover:bg-muted/40">
+                    <TableRow
+                      key={row.id}
+                      onClick={() => navigate(`/requests/${row.original.id}`)}
+                      className="cursor-pointer"
+                    >
                       {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id}>
+                        <TableCell
+                          key={cell.id}
+                          onClick={
+                            cell.column.id === "select" || cell.column.id === "actions"
+                              ? (e) => e.stopPropagation()
+                              : undefined
+                          }
+                        >
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
                         </TableCell>
                       ))}

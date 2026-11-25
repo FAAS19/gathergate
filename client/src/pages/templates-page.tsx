@@ -490,10 +490,10 @@ export function TemplatesPage({
         <div className="space-y-6">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+              <h1 className="text-xl font-semibold tracking-[-0.02em] text-foreground">
                 Checklist Templates
               </h1>
-              <p className="mt-1 text-sm text-muted-foreground">
+              <p className="mt-0.5 text-sm text-muted-foreground">
                 Reusable document packs with Australian statutory validators and drag-and-drop ordering.
               </p>
             </div>
@@ -805,7 +805,7 @@ export function TemplatesPage({
                     <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                       Live Client Portal Preview
                     </p>
-                    <p className="font-display text-sm font-semibold">
+                    <p className="text-sm font-semibold">
                       {editing.name || "Untitled Checklist"}
                     </p>
                     <div className="mt-2 flex items-center gap-2">

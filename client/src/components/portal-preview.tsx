@@ -37,7 +37,7 @@ export function PortalPreview({
 
       <div className="space-y-3 p-4">
         <div>
-          <p className="font-display text-[15px] font-semibold tracking-tight">FY26 tax return</p>
+          <p className="text-[15px] font-semibold tracking-tight">FY26 tax return</p>
           <div className="mt-2 flex items-center gap-2">
             <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
               <div className="h-full w-2/5 rounded-full bg-primary transition-colors duration-200" />

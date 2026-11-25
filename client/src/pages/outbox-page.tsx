@@ -79,8 +79,8 @@ export function OutboxPage({
       <div className="space-y-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Local Email Outbox</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">Local Email Outbox</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
               Preview client invites, 6-digit verification codes, revision notices and scheduled reminders captured locally.
             </p>
           </div>
@@ -102,14 +102,14 @@ export function OutboxPage({
 
         {outbox.length === 0 ? (
           <Card className="paper-shadow p-10 text-center text-sm text-muted-foreground">
-            <EnvelopeSimple className="mx-auto mb-2.5 size-7 text-muted-foreground/70" weight="duotone" />
+            <EnvelopeSimple className="mx-auto mb-2.5 size-7 text-muted-foreground/70" />
             <p>
               No outbound emails recorded yet. Create a checklist request, trigger an OTP, or send a test email to inspect messages here.
             </p>
           </Card>
         ) : (
           <div className="grid gap-4 lg:grid-cols-12">
-            <Card className="paper-shadow overflow-hidden lg:col-span-5">
+            <Card className="paper-shadow gap-0 overflow-hidden py-0 lg:col-span-5">
               <div className="max-h-[560px] divide-y divide-border overflow-y-auto">
                 {outbox.map((msg) => {
                   const active = activeEmail?.id === msg.id;

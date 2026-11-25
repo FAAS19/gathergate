@@ -50,7 +50,7 @@ function FirmMark({ branding }: { branding: BrandingDto }) {
 function StatusDot({ item }: { item: RequestItemDto }) {
   if (item.status === "approved") {
     return (
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground" title="Accepted">
+      <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground" title="Accepted">
         <Lock className="size-3" />
       </span>
     );
@@ -59,21 +59,21 @@ function StatusDot({ item }: { item: RequestItemDto }) {
     return (
       <span
         key="done"
-        className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground animate-in zoom-in-50 fade-in duration-200 motion-reduce:animate-none"
+        className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground animate-in zoom-in-50 fade-in duration-200 motion-reduce:animate-none"
         title="Done"
       >
-        <Check className="size-3.5" weight="bold" />
+        <Check className="size-3" weight="bold" />
       </span>
     );
   }
   if (item.status === "rejected") {
     return (
-      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700" title="Needs an update">
-        <AlertTriangle className="size-3.5" />
+      <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700" title="Needs an update">
+        <AlertTriangle className="size-3" />
       </span>
     );
   }
-  return <span className="size-6 shrink-0 rounded-full border-2 border-input" title="To do" />;
+  return <span className="mt-0.5 size-5 shrink-0 rounded-full border-2 border-input" title="To do" />;
 }
 
 function SectionNav({ sections, onPick }: { sections: Array<[string, RequestItemDto[]]>; onPick: (id: string) => void }) {
@@ -207,13 +207,13 @@ function ItemCard({
       id={`portal-item-${item.id}`}
       aria-labelledby={`label-${item.id}`}
       className={cn(
-        "scroll-mt-28 rounded-xl border bg-card p-5 shadow-[0_1px_2px_rgba(17,24,28,0.04)] transition-colors duration-300 sm:p-6",
+        "paper-shadow scroll-mt-28 rounded-xl border bg-card p-5 transition-colors duration-300",
         item.status === "rejected" ? "border-amber-300" : "border-border"
       )}
     >
-      <div className="flex items-start gap-3.5">
+      <div className="flex items-start gap-3">
         <StatusDot item={item} />
-        <div className="min-w-0 flex-1 space-y-4">
+        <div className="min-w-0 flex-1 space-y-3.5">
           <div>
             <h3 id={`label-${item.id}`} className="font-sans text-[15px] font-semibold leading-6">
               {item.label}
@@ -395,14 +395,24 @@ export function ClientPortalPage() {
         <main className="mx-auto w-full max-w-2xl">
           <div className="mb-8">
             <p className="text-sm text-muted-foreground">Hi {firstName},</p>
-            <h1 className="mt-1 text-[26px] font-semibold leading-tight tracking-[-0.025em] sm:text-[30px]">
+            <h1 className="mt-1 text-2xl font-semibold leading-tight tracking-[-0.02em] sm:text-[26px]">
               {data.request.title}
             </h1>
             {data.request.welcome_note && (
-              <p className="mt-3 whitespace-pre-line text-[15px] leading-relaxed text-muted-foreground">{data.request.welcome_note}</p>
+              <p className="mt-2.5 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">{data.request.welcome_note}</p>
             )}
-            <p className="mt-4 text-sm text-muted-foreground">
-              {items.length} items{due && <> · Please finish by <span className="font-medium text-foreground">{due}</span></>} · Your progress saves automatically
+            <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground tabular-nums">
+              <span>{items.length} items</span>
+              {due && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span>
+                    Please finish by <span className="font-medium text-foreground">{due}</span>
+                  </span>
+                </>
+              )}
+              <span aria-hidden="true">·</span>
+              <span>Saves automatically</span>
             </p>
           </div>
 
@@ -433,7 +443,7 @@ export function ClientPortalPage() {
           <div className="space-y-10">
             {sections.map(([name, sectionItems], idx) => (
               <section key={name} aria-labelledby={`section-${idx}`}>
-                <h2 id={`section-${idx}`} className="mb-3 text-sm font-medium text-muted-foreground">
+                <h2 id={`section-${idx}`} className="mb-2.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
                   {name}
                 </h2>
                 <div className="space-y-3">

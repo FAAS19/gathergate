@@ -128,90 +128,89 @@ export function ReviewSheet({
 
   return (
     <Sheet open={Boolean(current)} onOpenChange={(open) => !open && onSelectUpload(null)}>
-      <SheetContent side="right" className="flex w-full flex-col gap-3 sm:max-w-2xl">
+      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-3xl">
         {current && (
           <>
-            <SheetHeader className="space-y-2 pb-1 pr-10">
+            <SheetHeader className="space-y-2.5 border-b border-border bg-card px-5 py-3.5 pr-12">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="outline"
-                    aria-label="Previous document"
-                    disabled={!canStepPrev}
-                    onClick={() => canStepPrev && onSelectUpload(docs[currentIndex - 1].upload.id)}
-                  >
-                    <ChevronLeft className="size-4" />
-                  </Button>
-                  <span className="min-w-[4.5rem] text-center font-mono text-xs text-muted-foreground tabular-nums">
-                    {currentIndex + 1} of {docs.length}
-                  </span>
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="outline"
-                    aria-label="Next document"
-                    disabled={!canStepNext}
-                    onClick={() => canStepNext && onSelectUpload(docs[currentIndex + 1].upload.id)}
-                  >
-                    <ChevronRight className="size-4" />
-                  </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="outline"
+                      aria-label="Previous document"
+                      disabled={!canStepPrev}
+                      onClick={() => canStepPrev && onSelectUpload(docs[currentIndex - 1].upload.id)}
+                    >
+                      <ChevronLeft className="size-4" />
+                    </Button>
+                    <span className="min-w-[4rem] text-center font-mono text-xs text-muted-foreground tabular-nums">
+                      {currentIndex + 1} of {docs.length}
+                    </span>
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      variant="outline"
+                      aria-label="Next document"
+                      disabled={!canStepNext}
+                      onClick={() => canStepNext && onSelectUpload(docs[currentIndex + 1].upload.id)}
+                    >
+                      <ChevronRight className="size-4" />
+                    </Button>
+                  </div>
+
+                  <div className="h-4 w-px bg-border" aria-hidden="true" />
+
+                  <div className="flex items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label="Zoom out"
+                      disabled={zoomIdx <= 0}
+                      onClick={() => setZoomIdx((i) => Math.max(0, i - 1))}
+                    >
+                      <ZoomOut className="size-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="ghost"
+                      aria-label="Reset zoom"
+                      onClick={() => setZoomIdx(1)}
+                      className="h-6 min-w-[3.25rem] px-1.5 font-mono text-[11px] tabular-nums"
+                    >
+                      {zoomPct}%
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label="Zoom in"
+                      disabled={zoomIdx >= ZOOM_LEVELS.length - 1}
+                      onClick={() => setZoomIdx((i) => Math.min(ZOOM_LEVELS.length - 1, i + 1))}
+                    >
+                      <ZoomIn className="size-3.5" />
+                    </Button>
+                  </div>
                 </div>
+
                 <StatusBadge status={current.item.status} />
               </div>
 
               <div className="min-w-0">
-                <SheetTitle className="truncate font-mono text-sm">
+                <SheetTitle className="truncate font-mono text-sm font-medium text-foreground">
                   {current.upload.canonical_name}
                 </SheetTitle>
-                <SheetDescription className="truncate text-xs">
+                <SheetDescription className="truncate text-xs text-muted-foreground">
                   {current.item.label} · {current.upload.original_name} ({formatBytes(current.upload.size_bytes)})
                 </SheetDescription>
               </div>
             </SheetHeader>
 
-            <div className="flex flex-wrap items-center justify-between gap-2 px-4">
-              <div className="flex items-center gap-1 rounded-md border border-border bg-muted/40 p-0.5">
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Zoom out"
-                  disabled={zoomIdx <= 0}
-                  onClick={() => setZoomIdx((i) => Math.max(0, i - 1))}
-                >
-                  <ZoomOut className="size-3.5" />
-                </Button>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="ghost"
-                  aria-label="Reset zoom"
-                  onClick={() => setZoomIdx(1)}
-                  className="h-6 min-w-[3.25rem] px-1.5 font-mono text-[11px] tabular-nums"
-                >
-                  {zoomPct}%
-                </Button>
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Zoom in"
-                  disabled={zoomIdx >= ZOOM_LEVELS.length - 1}
-                  onClick={() => setZoomIdx((i) => Math.min(ZOOM_LEVELS.length - 1, i + 1))}
-                >
-                  <ZoomIn className="size-3.5" />
-                </Button>
-              </div>
-
-              <span className="hidden font-mono text-[11px] text-muted-foreground sm:inline">
-                J/K step · A approve · R revise
-              </span>
-            </div>
-
             {(current.item.client_na || current.item.client_note) && (
-              <div className="mx-4 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs">
+              <div className="border-b border-border bg-muted/40 px-5 py-2 text-xs">
                 <span className="font-medium text-foreground">
                   {current.item.client_na ? "Client marked as not applicable:" : "Client note:"}
                 </span>{" "}
@@ -219,27 +218,31 @@ export function ReviewSheet({
               </div>
             )}
 
-            <div className="mx-4 flex-1 overflow-auto rounded-lg border border-border bg-muted/50">
+            <div className="flex-1 overflow-auto bg-muted/50 p-5">
               {previewLoading ? (
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                   Decrypting file stream...
                 </div>
               ) : previewText !== null ? (
-                <pre
-                  style={{ fontSize: `${Math.round(12 * zoom)}px` }}
-                  className="h-full overflow-auto p-4 font-mono leading-relaxed text-foreground"
-                >
-                  {previewText}
-                </pre>
+                <div className="min-h-full overflow-auto rounded-lg border border-border bg-card shadow-xs">
+                  <pre
+                    style={{ fontSize: `${Math.round(12 * zoom)}px` }}
+                    className="p-5 font-mono leading-relaxed text-foreground"
+                  >
+                    {previewText}
+                  </pre>
+                </div>
               ) : previewUrl && current.upload.detected_mime === "application/pdf" ? (
-                <iframe
-                  key={`${current.upload.id}-${zoomPct}`}
-                  src={`${previewUrl}#zoom=${zoomPct}`}
-                  title={current.upload.canonical_name}
-                  className="h-full w-full bg-white"
-                />
+                <div className="h-full overflow-hidden rounded-lg border border-border bg-card shadow-xs">
+                  <iframe
+                    key={`${current.upload.id}-${zoomPct}`}
+                    src={`${previewUrl}#zoom=${zoomPct}`}
+                    title={current.upload.canonical_name}
+                    className="h-full w-full bg-white"
+                  />
+                </div>
               ) : previewUrl && current.upload.detected_mime.startsWith("image/") ? (
-                <div className="flex min-h-full items-start justify-center p-4">
+                <div className="flex min-h-full items-start justify-center rounded-lg border border-border bg-card p-5 shadow-xs">
                   <img
                     src={previewUrl}
                     alt={current.upload.canonical_name}
@@ -255,25 +258,30 @@ export function ReviewSheet({
               )}
             </div>
 
-            <SheetFooter className="flex-row flex-wrap items-center justify-between gap-2 border-t border-border pt-3">
-              {IS_DEMO ? (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void triggerDemoDownload("upload", current.upload.id)}
-                >
-                  <Download className="mr-1.5 size-3.5" />
-                  Download
-                </Button>
-              ) : (
-                <Button asChild variant="outline" size="sm">
-                  <a href={`/api/uploads/${current.upload.id}/download`}>
+            <SheetFooter className="mt-0 flex-row items-center justify-between gap-3 border-t border-border bg-card px-5 py-3">
+              <div className="flex items-center gap-3">
+                {IS_DEMO ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void triggerDemoDownload("upload", current.upload.id)}
+                  >
                     <Download className="mr-1.5 size-3.5" />
                     Download
-                  </a>
-                </Button>
-              )}
+                  </Button>
+                ) : (
+                  <Button asChild variant="outline" size="sm">
+                    <a href={`/api/uploads/${current.upload.id}/download`}>
+                      <Download className="mr-1.5 size-3.5" />
+                      Download
+                    </a>
+                  </Button>
+                )}
+                <span className="hidden font-mono text-[11px] text-muted-foreground md:inline">
+                  J/K · A · R
+                </span>
+              </div>
               {requestStatus !== "purged" && (
                 <div className="flex items-center gap-2">
                   <Button

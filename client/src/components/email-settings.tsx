@@ -215,7 +215,7 @@ export function EmailSettings({
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle className="flex items-center gap-2 text-base">
-              <EnvelopeSimple className="size-4 text-primary" weight="duotone" />
+              <EnvelopeSimple className="size-4 text-primary" />
               Outbound Email Delivery
             </CardTitle>
             <Badge variant="outline" className="text-[11px]">
@@ -387,7 +387,7 @@ export function EmailSettings({
 
             <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <ShieldCheck className="size-4 text-primary" weight="duotone" />
+                <ShieldCheck className="size-4 text-primary" />
                 <span>Secrets encrypted via MASTER_KEY</span>
               </div>
               <Button type="submit" disabled={saving}>
@@ -442,9 +442,9 @@ export function EmailSettings({
               )}
             >
               {testResult.ok ? (
-                <CheckCircle className="mt-0.5 size-4 shrink-0" weight="duotone" />
+                <CheckCircle className="mt-0.5 size-4 shrink-0" />
               ) : (
-                <WarningCircle className="mt-0.5 size-4 shrink-0" weight="duotone" />
+                <WarningCircle className="mt-0.5 size-4 shrink-0" />
               )}
               <span>{testResult.text}</span>
             </div>

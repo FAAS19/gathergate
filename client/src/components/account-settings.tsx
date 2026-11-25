@@ -84,7 +84,7 @@ export function AccountSettings({
       <Card className="paper-shadow">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <UserCircle className="size-4 text-primary" weight="duotone" />
+            <UserCircle className="size-4 text-primary" />
             Practice & Account Profile
           </CardTitle>
           <CardDescription className="text-xs">
@@ -136,7 +136,7 @@ export function AccountSettings({
       <Card className="paper-shadow">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
-            <LockKey className="size-4 text-primary" weight="duotone" />
+            <LockKey className="size-4 text-primary" />
             Change Password
           </CardTitle>
           <CardDescription className="text-xs">

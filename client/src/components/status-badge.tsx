@@ -1,57 +1,68 @@
-import { CheckCircle, Clock, Eye, Lock, Trash, Warning } from "@phosphor-icons/react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
-type AnyStatus = "pending" | "submitted" | "rejected" | "approved" | "open" | "in_review" | "completed" | "expired" | "purged";
+type AnyStatus =
+  | "pending"
+  | "submitted"
+  | "rejected"
+  | "approved"
+  | "open"
+  | "in_review"
+  | "completed"
+  | "expired"
+  | "purged";
 
-const CONFIG: Record<
-  AnyStatus,
-  { label: string; className: string; icon: typeof Clock }
-> = {
+const CONFIG: Record<AnyStatus, { label: string; badge: string; dot: string }> = {
   pending: {
     label: "Pending",
-    className: "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300",
-    icon: Clock,
+    badge: "border-border bg-muted/60 text-foreground/80",
+    dot: "bg-slate-400 dark:bg-slate-400",
   },
   open: {
     label: "Open",
-    className: "border-slate-200 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300",
-    icon: Clock,
+    badge: "border-border bg-muted/60 text-foreground/80",
+    dot: "bg-slate-400 dark:bg-slate-400",
   },
   submitted: {
     label: "Submitted",
-    className: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800/60 dark:bg-blue-950/60 dark:text-blue-300",
-    icon: Eye,
+    badge:
+      "border-blue-200/80 bg-blue-50/80 text-blue-800 dark:border-blue-800/60 dark:bg-blue-950/60 dark:text-blue-200",
+    dot: "bg-blue-600 dark:bg-blue-400",
   },
   in_review: {
     label: "Awaiting review",
-    className: "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800/60 dark:bg-blue-950/60 dark:text-blue-300",
-    icon: Eye,
+    badge:
+      "border-blue-200/80 bg-blue-50/80 text-blue-800 dark:border-blue-800/60 dark:bg-blue-950/60 dark:text-blue-200",
+    dot: "bg-blue-600 dark:bg-blue-400",
   },
   rejected: {
     label: "Revision needed",
-    className: "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700/60 dark:bg-amber-950/60 dark:text-amber-300",
-    icon: Warning,
+    badge:
+      "border-amber-200/90 bg-amber-50/90 text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/60 dark:text-amber-200",
+    dot: "bg-amber-600 dark:bg-amber-400",
   },
   approved: {
     label: "Locked",
-    className: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/60 dark:text-emerald-300",
-    icon: Lock,
+    badge:
+      "border-emerald-200/80 bg-emerald-50/80 text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/60 dark:text-emerald-200",
+    dot: "bg-emerald-600 dark:bg-emerald-400",
   },
   completed: {
     label: "Completed",
-    className: "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/60 dark:text-emerald-300",
-    icon: CheckCircle,
+    badge:
+      "border-emerald-200/80 bg-emerald-50/80 text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/60 dark:text-emerald-200",
+    dot: "bg-emerald-600 dark:bg-emerald-400",
   },
   expired: {
     label: "Expired",
-    className: "border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/60 dark:text-red-300",
-    icon: Warning,
+    badge:
+      "border-red-200/80 bg-red-50/80 text-red-800 dark:border-red-900/60 dark:bg-red-950/60 dark:text-red-200",
+    dot: "bg-red-600 dark:bg-red-400",
   },
   purged: {
     label: "Purged",
-    className: "border-border bg-muted text-muted-foreground",
-    icon: Trash,
+    badge: "border-border bg-muted text-muted-foreground",
+    dot: "bg-muted-foreground/60",
   },
 };
 
@@ -63,13 +74,16 @@ export function StatusBadge({
   className?: string;
 }) {
   const cfg = CONFIG[status] ?? CONFIG.pending;
-  const Icon = cfg.icon;
   return (
     <Badge
       variant="outline"
-      className={cn("gap-1 rounded-md px-2 py-0.5 text-[11px] font-medium", cfg.className, className)}
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium",
+        cfg.badge,
+        className
+      )}
     >
-      <Icon className="size-3" />
+      <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", cfg.dot)} />
       {cfg.label}
     </Badge>
   );

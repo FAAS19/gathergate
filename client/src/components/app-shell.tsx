@@ -260,7 +260,7 @@ function AppShellInner({
                   <SidebarMenuItem key={item.to}>
                     <SidebarMenuButton asChild isActive={item.active} tooltip={item.label}>
                       <Link to={item.to}>
-                        <item.icon className="size-4" weight={item.active ? "duotone" : "regular"} />
+                        <item.icon className="size-4" />
                         <span>{item.label}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -278,7 +278,7 @@ function AppShellInner({
                   <SidebarMenuItem key={item.to}>
                     <SidebarMenuButton asChild isActive={item.active} tooltip={item.label}>
                       <Link to={item.to}>
-                        <item.icon className="size-4" weight={item.active ? "duotone" : "regular"} />
+                        <item.icon className="size-4" />
                         <span>{item.label}</span>
                       </Link>
                     </SidebarMenuButton>
@@ -310,7 +310,7 @@ function AppShellInner({
                     <CaretUp className="size-3.5 shrink-0 text-muted-foreground" />
                   </SidebarMenuButton>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent side="top" align="start" className="w-60">
+                <DropdownMenuContent side="top" align="start" className="w-56">
                   <DropdownMenuLabel className="font-normal">
                     <p className="truncate text-xs font-semibold text-foreground">{opName}</p>
                     <p className="truncate text-[11px] text-muted-foreground">
@@ -319,20 +319,20 @@ function AppShellInner({
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => navigate("/settings?section=account")}>
-                    <UserCircle className="mr-2 size-4" />
+                    <UserCircle className="size-4" />
                     Account & password
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate("/settings?section=email")}>
-                    <EnvelopeSimple className="mr-2 size-4" />
+                    <EnvelopeSimple className="size-4" />
                     Email delivery
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate("/settings?section=branding")}>
-                    <Palette className="mr-2 size-4" />
+                    <Palette className="size-4" />
                     Portal branding
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
-                    <SignOut className="mr-2 size-4" />
+                    <SignOut className="size-4" />
                     Sign out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -466,7 +466,7 @@ function AppShellInner({
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-8">
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-8 sm:py-7">
           {children}
         </main>
       </SidebarInset>

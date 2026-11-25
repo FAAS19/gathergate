@@ -135,10 +135,11 @@ export function FileField({
     open();
   }
 
-  const showDropzone = !locked && (item.config.multiple || item.uploads.length === 0);
+  const hasUploads = item.uploads.length > 0;
+  const showDropzone = !locked && (item.config.multiple || !hasUploads);
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2.5">
       {item.uploads.length > 0 && (
         <ul className="space-y-2" aria-label="Uploaded files">
           {item.uploads.map((u) => (
@@ -210,9 +211,10 @@ export function FileField({
       <div
         {...getRootProps({
           className: cn(
-            "group flex flex-col items-center justify-center rounded-lg border border-dashed px-4 py-7 text-center outline-none transition-colors duration-200",
+            "group flex rounded-lg border border-dashed outline-none transition-colors duration-200",
             "focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-ring/30",
             isDragActive ? "border-primary bg-accent" : "border-input bg-background hover:border-primary/60 hover:bg-accent/60",
+            hasUploads ? "flex-row items-center gap-3 px-4 py-3 text-left" : "flex-col items-center justify-center px-4 py-5 text-center",
             busy ? "pointer-events-none opacity-60" : "cursor-pointer",
             !showDropzone && "hidden"
           ),
@@ -221,19 +223,33 @@ export function FileField({
       >
         <input {...getInputProps({ "aria-label": `Choose files for ${item.label}` })} data-testid={`file-input-${item.id}`} />
         <CloudArrowUp
-          className={cn("size-6 text-primary transition-transform duration-200", isDragActive && "-translate-y-0.5")}
+          className={cn(
+            "shrink-0 text-primary transition-transform duration-200",
+            hasUploads ? "size-5" : "size-5",
+            isDragActive && "-translate-y-0.5"
+          )}
         />
-        <p className="mt-2 text-sm font-medium">
-          {isDragActive ? "Drop to upload" : coarse ? "Tap to choose a file" : "Drop files here or click to browse"}
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {typeLabel(item.config.allowedGroups)} up to {maxMb} MB
-        </p>
+        <div className={cn(hasUploads ? "min-w-0 flex-1" : "mt-1.5")}>
+          <p className="text-sm font-medium">
+            {isDragActive
+              ? "Drop to upload"
+              : hasUploads
+                ? coarse
+                  ? "Add another file"
+                  : "Add another file or drop here"
+                : coarse
+                  ? "Tap to choose a file"
+                  : "Drop files here or click to browse"}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {typeLabel(item.config.allowedGroups)} up to {maxMb} MB
+          </p>
+        </div>
       </div>
 
       {showDropzone && coarse && allowsImages && (
         <>
-          <Button type="button" variant="outline" className="w-full" onClick={() => cameraInput.current?.click()} disabled={busy}>
+          <Button type="button" variant="outline" size="sm" className="h-9 w-full" onClick={() => cameraInput.current?.click()} disabled={busy}>
             <Camera className="size-4" /> Take a photo
           </Button>
           <input

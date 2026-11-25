@@ -138,8 +138,8 @@ export function SettingsPage({
     >
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <h1 className="text-xl font-semibold tracking-[-0.02em]">Settings</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
             Manage client portal branding, outbound email providers, account security, webhooks and vault storage.
           </p>
         </div>
@@ -167,7 +167,6 @@ export function SettingsPage({
                 >
                   <Icon
                     className={cn("size-4 shrink-0", active ? "text-primary" : "text-muted-foreground")}
-                    weight={active ? "duotone" : "regular"}
                   />
                   <span>{item.label}</span>
                 </button>
@@ -209,7 +208,7 @@ export function SettingsPage({
               <Card className="paper-shadow max-w-2xl">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
-                    <WebhooksLogo className="size-4 text-primary" weight="duotone" />
+                    <WebhooksLogo className="size-4 text-primary" />
                     Completion Webhook (n8n / Automation)
                   </CardTitle>
                   <CardDescription className="text-xs">
@@ -284,7 +283,7 @@ export function SettingsPage({
                 <Card className="paper-shadow">
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-base">
-                      <CheckCircle className="size-4 text-primary" weight="duotone" />
+                      <CheckCircle className="size-4 text-primary" />
                       Encryption & Vault
                     </CardTitle>
                   </CardHeader>
@@ -324,7 +323,7 @@ export function SettingsPage({
                 <Card className="paper-shadow">
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2 text-base">
-                      <EnvelopeSimple className="size-4 text-primary" weight="duotone" />
+                      <EnvelopeSimple className="size-4 text-primary" />
                       Email & Background Workers
                     </CardTitle>
                   </CardHeader>

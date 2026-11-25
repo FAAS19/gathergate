@@ -149,6 +149,9 @@ test("operator creates, customises, reviews via continuous preview, verifies ZIP
 
   const sheet = page.getByRole("dialog");
   await expect(sheet.getByText("1 of 2")).toBeVisible();
+  const sheetBox = await sheet.boundingBox();
+  expect(sheetBox).not.toBeNull();
+  expect(sheetBox!.width).toBeGreaterThanOrEqual(600);
   await sheet.getByRole("button", { name: "Zoom in" }).click();
   await expect(sheet.getByRole("button", { name: "Reset zoom" })).toHaveText("125%");
   await screenshot(page, testInfo, "operator-review-sheet");
@@ -216,9 +219,18 @@ test("operator creates, customises, reviews via continuous preview, verifies ZIP
   expect(bulkCreate.status()).toBe(201);
 
   await page.goto("/");
+  const bulkRow = page.locator("tr").filter({ hasText: "Bulk Pause Test Pack" });
+  await bulkRow.getByRole("button", { name: "More actions" }).click();
+  const actionMenu = page.getByRole("menu");
+  await expect(actionMenu.getByRole("menuitem", { name: "Open client portal" })).toBeVisible();
+  await expect(actionMenu.getByRole("menuitem", { name: "Download pack (.zip)" })).toBeVisible();
+  const menuBox = await actionMenu.boundingBox();
+  expect(menuBox).not.toBeNull();
+  expect(menuBox!.width).toBeGreaterThanOrEqual(180);
+  await page.keyboard.press("Escape");
+
   await page.getByRole("checkbox", { name: "Select Bulk Pause Test Pack" }).click();
   await page.getByRole("button", { name: "Pause reminders" }).click();
-  const bulkRow = page.locator("tr").filter({ hasText: "Bulk Pause Test Pack" });
   await expect(bulkRow.getByText("Paused")).toBeVisible();
 
   await page.reload();

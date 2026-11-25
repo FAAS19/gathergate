@@ -733,7 +733,7 @@ export function RequestDetailPage({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-1.5">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+              <h1 className="text-xl font-semibold tracking-[-0.02em] text-foreground">
                 {request.title}
               </h1>
               <StatusBadge status={request.status} />
@@ -926,7 +926,7 @@ export function RequestDetailPage({
             </TabsList>
 
             <div className="flex flex-wrap items-center gap-2.5">
-              <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-card p-1 text-xs">
+              <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 text-xs">
                 {(
                   [
                     ["all", "All"],
@@ -941,9 +941,9 @@ export function RequestDetailPage({
                     type="button"
                     aria-pressed={filter === key}
                     onClick={() => setFilter(key)}
-                    className={`rounded-md px-2.5 py-1 font-medium transition-colors ${
+                    className={`cursor-pointer rounded-md px-2.5 py-1 font-medium transition-colors ${
                       filter === key
-                        ? "bg-primary text-primary-foreground"
+                        ? "bg-card text-foreground shadow-xs"
                         : "text-muted-foreground hover:text-foreground"
                     }`}
                   >

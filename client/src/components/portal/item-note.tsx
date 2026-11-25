@@ -107,19 +107,20 @@ export function ItemNote({
         </p>
       )}
       {!locked && (
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
           <button
             type="button"
             onClick={() => start("note")}
-            className="text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+            className="inline-flex cursor-pointer items-center gap-1.5 text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
           >
+            <ChatText className="size-3.5" aria-hidden="true" />
             {item.client_note ? "Edit note" : "Add a note"}
           </button>
           {item.status !== "submitted" && (
             <button
               type="button"
               onClick={() => start("na")}
-              className="text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
+              className="cursor-pointer text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline"
             >
               This doesn't apply to me
             </button>

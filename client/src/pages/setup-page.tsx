@@ -45,8 +45,8 @@ export function SetupPage({ onComplete }: { onComplete: () => Promise<void> }) {
 
         <div className="mx-auto flex w-full max-w-[380px] flex-1 flex-col justify-center py-12">
           <div className="animate-in fade-in slide-in-from-bottom-1 duration-500 motion-reduce:animate-none">
-            <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.025em]">Set up your workspace</h1>
-            <p className="mt-2 text-[15px] text-muted-foreground">
+            <h1 className="text-2xl font-semibold leading-tight tracking-[-0.025em]">Set up your workspace</h1>
+            <p className="mt-1.5 text-sm text-muted-foreground">
               Takes about a minute. Everything stays on your server.
             </p>
           </div>

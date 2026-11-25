@@ -24,7 +24,7 @@ export function Navbar() {
           className="flex shrink-0 items-center gap-2.5 rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
         >
           <BrandMark />
-          <span className="font-display text-[17px] font-semibold tracking-[-0.025em] text-[var(--ink)]">
+          <span className="font-display text-[15px] font-semibold tracking-[-0.02em] text-[var(--ink)]">
             GatherGate
           </span>
         </a>

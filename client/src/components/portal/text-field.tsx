@@ -75,7 +75,7 @@ export function TextField({
       if (state !== "saving") setState("idle");
     },
     onBlur: save,
-    className: cn("bg-background", state === "error" && "border-destructive focus-visible:ring-destructive/20"),
+    className: cn("bg-card", state === "error" && "border-destructive focus-visible:ring-destructive/20"),
   };
 
   return (
@@ -114,8 +114,12 @@ export function TextField({
           <span className="flex items-center gap-1.5 font-medium text-primary animate-in fade-in duration-200">
             <Check className="size-3.5" /> Verified and saved
           </span>
+        ) : item.status === "submitted" ? (
+          <span className="flex items-center gap-1.5 text-muted-foreground">
+            <Check className="size-3.5 text-primary" /> Saved
+          </span>
         ) : (
-          <span className="text-muted-foreground">Checked when you leave this field</span>
+          <span className="text-muted-foreground">Saves automatically when you finish typing</span>
         )}
       </p>
     </div>

@@ -50,10 +50,10 @@ export function LoginPage({
     <div className="flex min-h-screen flex-col bg-background px-6 py-8 sm:px-10">
       <BrandMark />
       <main className="mx-auto flex w-full max-w-[360px] flex-1 flex-col justify-center py-12">
-        <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.025em]">
+        <h1 className="text-2xl font-semibold leading-tight tracking-[-0.025em]">
           {signup ? "Create a workspace" : "Welcome back"}
         </h1>
-        <p className="mt-2 text-[15px] text-muted-foreground">
+        <p className="mt-1.5 text-sm text-muted-foreground">
           {signup ? "Start collecting documents in minutes." : "Sign in to your workspace."}
         </p>
 

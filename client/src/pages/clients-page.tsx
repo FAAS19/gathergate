@@ -97,8 +97,8 @@ export function ClientsPage({
       <div className="space-y-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Clients</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <h1 className="text-xl font-semibold tracking-[-0.02em]">Clients</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
               Every client from your intake packs. Open a client to inspect past requests or launch a repeat checklist.
             </p>
           </div>
@@ -115,7 +115,7 @@ export function ClientsPage({
         </div>
 
         {loading ? (
-          <Card className="paper-shadow overflow-hidden">
+          <Card className="paper-shadow gap-0 overflow-hidden py-0">
             <div className="divide-y divide-border">
               {[0, 1, 2].map((i) => (
                 <div key={i} className="flex items-center justify-between px-5 py-4">
@@ -134,7 +134,7 @@ export function ClientsPage({
         ) : filtered.length === 0 ? (
           <Card className="paper-shadow flex flex-col items-center justify-center p-12 text-center">
             <div className="flex size-11 items-center justify-center rounded-full bg-muted text-muted-foreground">
-              <Users className="size-5" weight="duotone" />
+              <Users className="size-5" />
             </div>
             <h2 className="mt-4 text-base font-semibold text-foreground">
               {clients.length === 0 ? "No clients yet" : "No matching clients"}
@@ -154,9 +154,9 @@ export function ClientsPage({
             )}
           </Card>
         ) : (
-          <Card className="paper-shadow overflow-hidden">
+          <Card className="paper-shadow gap-0 overflow-hidden py-0">
             <Table>
-              <TableHeader>
+              <TableHeader className="bg-muted/50">
                 <TableRow>
                   <TableHead>Client</TableHead>
                   <TableHead>Active packs</TableHead>
