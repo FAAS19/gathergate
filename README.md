@@ -1,120 +1,154 @@
-# GatherGate
+<div align="center">
 
-**Stop chasing clients for documents. Collect files, validate structured details deterministically, and automate follow-ups in one self-hosted container.**
+<img alt="GatherGate self-hosted client document intake" src=".github/assets/banner-dark.webp" width="100%" />
 
-A lightweight MIT-licensed alternative to Content Snare and FileInvite built on Node.js, Hono, SQLite (WAL), React 19, `shadcn/ui`, and Tailwind CSS v4. Built by **[TensorForge](https://tensorforge.dev)**.
+<br />
 
-- **[Live Browser Demo (Operator Console)](https://faas19.github.io/gathergate/demo/#/)**
-- **[Client Portal Demo](https://faas19.github.io/gathergate/demo/#/c/demo-bas)**
-- **[Project Site](https://faas19.github.io/gathergate/)**
+Self-hosted, open-source alternative to Content Snare and FileInvite. Collect client documents via passwordless magic links with deterministic validation, AES-256-GCM encryption, and keyboard-first review in one container.
 
-![GatherGate 15-second workflow showing inline ABN checksum validation, encrypted CSV upload, and keyboard-first operator review](site/public/screenshots/hero-demo.gif)
+<p>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v1.0.0-0F5243?style=flat-square&labelColor=18181B" alt="Release v1.0.0" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-0F5243?style=flat-square&labelColor=18181B" alt="MIT Licence" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/node-%3E%3D22.13-0F5243?style=flat-square&labelColor=18181B&logo=nodedotjs&logoColor=white" alt="Node >= 22.13" /></a>
+  <a href="Dockerfile"><img src="https://img.shields.io/badge/docker-amd64%20%7C%20arm64-0F5243?style=flat-square&labelColor=18181B&logo=docker&logoColor=white" alt="Docker amd64 and arm64" /></a>
+  <a href=".github/workflows/ci.yml"><img src="https://img.shields.io/badge/a11y-WCAG%202.2%20AA-0F5243?style=flat-square&labelColor=18181B" alt="WCAG 2.2 AA" /></a>
+</p>
 
----
+<p>
+  <a href="#quickstart">Quickstart</a> &middot;
+  <a href="#why-gathergate">Why GatherGate</a> &middot;
+  <a href="#product-tour">Product Tour</a> &middot;
+  <a href="#validator-packs">Validator Packs</a> &middot;
+  <a href="#compare">Compare</a> &middot;
+  <a href="#configuration">Configuration</a> &middot;
+  <a href="SECURITY.md">Security</a>
+</p>
 
-## 60-Second Quickstart (Docker)
+</div>
 
-Run the published multi-arch container image with zero `.env` setup required on first boot:
+<p align="center">
+  <img src=".github/assets/demo-workflow.webp" width="100%" alt="GatherGate workflow: passwordless client ABN mod-89 validation, encrypted tax invoice upload, and dark-mode operator review" />
+</p>
 
-```bash
-docker run -d --name gathergate -p 127.0.0.1:3080:3080 -v gathergate_data:/data ghcr.io/faas19/gathergate:latest
-```
+## Why GatherGate
 
-Or build and run from source with Docker Compose:
+- **Stop chasing scattered email attachments:** Replace long reply threads and broken shared-drive links with one passwordless magic-link checklist per client.
+- **Catch bad tax and bank IDs at submission:** Deterministic checksum validators reject mistyped ABNs, TFNs, UTRs, EINs, IBANs, and routing numbers before your team discovers them weeks later.
+- **Keep sensitive documents off third-party SaaS:** Avoid per-seat SaaS pricing and external vendor custody of tax, KYC, and identity files by running everything in one container on your own infrastructure.
+
+## Quickstart
+
+Boot from source with Docker Compose:
 
 ```bash
 docker compose up -d --build
 ```
 
-When `MASTER_KEY` is unset on first boot, GatherGate generates a 32-byte encryption key at `DATA_DIR/.master.key` and displays a persistent banner until you move `MASTER_KEY` into an environment variable (see [`.env.example`](.env.example)) for production.
+Or pull the multi-arch (`linux/amd64`, `linux/arm64`) image with zero `.env` setup on first boot:
 
-Open `http://127.0.0.1:3080` to set up your workspace and optionally load three pre-populated sample requests.
+```bash
+docker run -d --name gathergate -p 127.0.0.1:3080:3080 -v gathergate_data:/data ghcr.io/faas19/gathergate:latest
+```
 
----
+When `MASTER_KEY` is unset, GatherGate generates a 32-byte key at `DATA_DIR/.master.key` and displays a banner until you move `MASTER_KEY` into your environment (see [`.env.example`](.env.example)). Open `http://127.0.0.1:3080` to initialise your workspace.
 
 ## Product Tour
 
-![GatherGate operator dashboard showing active client intake requests and completion metrics](site/public/screenshots/operator-dashboard.png)
+**Operator Console** (`J`/`K` row selection and `Enter` to open requests from the console, `Space`/`A`/`R` review triage inside `ReviewSheet`, unified status filters, and automated reminder counters; toggles between dark zinc and Daylight themes and adapts automatically to your GitHub theme):
 
-| Operator Document Review | Passwordless Client Portal |
-| :---: | :---: |
-| ![GatherGate continuous review drawer displaying tabular CSV data alongside approve and revision controls](site/public/screenshots/operator-review.png) | ![GatherGate white-labelled client portal with section navigation, automatic save feedback, and progress bar](site/public/screenshots/client-portal-desktop.png) |
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/dashboard-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="site/public/screenshots/operator-dashboard.png" />
+  <img alt="GatherGate operator dashboard showing active intake packs, verification counts, and follow-up status" src="site/public/screenshots/operator-dashboard.png" width="100%" />
+</picture>
 
----
+**Inline Decrypted Review (`ReviewSheet`)** (inspect decrypted PDFs, tax invoice scans, and CSV/text files inside a sandboxed drawer with `Space`, approve and advance with `A`, or request revisions with `R`):
 
-## Why GatherGate
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/review-dark.png" />
+  <source media="(prefers-color-scheme: light)" srcset="site/public/screenshots/operator-review.png" />
+  <img alt="GatherGate inline review drawer displaying a decrypted client tax invoice alongside approve and revision controls" src="site/public/screenshots/operator-review.png" width="100%" />
+</picture>
 
-- **Passwordless magic links with optional 6-digit email OTP**: Clients upload documents and answer questions without creating accounts, and can leave notes or mark optional items as not applicable instead of reverting to email.
-- **Deterministic validator packs and magic-byte sniffing**: Verify real file signatures (`PDF`, `PNG`, `JPEG`, `WebP`, `DOCX`, `XLSX`, `CSV`, `TXT`) and checksums on arrival so malformed submissions never reach your review queue.
-- **Continuous keyboard-first review**: Step through uploaded files inside a decrypted inline preview drawer (`J`/`K` navigate, `Space` preview, `A` approve and advance, `R` request revision with one-click feedback chips).
-- **AES-256-GCM vault with scheduled auto-purge**: Per-record HKDF keys derived from `MASTER_KEY` encrypt every file blob and sensitive field; completed packs shred automatically after your retention window (14 days by default for TFN/Medicare packs, 30 days otherwise).
-- **Canonical ZIP export and signed webhooks**: Download consistently named packs (`{client}_{item}_{seq}.{ext}` plus `summary.json`) or receive HMAC-SHA256 `request.completed` webhooks into n8n or downstream workflows.
-- **Built-in email and white-label branding**: Start immediately with the Local Email Outbox, then switch per workspace or via environment variables to SMTP or Resend with your firm logo, colours, and support details.
+**Passwordless Client Portal** (white-labelled with your practice colours and logo, automatic debounced saves, optional 6-digit email OTP, N/A notes, and mobile camera capture):
 
----
+![GatherGate white-labelled client portal showing section navigation, live ABN verification, and auto-saved responses](site/public/screenshots/client-portal-desktop.png)
 
-## Comparison
+## Architecture & Capabilities
 
-| Capability | GatherGate (Self-Hosted) | Content Snare | FileInvite |
-| :--- | :--- | :--- | :--- |
-| **Licence & Pricing** | MIT (free, unlimited requests) | Paid SaaS (per-seat / tiered) | Paid SaaS (tiered) |
-| **Hosting & Data Residency** | Single Docker container + SQLite WAL (your infrastructure) | Vendor cloud | Vendor cloud |
-| **Client Authentication** | Magic link + optional 6-digit email OTP | Magic link / PIN | Portal account / SMS / link |
-| **Encryption at Rest** | AES-256-GCM with per-record HKDF keys | Vendor-managed | Vendor-managed |
-| **Validation & File Checks** | Magic-byte inspection + deterministic validator packs | Field format rules | Basic field rules |
-| **Operator Review Speed** | Continuous decrypted preview sheet + `J`/`K`/`A`/`R` triage | Item-by-item UI | Portal list view |
-| **Automation & Webhooks** | Automated reminders, canonical ZIP export, HMAC-SHA256 webhooks | Zapier / Make / API | API / Zapier |
+Built on Node.js 24 (`node:sqlite` WAL + `node:crypto`), Hono (5 production dependencies), React 19, `shadcn/ui`, and Tailwind CSS v4 with zero telemetry:
 
----
+- **Per-record AES-256-GCM vault**: Every uploaded file and sensitive text field derives a unique HKDF-SHA256 subkey from `MASTER_KEY` bound with authenticated additional data (`enc_version = "v1"`).
+- **Magic-byte inspection**: Verifies real file signatures (`PDF`, `PNG`, `JPEG`, `WebP`, `DOCX`, `XLSX`, `CSV`, `TXT`) before storage and rejects executables, HTML, SVG uploads, and arbitrary ZIPs.
+- **Sandboxed inline previews**: Decrypted previews stream with `Content-Security-Policy: default-src 'none'; sandbox`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`.
+- **Canonical ZIP export & signed webhooks**: Export consistently named packs (`{client}_{item}_{seq}.{ext}` + `summary.json`) or receive HMAC-SHA256 `request.completed` webhooks into n8n or downstream pipelines.
+- **Scheduled retention auto-purge**: Automatically deletes completed encrypted blobs and erases stored field values after your retention window (14 days default for TFN, Medicare, UK NINO, and US SSN packs, 30 days otherwise).
 
 ## Validator Packs
 
-Validator packs live in `src/validators/packs/` and run deterministically before submissions enter your review queue (unknown validator keys fail closed):
+Validators live in `src/validators/packs/` and execute deterministically before submissions enter your review queue (unknown validator keys fail closed):
 
-- **Generic pack** (`src/validators/packs/generic.ts`): `email`, `url`, `phone_e164` (international E.164), and `iban` (ISO 13616 mod-97).
-- **Australia pack** (`src/validators/packs/au.ts`): `au_abn_mod89` (ATO 11-digit ABN), `au_bsb` (6-digit BSB), `au_tfn_mod11` (ATO TFN, stored masked with audited reveal), `au_medicare_mod10` (Services Australia Medicare + IRN, stored masked), and `au_phone_e164` (`+61` normalisation).
+| Pack | Module | Deterministic Rules |
+| :--- | :--- | :--- |
+| **Generic** | [`src/validators/packs/generic.ts`](src/validators/packs/generic.ts) | `email`, `url`, `phone_e164` (international E.164), `iban` (ISO 13616 mod-97) |
+| **Australia** | [`src/validators/packs/au.ts`](src/validators/packs/au.ts) | `au_abn_mod89`, `au_bsb`, `au_tfn_mod11` (masked + audited reveal), `au_medicare_mod10` (masked), `au_phone_e164` |
+| **United Kingdom** | [`src/validators/packs/uk.ts`](src/validators/packs/uk.ts) | `uk_utr_mod11` (HMRC 10-digit mod-11), `uk_nino` (masked), `uk_sort_code` (6-digit) |
+| **United States** | [`src/validators/packs/us.ts`](src/validators/packs/us.ts) | `us_ein` (IRS prefix + 9-digit), `us_routing_aba` (ABA mod-10), `us_ssn` (SSA rules, masked) |
+| **European Union** | [`src/validators/packs/eu.ts`](src/validators/packs/eu.ts) | `eu_vat` (27-country format + BE/DE/FR checksums) |
 
-Australia is the first country pack shipped out of the box. Adding UK (NINO/UTR), NZ (IRD), US (EIN), CA (SIN), or EU packs takes one small module implementing `ValidatorPack` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+Adding more regional packs (NZ, CA, SG, JP) requires one module implementing `ValidatorPack`; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
----
+<a id="compare"></a>
 
-## Storage, Email & Tenancy
+## How GatherGate Compares
 
-- **Storage (`STORAGE_BACKEND`)**: `local` (encrypted blobs in `DATA_DIR/blobs`, default) or `s3` (Cloudflare R2, AWS S3, MinIO, Backblaze B2 via SigV4).
-- **Email (`EMAIL_BACKEND`)**: `console` (routes to Local Email Outbox and stdout, default), `smtp` (Nodemailer), or `resend` (Resend HTTP API). Per-workspace mail settings can also be encrypted and managed in `/settings`.
-- **Tenancy (`MULTI_TENANT`)**: `false` for single-workspace self-hosting (unlimited requests and storage, default), or `true` for hosted multi-tenant mode with configurable free-tier limits (`FREE_MAX_ACTIVE_REQUESTS`, `FREE_MAX_STORAGE_BYTES`).
+| Capability | GatherGate (Self-Hosted) | Content Snare | FileInvite |
+| :--- | :--- | :--- | :--- |
+| **Pricing** | Free & MIT open source (self-hosted) | Paid monthly request & team tiers | Paid per-seat & enterprise tiers |
+| **Data residency & encryption** | Your host or S3 bucket, per-record AES-256-GCM with auto-purge | Vendor-managed SaaS infrastructure | Vendor-managed SaaS infrastructure |
+| **Deterministic checksums & magic-bytes** | Built-in mod-89/11/10/97 packs plus binary signature inspection | Basic field formatting & extension rules | Basic field validation & accepted file lists |
+| **Automated follow-ups & ZIP export** | Scheduled chasers, canonical ZIP & signed HMAC webhooks | Scheduled reminders & PDF/ZIP exports | Scheduled reminders & portal downloads |
+| **Source & lock-in** | Full source on GitHub, portable SQLite & encrypted blobs | Closed-source SaaS | Closed-source SaaS |
 
----
+## Configuration
 
-## Backup & Restore
+<details>
+<summary>Storage, Email, Tenancy &amp; Environment Reference</summary>
 
-GatherGate stores structured state in `DATA_DIR/gathergate.sqlite` and encrypted uploads in `DATA_DIR/blobs/`. Decryption depends on `MASTER_KEY` (keep `MASTER_KEY` in your password manager or secret store, separate from archive files).
+| Variable | Default | Options / Notes |
+| :--- | :--- | :--- |
+| `MASTER_KEY` | Auto-generated file | 64-char hex key (32 bytes) for HKDF + AES-256-GCM encryption |
+| `STORAGE_BACKEND` | `local` | `local` (`DATA_DIR/blobs`) or `s3` (Cloudflare R2, AWS S3, MinIO, Backblaze B2 via SigV4) |
+| `EMAIL_BACKEND` | `console` | `console` (Local Email Outbox + stdout), `smtp` (Nodemailer), or `resend` (Resend HTTP API); also configurable per workspace in `/settings` |
+| `MULTI_TENANT` | `false` | `false` for single-workspace unlimited hosting, or `true` with `FREE_MAX_ACTIVE_REQUESTS` and `FREE_MAX_STORAGE_BYTES` |
 
-### Backup
+See [`.env.example`](.env.example) for the complete list of environment variables.
 
-Stop the container so WAL frames are checkpointed cleanly before archiving:
+</details>
+
+<details>
+<summary>Backup &amp; Restore</summary>
+
+Stop the container so SQLite WAL frames checkpoint cleanly before archiving `gathergate.sqlite` and `blobs/` (keep `MASTER_KEY` in your secret manager, separate from backup archives):
 
 ```bash
+# Backup
 docker compose stop gathergate
 docker run --rm -v gathergate_gathergate_data:/data -v "$PWD:/backup" alpine \
   tar -czf "/backup/gathergate-backup-$(date +%F).tar.gz" -C /data gathergate.sqlite blobs
 docker compose start gathergate
-```
 
-### Restore
-
-Restore the archive into a fresh `/data` volume, provide the matching `MASTER_KEY` via `.env` or `-e MASTER_KEY=...`, then boot and verify an encrypted document preview or ZIP export:
-
-```bash
+# Restore
 docker volume create gathergate_gathergate_data
 docker run --rm -v gathergate_gathergate_data:/data -v "$PWD:/backup" alpine \
   tar -xzf /backup/gathergate-backup-YYYY-MM-DD.tar.gz -C /data
 docker compose up -d
 ```
 
----
+</details>
 
-## Local Development & Verification
+<details>
+<summary>Local Development &amp; Verification</summary>
 
 Requires Node.js >= 22.13 (Node 24+ recommended for built-in `node:crypto.argon2Sync` and `node:sqlite`):
 
@@ -125,34 +159,16 @@ npm run typecheck
 npm run build
 npm test
 npm run test:e2e
-npm start
 ```
 
-For hot-reloading UI development, run `npm run dev` (API on `:3080`) and `npm run dev:client` (Vite dev server on `:5173` proxying `/api`).
+For hot-reloading UI development, run `npm run dev` (API on `:3080`) and `npm run dev:client` (Vite on `:5173`). To build and test the static showcase site and `VITE_DEMO=1` browser bundle locally, run `npm run build:pages && npm run test:pages`.
 
-To build and verify the static showcase site and in-browser `VITE_DEMO=1` demo locally under the `/gathergate/` subpath:
+</details>
 
-```bash
-npm run build:pages
-npm run test:pages
-```
+## Security, Contributing & Licence
 
----
-
-## Managed Cloud (Coming Soon)
-
-Prefer zero server maintenance with Australian data residency? A managed GatherGate Cloud tier is planned next. Send early-access enquiries to **[contact@tensorforge.dev](mailto:contact@tensorforge.dev?subject=GatherGate%20Managed%20Cloud%20Enquiry)**.
-
----
-
-## Contributing, Security & Changelog
-
-- **Contributing & Validator Packs:** See [CONTRIBUTING.md](CONTRIBUTING.md).
-- **Security & Threat Model:** See [SECURITY.md](SECURITY.md) (`zero telemetry` guarantee and responsible disclosure).
-- **Release History:** See [CHANGELOG.md](CHANGELOG.md).
-
----
-
-## MIT Licence
-
-Released under the [MIT Licence](LICENSE). Built by **[TensorForge](https://tensorforge.dev)** ([`contact@tensorforge.dev`](mailto:contact@tensorforge.dev?subject=GatherGate%20Enquiry)).
+- **Security & Threat Model**: [SECURITY.md](SECURITY.md) (zero telemetry guarantee and vulnerability reporting)
+- **Contributing & Validator Packs**: [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Code of Conduct**: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- **Release History**: [CHANGELOG.md](CHANGELOG.md)
+- **Licence**: [MIT](LICENSE) · Built by **[TensorForge](https://tensorforge.dev)** ([`contact@tensorforge.dev`](mailto:contact@tensorforge.dev?subject=GatherGate%20Enquiry))

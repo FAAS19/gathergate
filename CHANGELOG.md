@@ -8,7 +8,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 ## [1.0.0] - 2026-11-25
 
 ### Added
-- **Launch Assets & Release Verification (`e2e/`):** 15-second animated workflow GIF (`site/public/screenshots/hero-demo.gif`), `1280x640` social preview / OpenGraph card (`site/public/social-preview.png`), timed `<60s` 1-command Docker quickstart check (`e2e/verify-docker-quickstart.mjs`), and README asset/version verification script (`e2e/verify-readme.mjs`).
+- **Launch Assets & Release Verification (`e2e/`):** Animated workflow WebP (`.github/assets/demo-workflow.webp`), dark repository banner (`.github/assets/banner-dark.webp`), `2160x1080` social preview / OpenGraph card (`site/public/social-preview.png`), timed `<60s` 1-command Docker quickstart check (`e2e/verify-docker-quickstart.mjs`), and README asset/version verification script (`e2e/verify-readme.mjs`).
+- **Global Validator Packs & Starter Templates:** Added United Kingdom (`uk_utr_mod11`, `uk_nino`, `uk_sort_code`), United States (`us_ein`, `us_routing_aba`, `us_ssn`), and European Union (`eu_vat`) deterministic validator packs alongside Legal/KYC and Mortgage/Loan starter templates.
+- **Dashboard Keyboard Triage & Filter Strip:** Added `J`/`K`/`Enter` keyboard row selection and opening on the operator dashboard, a unified status filter strip, and macOS `⌘K` command-palette shortcut labelling.
+- **Landing-Page Validator Playground & Typography (`site/`):** Added an interactive deterministic validator playground, Plus Jakarta Sans display typography, and neutral zinc dark mode on the static showcase site.
+- **OSS Community & Container Defaults:** Added `CODE_OF_CONDUCT.md`, `.github/ISSUE_TEMPLATE/feature_request.yml`, `.github/ISSUE_TEMPLATE/config.yml`, and `TZ=${TZ:-UTC}` default in `docker-compose.yml`.
 - **GitHub Pages Showcase & Interactive Browser Demo (`site/`, `VITE_DEMO=1`):** Daylight-first static showcase site with product walkthrough tabs, pluggable Validator Pack overview, 1-command Docker quickstart, comparison table, and Managed Cloud enquiry CTA; backed by a zero-server `HashRouter` interactive demo (`site/dist/demo/`) and automated `.github/workflows/pages.yml` deployment.
 - **Launch Assets & Subpath Verification:** Automated viewport screenshot capture (`e2e/capture-showcase.mjs`), strict `/gathergate/` subpath + interactive demo Playwright E2E & WCAG 2.2 AA suite (`e2e/pages.spec.ts`), and global launch-ready `README.md`.
 - Versioned SQLite migration runner (`schema_migrations` + `PRAGMA user_version`) supporting clean upgrades from legacy v0.1.0 databases and fail-closed downgrade protection.
@@ -35,7 +39,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 ### Security
 - In-memory fixed-window per-IP and per-token rate limiting (`429` + `Retry-After`) on `/api/login`, `/api/client/:token/otp/send`, `/api/client/:token/otp/verify`, and file upload endpoints, with opt-in `TRUST_PROXY` header parsing.
 - Immediate 5th-attempt OTP lockout (`429`), strict expired (`410`) and purged (`200` empty items / `403` writes) portal guards, malformed multipart error handling, and unauthenticated file-delete enumeration prevention.
-- Default 14-day auto-purge retention window whenever a request or starter template includes `au_tfn_mod11` or `au_medicare_mod10`.
+- Default 14-day auto-purge retention window whenever a request or starter template includes sensitive national IDs (`au_tfn_mod11`, `au_medicare_mod10`, `uk_nino`, `us_ssn`).
 
 ## [0.1.0] - 2026-11-22
 

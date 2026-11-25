@@ -21,6 +21,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   apiJson,
   ApiError,
+  isSensitiveValidator,
   VALIDATOR_OPTIONS,
   type SessionResponse,
   type TemplateDto,
@@ -73,9 +74,7 @@ export function NewRequestPage({
         const target =
           res.templates.find((t) => t.id === initialTemplateId) ?? res.templates[0];
         if (target) {
-          const sensitive = target.items.some(
-            (i) => i.validator === "au_tfn_mod11" || i.validator === "au_medicare_mod10"
-          );
+          const sensitive = target.items.some((i) => isSensitiveValidator(i.validator));
           setSelectedTemplateId(target.id);
           setIncludedIndices(target.items.map((_, i) => i));
           setTitle(target.name);
@@ -97,10 +96,7 @@ export function NewRequestPage({
   }, [activeTemplate, includedIndices]);
 
   const hasSensitiveFields = useMemo(
-    () =>
-      selectedItems.some(
-        (i) => i.validator === "au_tfn_mod11" || i.validator === "au_medicare_mod10"
-      ),
+    () => selectedItems.some((i) => isSensitiveValidator(i.validator)),
     [selectedItems]
   );
 
@@ -116,9 +112,7 @@ export function NewRequestPage({
     if (!title || templates.some((t) => t.name === title)) {
       setTitle(tpl.name);
     }
-    const sensitive = tpl.items.some(
-      (i) => i.validator === "au_tfn_mod11" || i.validator === "au_medicare_mod10"
-    );
+    const sensitive = tpl.items.some((i) => isSensitiveValidator(i.validator));
     setRequireOtp(sensitive);
     if (!purgeCustomized) {
       setPurgeAfterDays(defaultPurgeDaysFor(sensitive));
@@ -381,7 +375,7 @@ export function NewRequestPage({
                     />
                     {hasSensitiveFields && (
                       <p className="text-[11px] text-muted-foreground">
-                        Defaults to 14 days for TFN/Medicare packs.
+                        Defaults to 14 days for sensitive ID packs (TFN, Medicare, UK NINO, US SSN).
                       </p>
                     )}
                   </div>
@@ -400,7 +394,7 @@ export function NewRequestPage({
                       )}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Protects TFN, Medicare, and identity packs even if an email link is forwarded.
+                      Protects sensitive tax, health, and national ID packs even if an email link is forwarded.
                     </p>
                   </div>
                   <Switch id="requireOtp" checked={requireOtp} onCheckedChange={setRequireOtp} />

@@ -1,4 +1,4 @@
-// Verifies README local assets/links, release version alignment, and doc hygiene before launch.
+// Verifies README local assets/links (Markdown + HTML), release version alignment, and doc hygiene.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -8,19 +8,16 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readmePath = path.join(ROOT, "README.md");
 const readme = fs.readFileSync(readmePath, "utf8");
 
-// 1. Validate every relative markdown image and link in README.md.
-const linkPattern = /(!?)\[[^\]]*\]\(([^)]+)\)/g;
 const checkedFiles = new Set();
 let imageCount = 0;
 
-for (const match of readme.matchAll(linkPattern)) {
-  const isImage = match[1] === "!";
-  const rawTarget = match[2].trim().split(/\s+/)[0];
-  if (/^(https?:|mailto:|#)/i.test(rawTarget)) continue;
+function validateTarget(rawTarget, isImage) {
+  const target = rawTarget.trim().split(/\s+/)[0];
+  if (!target || /^(https?:|mailto:|#)/i.test(target)) return;
 
-  const cleanRel = rawTarget.split("#")[0].split("?")[0];
+  const cleanRel = target.split("#")[0].split("?")[0];
   const resolved = path.resolve(ROOT, cleanRel);
-  assert.ok(resolved.startsWith(ROOT + path.sep), `Link escapes repo root: ${rawTarget}`);
+  assert.ok(resolved.startsWith(ROOT + path.sep), `Link escapes repo root: ${target}`);
   assert.ok(fs.existsSync(resolved), `Missing README target: ${cleanRel}`);
 
   const stat = fs.statSync(resolved);
@@ -29,21 +26,47 @@ for (const match of readme.matchAll(linkPattern)) {
 
   if (isImage) {
     imageCount += 1;
-    const head = fs.readFileSync(resolved).subarray(0, 8);
+    const buf = fs.readFileSync(resolved);
+    const head = buf.subarray(0, 12);
     const ext = path.extname(resolved).toLowerCase();
     if (ext === ".png") {
       assert.equal(head.subarray(0, 4).toString("hex"), "89504e47", `Invalid PNG header: ${cleanRel}`);
     } else if (ext === ".gif") {
       assert.match(head.subarray(0, 6).toString("ascii"), /^GIF8[79]a$/, `Invalid GIF header: ${cleanRel}`);
       assert.ok(stat.size < 5 * 1024 * 1024, `GIF exceeds 5 MB GitHub budget (${stat.size} bytes): ${cleanRel}`);
+    } else if (ext === ".webp") {
+      assert.equal(head.subarray(0, 4).toString("ascii"), "RIFF", `Invalid WebP RIFF header: ${cleanRel}`);
+      assert.equal(head.subarray(8, 12).toString("ascii"), "WEBP", `Invalid WebP signature: ${cleanRel}`);
+      assert.ok(stat.size < 5 * 1024 * 1024, `WebP exceeds 5 MB GitHub budget (${stat.size} bytes): ${cleanRel}`);
+    } else if (ext === ".svg") {
+      assert.match(buf.toString("utf8", 0, 512), /<svg[\s>]/i, `Invalid SVG root tag: ${cleanRel}`);
     }
   }
+}
+
+// 1. Validate every relative Markdown image/link and HTML <img>/<source>/<a> target in README.md.
+const linkPattern = /(!?)\[[^\]]*\]\(([^)]+)\)/g;
+for (const match of readme.matchAll(linkPattern)) {
+  validateTarget(match[2], match[1] === "!");
+}
+
+const htmlSrcPattern = /<(img|source)\b[^>]*\b(?:src|srcset)=["']([^"']+)["']/gi;
+for (const match of readme.matchAll(htmlSrcPattern)) {
+  const candidates = match[2].split(",").map((s) => s.trim().split(/\s+/)[0]);
+  for (const candidate of candidates) {
+    validateTarget(candidate, true);
+  }
+}
+
+const htmlHrefPattern = /<a\b[^>]*\bhref=["']([^"']+)["']/gi;
+for (const match of readme.matchAll(htmlHrefPattern)) {
+  validateTarget(match[1], false);
 }
 
 assert.ok(imageCount >= 3, `Expected at least 3 README images, found ${imageCount}`);
 
 // 2. Enforce zero em-dashes across core repository docs.
-for (const docName of ["README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md"]) {
+for (const docName of ["README.md", "CHANGELOG.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md"]) {
   const content = fs.readFileSync(path.join(ROOT, docName), "utf8");
   assert.ok(!content.includes("\u2014"), `Found disallowed em-dash (U+2014) in ${docName}`);
 }

@@ -25,15 +25,15 @@ export function CloudFooter() {
                 Managed Cloud (Coming Soon)
               </h2>
               <p className="mt-2.5 text-base leading-relaxed text-[var(--ink-muted)]">
-                Australian-hosted tier in Sydney (ap-southeast-2) with managed
-                backups, dedicated sending domain, and zero server upkeep.
+                Managed regional hosting (AU, EU, or US) with automated backups,
+                custom sending domain, and zero server upkeep.
               </p>
             </div>
 
             <div className="shrink-0">
               <a
                 href="mailto:contact@tensorforge.dev?subject=GatherGate%20Managed%20Cloud%20Early%20Access"
-                className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-[var(--accent)] px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[var(--accent-hover)] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+                className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-[var(--accent)] px-5 py-2.5 text-sm font-medium text-[var(--accent-ink)] transition-colors hover:bg-[var(--accent-hover)] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
               >
                 <span>Register early interest</span>
                 <ArrowRight className="size-4" aria-hidden="true" />

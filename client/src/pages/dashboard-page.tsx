@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import {
   flexRender,
@@ -57,7 +57,7 @@ import {
   type SessionResponse,
 } from "@/lib/api";
 
-type FilterTab = "all" | "awaiting_review" | "needs_revision" | "open" | "completed" | "purged";
+type FilterTab = "all" | "active" | "awaiting_review" | "needs_revision" | "completed" | "purged";
 
 function isActiveRequest(r: RequestSummaryDto): boolean {
   return r.status === "open" || r.status === "in_review";
@@ -82,6 +82,8 @@ export function DashboardPage({
   const [sorting, setSorting] = useState<SortingState>([]);
   const [seeding, setSeeding] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [activeRowId, setActiveRowId] = useState<string | null>(null);
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
   const loadRequests = useCallback(async (opts?: { silent?: boolean }) => {
     try {
@@ -108,7 +110,7 @@ export function DashboardPage({
     setSeeding(true);
     try {
       await apiJson("/api/demo/seed", { method: "POST" });
-      toast.success("Loaded 3 sample Australian client packs.");
+      toast.success("Loaded 3 sample client packs.");
       await onSessionRefresh();
       await loadRequests({ silent: true });
     } catch {
@@ -180,9 +182,9 @@ export function DashboardPage({
     const list = data?.requests ?? [];
     const q = search.trim().toLowerCase();
     return list.filter((r) => {
+      if (tab === "active" && !isActiveRequest(r)) return false;
       if (tab === "awaiting_review" && !(r.submitted_items > 0 && r.status !== "purged")) return false;
       if (tab === "needs_revision" && !(r.rejected_items > 0 && r.status !== "purged")) return false;
-      if (tab === "open" && r.status !== "open") return false;
       if (tab === "completed" && r.status !== "completed") return false;
       if (tab === "purged" && r.status !== "purged") return false;
 
@@ -199,9 +201,9 @@ export function DashboardPage({
     const list = data?.requests ?? [];
     return {
       all: list.length,
+      active: list.filter(isActiveRequest).length,
       awaiting_review: list.filter((r) => r.submitted_items > 0 && r.status !== "purged").length,
       needs_revision: list.filter((r) => r.rejected_items > 0 && r.status !== "purged").length,
-      open: list.filter((r) => r.status === "open").length,
       completed: list.filter((r) => r.status === "completed").length,
       purged: list.filter((r) => r.status === "purged").length,
     };
@@ -481,7 +483,76 @@ export function DashboardPage({
     getSortedRowModel: getSortedRowModel(),
   });
 
-  const kpis = data?.kpis ?? { active: 0, awaitingReview: 0, needsRevision: 0, completed: 0 };
+  const visibleRows = table.getRowModel().rows;
+
+  useEffect(() => {
+    if (!activeRowId) return;
+    if (!visibleRows.some((r) => r.original.id === activeRowId)) {
+      setActiveRowId(null);
+    }
+  }, [activeRowId, visibleRows]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isEditable =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable);
+      if (isEditable || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (document.querySelector('[role="dialog"], [role="menu"]')) return;
+      if (visibleRows.length === 0) return;
+
+      const key = e.key.toLowerCase();
+      const inInteractive = Boolean(
+        target?.closest('a, button, [role="button"], [role="checkbox"], [role="menuitem"]')
+      );
+      if (key === "j" || (e.key === "ArrowDown" && !inInteractive)) {
+        e.preventDefault();
+        const idx = visibleRows.findIndex((r) => r.original.id === activeRowId);
+        const nextIdx = idx < 0 ? 0 : Math.min(visibleRows.length - 1, idx + 1);
+        const nextId = visibleRows[nextIdx].original.id;
+        setActiveRowId(nextId);
+        const el = rowRefs.current[nextId];
+        if (el && typeof el.scrollIntoView === "function") {
+          el.scrollIntoView({ block: "nearest" });
+        }
+        return;
+      }
+
+      if (key === "k" || (e.key === "ArrowUp" && !inInteractive)) {
+        e.preventDefault();
+        const idx = visibleRows.findIndex((r) => r.original.id === activeRowId);
+        const prevIdx = idx < 0 ? visibleRows.length - 1 : Math.max(0, idx - 1);
+        const prevId = visibleRows[prevIdx].original.id;
+        setActiveRowId(prevId);
+        const el = rowRefs.current[prevId];
+        if (el && typeof el.scrollIntoView === "function") {
+          el.scrollIntoView({ block: "nearest" });
+        }
+        return;
+      }
+
+      if (e.key === "Enter" && activeRowId) {
+        if (target?.closest('a, button, [role="button"], [role="checkbox"], [role="menuitem"]')) {
+          return;
+        }
+        e.preventDefault();
+        navigate(`/requests/${activeRowId}`);
+        return;
+      }
+
+      if (e.key === "Escape" && activeRowId) {
+        e.preventDefault();
+        setActiveRowId(null);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeRowId, navigate, visibleRows]);
 
   return (
     <AppShell
@@ -514,30 +585,40 @@ export function DashboardPage({
           )}
         </div>
 
-        {/* 4-Column Segmented Metric Strip */}
-        <div className="paper-shadow grid overflow-hidden rounded-xl border border-border bg-card sm:grid-cols-2 lg:grid-cols-4">
+        {/* 5-Column Segmented Metric & Filter Bar */}
+        <div
+          role="group"
+          aria-label="Filter requests by status"
+          className="paper-shadow grid overflow-hidden rounded-xl border border-border bg-card sm:grid-cols-2 lg:grid-cols-5"
+        >
           {[
             {
-              label: "Active Requests",
-              value: kpis.active,
-              targetTab: "open" as FilterTab,
+              label: "All",
+              value: tabCounts.all,
+              targetTab: "all" as FilterTab,
+              dot: "bg-foreground/40",
+            },
+            {
+              label: "Active",
+              value: tabCounts.active,
+              targetTab: "active" as FilterTab,
               dot: "bg-slate-400 dark:bg-slate-500",
             },
             {
-              label: "Awaiting Review",
-              value: kpis.awaitingReview,
+              label: "Awaiting review",
+              value: tabCounts.awaiting_review,
               targetTab: "awaiting_review" as FilterTab,
               dot: "bg-blue-600 dark:bg-blue-400",
             },
             {
-              label: "Needs Revision",
-              value: kpis.needsRevision,
+              label: "Needs revision",
+              value: tabCounts.needs_revision,
               targetTab: "needs_revision" as FilterTab,
               dot: "bg-amber-600 dark:bg-amber-400",
             },
             {
               label: "Completed",
-              value: kpis.completed,
+              value: tabCounts.completed,
               targetTab: "completed" as FilterTab,
               dot: "bg-emerald-600 dark:bg-emerald-400",
             },
@@ -545,15 +626,19 @@ export function DashboardPage({
             const isActive = tab === kpi.targetTab;
             return (
               <button
-                key={kpi.label}
+                key={kpi.targetTab}
                 type="button"
                 aria-pressed={isActive}
-                onClick={() => setTab(isActive ? "all" : kpi.targetTab)}
+                onClick={() =>
+                  setTab(kpi.targetTab === "all" ? "all" : isActive ? "all" : kpi.targetTab)
+                }
                 className={`relative flex w-full cursor-pointer flex-col border-border px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                   idx > 0 ? "border-t sm:border-t-0" : ""
                 } ${idx >= 2 ? "sm:border-t lg:border-t-0" : ""} ${
                   idx % 2 === 1 ? "sm:border-l lg:border-l-0" : ""
-                } ${idx > 0 ? "lg:border-l" : ""} ${isActive ? "bg-muted/60" : ""}`}
+                } ${idx > 0 ? "lg:border-l" : ""} ${idx === 4 ? "sm:col-span-2 lg:col-span-1" : ""} ${
+                  isActive ? "bg-muted/60" : ""
+                }`}
               >
                 <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                   <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${kpi.dot}`} />
@@ -570,58 +655,37 @@ export function DashboardPage({
           })}
         </div>
 
-        {/* Filter Tabs + Search */}
+        {/* Search + Purged Toggle + Keyboard Hint */}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div
-            role="group"
-            aria-label="Filter requests by status"
-            className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border bg-muted/60 p-0.5 text-xs"
-          >
-            {(
-              [
-                ["all", "All"],
-                ["awaiting_review", "Awaiting review"],
-                ["needs_revision", "Needs revision"],
-                ["open", "Open"],
-                ["completed", "Completed"],
-                ["purged", "Purged"],
-              ] as const
-            ).map(([key, label]) => {
-              const count = tabCounts[key];
-              const active = tab === key;
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => setTab(key)}
-                  className={`cursor-pointer rounded-md px-2.5 py-1 font-medium transition-colors ${
-                    active
-                      ? "bg-card text-foreground shadow-xs"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {label}
-                  {count > 0 && (
-                    <span className="ml-1.5 text-[11px] font-normal text-muted-foreground tabular-nums">
-                      {count}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
+          <div className="flex w-full flex-wrap items-center gap-2.5 sm:w-auto">
+            <div className="relative w-full sm:w-72">
+              <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
+              <Input
+                aria-label="Filter requests"
+                placeholder="Filter by client, email, or checklist..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-8"
+              />
+            </div>
+            {(tabCounts.purged > 0 || tab === "purged") && (
+              <Button
+                type="button"
+                size="sm"
+                variant={tab === "purged" ? "secondary" : "outline"}
+                aria-pressed={tab === "purged"}
+                onClick={() => setTab(tab === "purged" ? "all" : "purged")}
+                className="h-9 gap-1.5 text-xs tabular-nums"
+              >
+                Purged ({tabCounts.purged})
+              </Button>
+            )}
           </div>
-
-          <div className="relative w-full sm:w-72">
-            <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-            <Input
-              aria-label="Filter requests"
-              placeholder="Filter by client, email, or checklist..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-8"
-            />
-          </div>
+          {visibleRows.length > 0 && (
+            <span className="hidden text-xs text-muted-foreground md:inline">
+              J/K move · Enter open
+            </span>
+          )}
         </div>
 
         {/* Selection Toolbar */}
@@ -753,26 +817,36 @@ export function DashboardPage({
                     </TableCell>
                   </TableRow>
                 ) : (
-                  table.getRowModel().rows.map((row) => (
-                    <TableRow
-                      key={row.id}
-                      onClick={() => navigate(`/requests/${row.original.id}`)}
-                      className="cursor-pointer"
-                    >
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell
-                          key={cell.id}
-                          onClick={
-                            cell.column.id === "select" || cell.column.id === "actions"
-                              ? (e) => e.stopPropagation()
-                              : undefined
-                          }
-                        >
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))
+                  visibleRows.map((row) => {
+                    const isSelected = activeRowId === row.original.id;
+                    return (
+                      <TableRow
+                        key={row.id}
+                        ref={(el) => {
+                          rowRefs.current[row.original.id] = el;
+                        }}
+                        data-selected={isSelected ? "true" : undefined}
+                        aria-selected={isSelected || undefined}
+                        onClick={() => navigate(`/requests/${row.original.id}`)}
+                        className={`cursor-pointer ${
+                          isSelected ? "bg-muted/70 ring-1 ring-inset ring-primary/40" : ""
+                        }`}
+                      >
+                        {row.getVisibleCells().map((cell) => (
+                          <TableCell
+                            key={cell.id}
+                            onClick={
+                              cell.column.id === "select" || cell.column.id === "actions"
+                                ? (e) => e.stopPropagation()
+                                : undefined
+                            }
+                          >
+                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>

@@ -41,11 +41,11 @@ Follow the matching checklist whenever you add a feature or fix a bug.
 
 ## Adding a Country Validator Pack
 
-Validator packs live in `src/validators/packs/` and implement `ValidatorPack` (`src/validators/packs/types.ts`):
+Validator packs live in `src/validators/packs/` (for example `src/validators/packs/au.ts`, `uk.ts`, `us.ts`, and `eu.ts`) and implement `ValidatorPack` (`src/validators/packs/types.ts`):
 
 1. Create `src/validators/packs/<country>.ts` exporting a `ValidatorPack` with pure deterministic checksum validators (`validate(value) => { valid, normalised?, error? }`). Set `sensitive: true` on government IDs that must be masked by default.
 2. Register the pack in `src/validators/index.ts`. Unknown keys automatically fail closed.
-3. Expose user-facing options and hints in `VALIDATOR_OPTIONS` (`client/src/lib/api.ts`).
+3. Expose user-facing options and hints in `VALIDATOR_OPTIONS` (`client/src/lib/api.ts`), and mirror the pure validation rule in `client/src/lib/demo-validators.ts` for the zero-server browser demo.
 4. Add valid, invalid-checksum, formatting, and masking unit tests in `tests/`.
 
 ---
@@ -71,14 +71,3 @@ npm --prefix client audit --omit=dev
 ```
 
 For hot-reloading UI development, run `npm run dev` (API on `:3080`) and `npm run dev:client` (Vite on `:5173`, proxying `/api`).
-
----
-
-## Maintainer Sync Note (Private Development vs Public Launch)
-
-- While `FAAS19/gathergate` is private, development happens inside `projects/gathergate/` of the private monorepo and syncs out via:
-  ```bash
-  git subtree push --prefix=projects/gathergate https://github.com/FAAS19/gathergate.git main
-  ```
-- Never create a nested `.git` directory inside `projects/gathergate/`.
-- Before accepting external community pull requests at public launch, graduate `FAAS19/gathergate` to a standalone primary repository so contributor PRs never collide with one-way subtree pushes.

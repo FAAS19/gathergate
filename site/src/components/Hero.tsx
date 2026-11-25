@@ -10,16 +10,16 @@ export function Hero() {
               Stop chasing clients for documents.
             </h1>
 
-            <p className="mt-5 max-w-[44ch] text-base leading-relaxed text-[var(--ink-muted)] sm:text-[1.0625rem]">
-              Open-source magic-link checklists with deterministic validation,
-              AES-256-GCM encryption, and automated follow-ups in one
-              container.
+            <p className="mt-5 max-w-[46ch] text-base leading-relaxed text-[var(--ink-muted)] sm:text-[1.0625rem]">
+              Open-source, self-hosted alternative to Content Snare &amp;
+              FileInvite. Magic links, deterministic validation, and AES-256-GCM
+              encryption in one container.
             </p>
 
             <div className="mt-7 flex flex-wrap items-center gap-3">
               <a
                 href="./demo/#/"
-                className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-[var(--accent)] px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[var(--accent-hover)] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+                className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-[var(--accent)] px-5 py-2.5 text-sm font-medium text-[var(--accent-ink)] transition-colors hover:bg-[var(--accent-hover)] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
               >
                 <span>Try live demo</span>
                 <ArrowRight className="size-4" aria-hidden="true" />
@@ -52,7 +52,15 @@ export function Hero() {
                 height={800}
                 loading="eager"
                 fetchPriority="high"
-                className="block aspect-[16/10] w-full bg-[var(--surface-muted)] object-cover object-top"
+                className="block aspect-[16/10] w-full bg-[var(--surface-muted)] object-cover object-top dark:hidden"
+              />
+              <img
+                src="./screenshots/operator-dashboard-dark.png"
+                alt="GatherGate operator dashboard in dark mode showing active client document requests, status filters, and review queue metrics"
+                width={1280}
+                height={800}
+                loading="eager"
+                className="hidden aspect-[16/10] w-full bg-[var(--surface-muted)] object-cover object-top dark:block"
               />
             </div>
           </div>

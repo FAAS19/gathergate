@@ -19,6 +19,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiJson, ApiError, type BrandingDto, type ClientPortalResponse, type RequestItemDto } from "@/lib/api";
 import { brandStyle } from "@/lib/brand";
+import { getInitials } from "@/lib/identity";
 import { cn } from "@/lib/utils";
 
 const isDone = (i: RequestItemDto) => i.status === "submitted" || i.status === "approved";
@@ -31,7 +32,7 @@ function scrollToItem(id: string) {
 
 function formatDue(iso: string | null | undefined, style: "short" | "long" = "short") {
   if (!iso) return null;
-  return new Date(iso).toLocaleDateString("en-AU", style === "long" ? { weekday: "long", day: "numeric", month: "long" } : { day: "numeric", month: "short" });
+  return new Date(iso).toLocaleDateString(undefined, style === "long" ? { weekday: "long", day: "numeric", month: "long" } : { day: "numeric", month: "short" });
 }
 
 function FirmMark({ branding }: { branding: BrandingDto }) {
@@ -40,7 +41,7 @@ function FirmMark({ branding }: { branding: BrandingDto }) {
   ) : (
     <span className="flex items-center gap-2.5">
       <span className="flex size-7 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground">
-        {branding.name.charAt(0).toUpperCase()}
+        {getInitials(branding.name)}
       </span>
       <span className="truncate text-sm font-semibold tracking-tight">{branding.name}</span>
     </span>
@@ -170,7 +171,7 @@ function CompletionCard({ data, items }: { data: ClientPortalResponse; items: Re
       </p>
       <p className="mt-5 text-xs tabular-nums text-muted-foreground">
         {items.length} items{na > 0 ? `, ${na} marked not applicable` : ""}
-        {data.request.completed_at && ` · Completed ${new Date(data.request.completed_at).toLocaleString("en-AU", { dateStyle: "medium", timeStyle: "short" })}`}
+        {data.request.completed_at && ` · Completed ${new Date(data.request.completed_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`}
       </p>
     </div>
   );

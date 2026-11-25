@@ -384,7 +384,13 @@ export async function triggerDemoDownload(kind: "upload" | "export", id: string)
   else demoDownloadExport(id);
 }
 
-export const VALIDATOR_OPTIONS: Array<{ value: ValidatorKey; label: string; short: string; hint?: string }> = [
+export const VALIDATOR_OPTIONS: Array<{
+  value: ValidatorKey;
+  label: string;
+  short: string;
+  hint?: string;
+  sensitive?: boolean;
+}> = [
   { value: "none", label: "None (any text)", short: "Text" },
   { value: "email", label: "Email address", short: "Email", hint: "name@company.com" },
   { value: "url", label: "Website URL (https://)", short: "URL", hint: "https://example.com" },
@@ -393,9 +399,24 @@ export const VALIDATOR_OPTIONS: Array<{ value: ValidatorKey; label: string; shor
   { value: "au_phone_e164", label: "AU phone (+61 E.164)", short: "+61 Phone", hint: "0412 345 678" },
   { value: "au_abn_mod89", label: "ATO ABN (11-digit mod-89)", short: "ABN", hint: "51 824 753 556" },
   { value: "au_bsb", label: "Australian BSB (6-digit)", short: "BSB", hint: "062-000" },
-  { value: "au_tfn_mod11", label: "ATO TFN (mod-11, masked)", short: "TFN", hint: "8 or 9 digits, stored masked" },
-  { value: "au_medicare_mod10", label: "Medicare + IRN (mod-10, masked)", short: "Medicare", hint: "10 or 11 digits incl. IRN" },
+  { value: "au_tfn_mod11", label: "ATO TFN (mod-11, masked)", short: "TFN", hint: "8 or 9 digits, stored masked", sensitive: true },
+  { value: "au_medicare_mod10", label: "Medicare + IRN (mod-10, masked)", short: "Medicare", hint: "10 or 11 digits incl. IRN", sensitive: true },
+  { value: "uk_utr_mod11", label: "HMRC UTR (10-digit mod-11)", short: "UK UTR", hint: "10-digit Unique Taxpayer Reference" },
+  { value: "uk_nino", label: "UK National Insurance (masked)", short: "UK NINO", hint: "AA 12 34 56 C, stored masked", sensitive: true },
+  { value: "uk_sort_code", label: "UK Bank Sort Code (6-digit)", short: "Sort Code", hint: "20-00-00" },
+  { value: "us_ein", label: "IRS EIN (9-digit XX-XXXXXXX)", short: "US EIN", hint: "12-3456789" },
+  { value: "us_routing_aba", label: "US ABA Routing Number (mod-10)", short: "ABA Routing", hint: "021000021" },
+  { value: "us_ssn", label: "US SSN (SSA rules, masked)", short: "US SSN", hint: "9 digits, stored masked", sensitive: true },
+  { value: "eu_vat", label: "EU VAT Number (country format + checksum)", short: "EU VAT", hint: "DE123456789 or FR40303265045" },
 ];
+
+export const SENSITIVE_VALIDATOR_KEYS = new Set(
+  VALIDATOR_OPTIONS.filter((v) => v.sensitive).map((v) => v.value)
+);
+
+export function isSensitiveValidator(key: string): boolean {
+  return SENSITIVE_VALIDATOR_KEYS.has(key);
+}
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

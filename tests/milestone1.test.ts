@@ -90,7 +90,7 @@ test("Validator packs: registry, generic IBAN/E.164, sensitive flags, unknown ke
   for (const k of ["none", "email", "url", "phone_e164", "iban", "au_abn_mod89", "au_tfn_mod11"]) {
     assert.ok(isKnownValidator(k), k);
   }
-  assert.deepEqual([...SENSITIVE_VALIDATORS].sort(), ["au_medicare_mod10", "au_tfn_mod11"]);
+  assert.deepEqual([...SENSITIVE_VALIDATORS].sort(), ["au_medicare_mod10", "au_tfn_mod11", "uk_nino", "us_ssn"]);
 
   assert.deepEqual(validateTextValue("iban", "gb82 west 1234 5698 7654 32"), {
     valid: true,

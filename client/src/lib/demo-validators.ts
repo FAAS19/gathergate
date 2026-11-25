@@ -75,8 +75,8 @@ function validateAuPhone(raw: string): DemoValidationResult {
 
 function validateAuAbn(raw: string): DemoValidationResult {
   const digits = raw.replace(/[\s-]+/g, "");
-  if (!/^\d{11}$/.test(digits)) {
-    return { valid: false, error: "ABN must be exactly 11 digits" };
+  if (!/^[1-9]\d{10}$/.test(digits)) {
+    return { valid: false, error: "ABN must be 11 digits and cannot start with 0" };
   }
   const weights = [10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
   const nums = digits.split("").map((d) => Number(d));
@@ -101,7 +101,7 @@ function validateAuBsb(raw: string): DemoValidationResult {
 
 function validateAuTfn(raw: string): DemoValidationResult {
   const digits = raw.replace(/[\s-]+/g, "");
-  if (!/^\d{8,9}$/.test(digits)) {
+  if (!/^\d{8,9}$/.test(digits) || /^0+$/.test(digits)) {
     return { valid: false, error: "TFN must be 8 or 9 digits" };
   }
   const weights = digits.length === 9 ? [1, 4, 3, 7, 5, 8, 6, 9, 10] : [10, 7, 8, 4, 6, 3, 5, 1];
@@ -145,6 +145,181 @@ function validateAuMedicare(raw: string): DemoValidationResult {
   };
 }
 
+function validateUkUtr(raw: string): DemoValidationResult {
+  const digits = raw.replace(/[\s-]+/g, "");
+  if (!/^\d{10}$/.test(digits)) {
+    return { valid: false, error: "UK UTR must be exactly 10 digits" };
+  }
+  const weights = [6, 7, 8, 9, 10, 5, 4, 3, 2];
+  let sum = 0;
+  for (let i = 0; i < 9; i++) {
+    sum += Number(digits[i + 1]) * weights[i];
+  }
+  const expected = [2, 1, 9, 8, 7, 6, 5, 4, 3, 2, 1][sum % 11];
+  if (Number(digits[0]) !== expected) {
+    return { valid: false, error: "Invalid UK UTR checksum (HMRC mod-11 failed)" };
+  }
+  return { valid: true, normalised: `${digits.slice(0, 5)} ${digits.slice(5, 10)}` };
+}
+
+function validateUkNino(raw: string): DemoValidationResult {
+  const cleaned = raw.replace(/[\s-]+/g, "").toUpperCase();
+  if (!/^(?!BG|GB|NK|KN|TN|NT|ZZ)[A-CEGHJ-PR-TW-Z][A-CEGHJ-NPR-TW-Z]\d{6}[A-D]$/.test(cleaned)) {
+    return { valid: false, error: "Enter a valid UK National Insurance number (e.g. AA 12 34 56 C)" };
+  }
+  return {
+    valid: true,
+    normalised: `${cleaned.slice(0, 2)} ${cleaned.slice(2, 4)} ${cleaned.slice(4, 6)} ${cleaned.slice(6, 8)} ${cleaned[8]}`,
+  };
+}
+
+function validateUkSortCode(raw: string): DemoValidationResult {
+  const digits = raw.replace(/[\s-]+/g, "");
+  if (!/^\d{6}$/.test(digits) || digits === "000000") {
+    return { valid: false, error: "UK Sort Code must be 6 digits and not 00-00-00" };
+  }
+  return { valid: true, normalised: `${digits.slice(0, 2)}-${digits.slice(2, 4)}-${digits.slice(4, 6)}` };
+}
+
+function isValidEinPrefix(prefix: number): boolean {
+  return (
+    (prefix >= 1 && prefix <= 6) ||
+    (prefix >= 10 && prefix <= 16) ||
+    (prefix >= 20 && prefix <= 27) ||
+    (prefix >= 30 && prefix <= 48) ||
+    (prefix >= 50 && prefix <= 68) ||
+    (prefix >= 71 && prefix <= 77) ||
+    (prefix >= 80 && prefix <= 88) ||
+    (prefix >= 90 && prefix <= 95) ||
+    (prefix >= 98 && prefix <= 99)
+  );
+}
+
+function validateUsEin(raw: string): DemoValidationResult {
+  const digits = raw.replace(/[\s-]+/g, "");
+  if (!/^\d{9}$/.test(digits)) {
+    return { valid: false, error: "IRS EIN must be exactly 9 digits (XX-XXXXXXX)" };
+  }
+  const prefix = Number(digits.slice(0, 2));
+  if (!isValidEinPrefix(prefix)) {
+    return { valid: false, error: "Invalid IRS EIN prefix" };
+  }
+  return { valid: true, normalised: `${digits.slice(0, 2)}-${digits.slice(2, 9)}` };
+}
+
+function isValidAbaPrefix(prefix: number): boolean {
+  return (
+    (prefix >= 0 && prefix <= 12) ||
+    (prefix >= 21 && prefix <= 32) ||
+    (prefix >= 61 && prefix <= 72) ||
+    prefix === 80
+  );
+}
+
+function validateUsRoutingAba(raw: string): DemoValidationResult {
+  const digits = raw.replace(/[\s-]+/g, "");
+  if (!/^\d{9}$/.test(digits)) {
+    return { valid: false, error: "ABA routing number must be exactly 9 digits" };
+  }
+  const prefix = Number(digits.slice(0, 2));
+  if (!isValidAbaPrefix(prefix)) {
+    return { valid: false, error: "Invalid ABA routing number Federal Reserve prefix" };
+  }
+  const d = digits.split("").map(Number);
+  const checksum = 3 * (d[0] + d[3] + d[6]) + 7 * (d[1] + d[4] + d[7]) + (d[2] + d[5] + d[8]);
+  if (checksum % 10 !== 0) {
+    return { valid: false, error: "Invalid ABA routing number checksum (mod-10 failed)" };
+  }
+  return { valid: true, normalised: digits };
+}
+
+function validateUsSsn(raw: string): DemoValidationResult {
+  const digits = raw.replace(/[\s-]+/g, "");
+  if (!/^\d{9}$/.test(digits)) {
+    return { valid: false, error: "US SSN must be exactly 9 digits" };
+  }
+  const area = Number(digits.slice(0, 3));
+  const group = digits.slice(3, 5);
+  const serial = digits.slice(5, 9);
+  if (area === 0 || area === 666 || area >= 900 || group === "00" || serial === "0000") {
+    return { valid: false, error: "Invalid US SSN (violates SSA area, group, or serial rules)" };
+  }
+  return { valid: true, normalised: `${digits.slice(0, 3)}-${group}-${serial}` };
+}
+
+const EU_VAT_PATTERNS: Record<string, RegExp> = {
+  AT: /^U\d{8}$/,
+  BE: /^[01]\d{9}$/,
+  BG: /^\d{9,10}$/,
+  CY: /^\d{8}[A-Z]$/,
+  CZ: /^\d{8,10}$/,
+  DE: /^\d{9}$/,
+  DK: /^\d{8}$/,
+  EE: /^\d{9}$/,
+  EL: /^\d{9}$/,
+  ES: /^[A-Z0-9]\d{7}[A-Z0-9]$/,
+  FI: /^\d{8}$/,
+  FR: /^[A-HJ-NP-Z0-9]{2}\d{9}$/,
+  HR: /^\d{11}$/,
+  HU: /^\d{8}$/,
+  IE: /^(?:\d{7}[A-Z]{1,2}|\d[A-Z+*]\d{5}[A-Z])$/,
+  IT: /^\d{11}$/,
+  LT: /^(?:\d{9}|\d{12})$/,
+  LU: /^\d{8}$/,
+  LV: /^\d{11}$/,
+  MT: /^\d{8}$/,
+  NL: /^\d{9}B\d{2}$/,
+  PL: /^\d{10}$/,
+  PT: /^\d{9}$/,
+  RO: /^\d{2,10}$/,
+  SE: /^\d{12}$/,
+  SI: /^\d{8}$/,
+  SK: /^\d{10}$/,
+};
+
+function checkDeVat(body: string): boolean {
+  let product = 10;
+  for (let i = 0; i < 8; i++) {
+    let sum = (Number(body[i]) + product) % 10;
+    if (sum === 0) sum = 10;
+    product = (2 * sum) % 11;
+  }
+  const checkDigit = (11 - product) % 10;
+  return Number(body[8]) === checkDigit;
+}
+
+function validateEuVat(raw: string): DemoValidationResult {
+  const cleaned = raw.replace(/[\s.-]+/g, "").toUpperCase();
+  if (cleaned.length < 4) {
+    return { valid: false, error: "EU VAT number must start with a 2-letter EU member state code" };
+  }
+  const country = cleaned.slice(0, 2);
+  const body = cleaned.slice(2);
+  const pattern = EU_VAT_PATTERNS[country];
+  if (!pattern) {
+    return { valid: false, error: `Unsupported or non-EU VAT country code "${country}"` };
+  }
+  if (!pattern.test(body)) {
+    return { valid: false, error: `Invalid ${country} VAT format` };
+  }
+  if (country === "BE") {
+    if (97 - (Number(body.slice(0, 8)) % 97) !== Number(body.slice(8, 10))) {
+      return { valid: false, error: "Invalid BE VAT checksum (mod-97 failed)" };
+    }
+  } else if (country === "DE") {
+    if (!checkDeVat(body)) {
+      return { valid: false, error: "Invalid DE VAT checksum (ISO 7064 mod 11,10 failed)" };
+    }
+  } else if (country === "FR") {
+    const key = body.slice(0, 2);
+    const siren = body.slice(2);
+    if (/^\d{2}/.test(key) && Number(key) !== (12 + 3 * (Number(siren) % 97)) % 97) {
+      return { valid: false, error: "Invalid FR VAT checksum (mod-97 failed)" };
+    }
+  }
+  return { valid: true, normalised: `${country}${body}` };
+}
+
 const VALIDATORS: Record<string, DemoValidatorDef> = {
   none: { validate: (v) => ({ valid: true, normalised: v }) },
   email: { hint: "name@company.com", validate: validateEmail },
@@ -160,6 +335,13 @@ const VALIDATORS: Record<string, DemoValidatorDef> = {
     sensitive: true,
     validate: validateAuMedicare,
   },
+  uk_utr_mod11: { hint: "10-digit Unique Taxpayer Reference", validate: validateUkUtr },
+  uk_nino: { hint: "AA 12 34 56 C, stored masked", sensitive: true, validate: validateUkNino },
+  uk_sort_code: { hint: "20-00-00", validate: validateUkSortCode },
+  us_ein: { hint: "12-3456789", validate: validateUsEin },
+  us_routing_aba: { hint: "021000021", validate: validateUsRoutingAba },
+  us_ssn: { hint: "9 digits, stored masked", sensitive: true, validate: validateUsSsn },
+  eu_vat: { hint: "DE123456789 or FR40303265045", validate: validateEuVat },
 };
 
 export const SENSITIVE_VALIDATORS = new Set<string>(
@@ -187,8 +369,10 @@ export function validateTextValue(validator: string, raw: string): DemoValidatio
 
 export function maskSensitiveValue(validator: string, value: string): string {
   if (!SENSITIVE_VALIDATORS.has(validator)) return value;
-  const digits = value.replace(/\D+/g, "");
-  if (digits.length <= 3) return "***";
-  const tail = digits.slice(-3);
-  return `${"*".repeat(Math.max(3, digits.length - 3))} ${tail}`;
+  const compact = /[A-Za-z]/.test(value)
+    ? value.replace(/[\s-]+/g, "").toUpperCase()
+    : value.replace(/\D+/g, "");
+  if (compact.length <= 3) return "***";
+  const tail = compact.slice(-3);
+  return `${"*".repeat(Math.max(3, compact.length - 3))} ${tail}`;
 }

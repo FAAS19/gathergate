@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { ArrowSquareOut, List, X } from "@phosphor-icons/react";
+import { ArrowSquareOut, List, Moon, Sun, X } from "@phosphor-icons/react";
 import { BrandMark } from "./BrandMark";
+
+const THEME_STORAGE_KEY = "gathergate-site-theme";
 
 const NAV_LINKS = [
   { label: "Walkthrough", href: "#walkthrough", external: false },
@@ -15,6 +17,22 @@ const NAV_LINKS = [
 
 export function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isDark, setIsDark] = useState(
+    () =>
+      typeof document !== "undefined" &&
+      document.documentElement.classList.contains("dark")
+  );
+
+  function toggleTheme() {
+    const next = !isDark;
+    setIsDark(next);
+    document.documentElement.classList.toggle("dark", next);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next ? "dark" : "light");
+    } catch {
+      // Ignore storage errors in restricted contexts.
+    }
+  }
 
   return (
     <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--bg)]/95 backdrop-blur-sm">
@@ -50,9 +68,23 @@ export function Navbar() {
         </nav>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            aria-pressed={isDark}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--ink)] transition-colors hover:bg-[var(--surface-muted)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+          >
+            {isDark ? (
+              <Sun className="size-4" aria-hidden="true" />
+            ) : (
+              <Moon className="size-4" aria-hidden="true" />
+            )}
+          </button>
+
           <a
             href="./demo/#/"
-            className="inline-flex items-center justify-center whitespace-nowrap rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--accent-hover)] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+            className="inline-flex items-center justify-center whitespace-nowrap rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-ink)] transition-colors hover:bg-[var(--accent-hover)] active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
           >
             Try live demo
           </a>

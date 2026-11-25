@@ -6,7 +6,17 @@ import { apiJson, ApiError, VALIDATOR_OPTIONS, type RequestItemDto } from "@/lib
 import { cn } from "@/lib/utils";
 
 // Numeric identifiers get a number pad on phones.
-const NUMERIC_VALIDATORS = new Set(["au_abn_mod89", "au_bsb", "au_tfn_mod11", "au_medicare_mod10"]);
+const NUMERIC_VALIDATORS = new Set([
+  "au_abn_mod89",
+  "au_bsb",
+  "au_tfn_mod11",
+  "au_medicare_mod10",
+  "uk_utr_mod11",
+  "uk_sort_code",
+  "us_ein",
+  "us_routing_aba",
+  "us_ssn",
+]);
 const TEL_VALIDATORS = new Set(["au_phone_e164", "phone_e164"]);
 
 export function TextField({

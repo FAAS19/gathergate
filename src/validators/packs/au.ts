@@ -2,8 +2,8 @@ import type { ValidationResult, ValidatorPack } from "./types.js";
 
 export function validateAuAbn(raw: string): ValidationResult {
   const digits = raw.replace(/[\s-]+/g, "");
-  if (!/^\d{11}$/.test(digits)) {
-    return { valid: false, error: "ABN must be exactly 11 digits" };
+  if (!/^[1-9]\d{10}$/.test(digits)) {
+    return { valid: false, error: "ABN must be 11 digits and cannot start with 0" };
   }
   const weights = [10, 1, 3, 5, 7, 9, 11, 13, 15, 17, 19];
   const nums = digits.split("").map((d) => Number(d));
@@ -28,7 +28,7 @@ export function validateAuBsb(raw: string): ValidationResult {
 
 export function validateAuTfn(raw: string): ValidationResult {
   const digits = raw.replace(/[\s-]+/g, "");
-  if (!/^\d{8,9}$/.test(digits)) {
+  if (!/^\d{8,9}$/.test(digits) || /^0+$/.test(digits)) {
     return { valid: false, error: "TFN must be 8 or 9 digits" };
   }
   const weights = digits.length === 9 ? [1, 4, 3, 7, 5, 8, 6, 9, 10] : [10, 7, 8, 4, 6, 3, 5, 1];

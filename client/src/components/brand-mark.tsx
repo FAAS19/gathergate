@@ -13,26 +13,16 @@ export function BrandMark({
     <div className={cn("flex items-center gap-2.5 select-none", className)}>
       <svg
         xmlns="http://www.w3.org/2000/svg"
-        viewBox="0 0 28 28"
+        viewBox="0 0 32 32"
         fill="none"
         className="size-6 shrink-0"
         aria-hidden="true"
       >
-        <rect className="fill-primary" x="1" y="1" width="26" height="26" rx="7" />
         <path
-          d="M9.5 8.5H8a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h1.5M18.5 8.5H20a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-1.5"
-          stroke="#FFFFFF"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+          className="fill-foreground"
+          d="M4 6H12V10H8V22H12V26H4V6ZM28 6H20V10H24V22H20V26H28V6Z"
         />
-        <path
-          d="M11 14.25 13.1 16.35 17.25 11.75"
-          stroke="#FFFFFF"
-          strokeWidth="2.1"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
+        <rect className="fill-primary" x="14" y="10" width="4" height="12" rx="1" />
       </svg>
       {!collapsed && (
         <div className="flex min-w-0 flex-col leading-none">

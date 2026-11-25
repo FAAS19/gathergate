@@ -1,0 +1,48 @@
+name: Feature Request
+description: Propose a new feature, validator pack, or integration for GatherGate
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >
+        Keep proposals scoped to self-hosted client document intake, deterministic
+        validation, or operator triage. For security issues, follow SECURITY.md
+        instead of opening a public issue.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Country validator pack
+        - Starter template
+        - Operator console & review workflow
+        - Client portal
+        - Storage, email, or webhook integration
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the workflow gap or friction you run into today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should GatherGate handle this (inputs, validation rules, UI, or config)?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds considered
+      description: Optional notes on existing workarounds or trade-offs.
+    validations:
+      required: false

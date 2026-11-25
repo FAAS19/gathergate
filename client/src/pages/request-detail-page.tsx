@@ -112,6 +112,10 @@ const AUDIT_LABELS: Record<string, string> = {
   "request.purged": "Expired pack shredded per retention policy",
 };
 
+const IS_APPLE =
+  typeof navigator !== "undefined" &&
+  /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+
 const SHORTCUTS = [
   { keys: ["J", "K"], desc: "Move to next / previous item (or step documents in preview)" },
   { keys: ["Space"], desc: "Open document preview for selected item" },
@@ -120,7 +124,7 @@ const SHORTCUTS = [
   { keys: ["Esc"], desc: "Close overlay or clear item selection" },
   { keys: ["?"], desc: "Show or hide keyboard shortcuts" },
   { keys: ["C"], desc: "Create a new checklist request" },
-  { keys: ["Ctrl K"], desc: "Open quick jump command palette" },
+  { keys: [IS_APPLE ? "⌘K" : "Ctrl K"], desc: "Open quick jump command palette" },
 ];
 
 function canInlinePreview(mime: string): boolean {

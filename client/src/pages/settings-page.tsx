@@ -214,7 +214,7 @@ export function SettingsPage({
                   <CardDescription className="text-xs">
                     When every required item in a checklist is approved, GatherGate POSTs a signed{" "}
                     <code className="font-mono">request.completed</code> payload with{" "}
-                    <code className="font-mono">x-gathergate-signature</code> HMAC-SHA256. Sensitive identifiers (TFN/Medicare) stay masked.
+                    <code className="font-mono">x-gathergate-signature</code> HMAC-SHA256. Sensitive identifiers (TFN, Medicare, UK NINO, US SSN) stay masked.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>

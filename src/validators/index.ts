@@ -1,11 +1,14 @@
 import { auPack } from "./packs/au.js";
+import { euPack } from "./packs/eu.js";
 import { genericPack } from "./packs/generic.js";
 import type { ValidationResult, ValidatorDef, ValidatorPack } from "./packs/types.js";
+import { ukPack } from "./packs/uk.js";
+import { usPack } from "./packs/us.js";
 
 export type { ValidationResult, ValidatorDef, ValidatorPack } from "./packs/types.js";
 
 /** Add a country pack: create `packs/<code>.ts` exporting a ValidatorPack, then list it here. */
-export const VALIDATOR_PACKS: ValidatorPack[] = [genericPack, auPack];
+export const VALIDATOR_PACKS: ValidatorPack[] = [genericPack, auPack, ukPack, usPack, euPack];
 
 /** Validator keys are stored in templates and request items; unknown keys always fail closed. */
 export type ValidatorKey = string;
@@ -51,8 +54,10 @@ export function validateTextValue(validator: ValidatorKey, raw: string): Validat
 
 export function maskSensitiveValue(validator: ValidatorKey, value: string): string {
   if (!SENSITIVE_VALIDATORS.has(validator)) return value;
-  const digits = value.replace(/\D+/g, "");
-  if (digits.length <= 3) return "***";
-  const tail = digits.slice(-3);
-  return `${"*".repeat(Math.max(3, digits.length - 3))} ${tail}`;
+  const compact = /[A-Za-z]/.test(value)
+    ? value.replace(/[\s-]+/g, "").toUpperCase()
+    : value.replace(/\D+/g, "");
+  if (compact.length <= 3) return "***";
+  const tail = compact.slice(-3);
+  return `${"*".repeat(Math.max(3, compact.length - 3))} ${tail}`;
 }

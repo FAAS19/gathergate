@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes, useParams } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -189,5 +189,93 @@ describe("DashboardPage", () => {
     expect(screen.getByText(/Encryption key stored beside data/i)).toBeInTheDocument();
     const link = screen.getByRole("link", { name: "View setup steps" });
     expect(link).toHaveAttribute("href", "/settings?section=instance");
+  });
+
+  it("supports j/k row selection and Enter navigation", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, LIST_RESPONSE));
+
+    function RequestRouteProbe() {
+      const { id } = useParams();
+      return <div>Navigated to /requests/{id}</div>;
+    }
+
+    render(
+      <TooltipProvider>
+        <MemoryRouter initialEntries={["/"]}>
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <DashboardPage
+                  session={SESSION}
+                  onSessionRefresh={vi.fn().mockResolvedValue(undefined)}
+                  theme="light"
+                  onToggleTheme={vi.fn()}
+                />
+              }
+            />
+            <Route path="/requests/:id" element={<RequestRouteProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </TooltipProvider>
+    );
+
+    await screen.findByText("Req Alpha");
+    const rowAlpha = screen.getByText("Req Alpha").closest("tr")!;
+    const rowBeta = screen.getByText("Req Beta").closest("tr")!;
+
+    await user.keyboard("j");
+    expect(rowAlpha).toHaveAttribute("data-selected", "true");
+    expect(rowBeta).not.toHaveAttribute("data-selected");
+
+    await user.keyboard("j");
+    expect(rowAlpha).not.toHaveAttribute("data-selected");
+    expect(rowBeta).toHaveAttribute("data-selected", "true");
+
+    await user.keyboard("k");
+    expect(rowAlpha).toHaveAttribute("data-selected", "true");
+    expect(rowBeta).not.toHaveAttribute("data-selected");
+
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("Navigated to /requests/req_a")).toBeInTheDocument();
+  });
+
+  it("includes both open and in_review requests under the Active filter while excluding completed", async () => {
+    const user = userEvent.setup();
+    const mixedResponse: RequestsListResponse = {
+      ...LIST_RESPONSE,
+      requests: [
+        { ...LIST_RESPONSE.requests[0], id: "req_open", title: "Req Open", status: "open" },
+        { ...LIST_RESPONSE.requests[1], id: "req_review", title: "Req In Review", status: "in_review" },
+        { ...LIST_RESPONSE.requests[1], id: "req_done", title: "Req Completed", status: "completed" },
+      ],
+    };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(200, mixedResponse));
+
+    render(
+      <TooltipProvider>
+        <MemoryRouter>
+          <DashboardPage
+            session={SESSION}
+            onSessionRefresh={vi.fn().mockResolvedValue(undefined)}
+            theme="light"
+            onToggleTheme={vi.fn()}
+          />
+        </MemoryRouter>
+      </TooltipProvider>
+    );
+
+    await screen.findByText("Req Open");
+    expect(screen.getByText("Req In Review")).toBeInTheDocument();
+    expect(screen.getByText("Req Completed")).toBeInTheDocument();
+
+    const activeBtn = screen.getByRole("button", { name: /^Active/i });
+    await user.click(activeBtn);
+
+    expect(activeBtn).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Req Open")).toBeInTheDocument();
+    expect(screen.getByText("Req In Review")).toBeInTheDocument();
+    expect(screen.queryByText("Req Completed")).not.toBeInTheDocument();
   });
 });

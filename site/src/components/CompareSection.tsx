@@ -15,7 +15,7 @@ const COMPARISON_ROWS = [
   {
     criterion: "Deterministic checksums & magic-bytes",
     gathergate:
-      "Built-in mod-89/11/10/97 packs plus binary signature inspection",
+      "Built-in AU, UK, US, EU & IBAN checksum packs plus binary signature inspection",
     contentSnare: "Basic field formatting & extension rules",
     fileInvite: "Basic field validation & accepted file lists",
   },

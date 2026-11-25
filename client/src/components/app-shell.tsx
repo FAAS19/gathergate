@@ -137,6 +137,9 @@ function AppShellInner({
   const { toggleSidebar } = useSidebar();
   const [cmdOpen, setCmdOpen] = useState(false);
   const [clearingDemo, setClearingDemo] = useState(false);
+  const isApple =
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -451,14 +454,14 @@ function AppShellInner({
               <MagnifyingGlass className="size-3.5" />
               <span>Quick jump</span>
               <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-                Ctrl K
+                {isApple ? "⌘K" : "Ctrl K"}
               </kbd>
             </Button>
             <Button asChild size="sm" className="h-8 gap-1.5 text-xs font-medium">
               <Link to="/requests/new">
                 <Plus className="size-3.5" />
                 <span>New request</span>
-                <kbd className="hidden rounded bg-primary-foreground/20 px-1 py-0.5 font-mono text-[10px] sm:inline">
+                <kbd className="hidden rounded border border-primary-foreground/35 bg-transparent px-1 py-0.5 font-mono text-[10px] text-primary-foreground sm:inline">
                   C
                 </kbd>
               </Link>

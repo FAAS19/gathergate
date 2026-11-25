@@ -110,15 +110,22 @@ export function WalkthroughSection() {
                     aria-hidden="true"
                   />
                   <span className="truncate font-mono text-xs text-[var(--ink-muted)]">
-                    gathergate.local/requests/req_demo_tax
+                    gathergate.local/requests/q3-bas-pack
                   </span>
                 </div>
                 <img
                   src="./screenshots/operator-review.png"
-                  alt="GatherGate inline review sheet displaying a decrypted client PDF alongside approve and revision controls"
+                  alt="GatherGate inline review sheet displaying a decrypted client tax invoice alongside approve and revision controls"
                   width={1280}
                   height={800}
-                  className="block aspect-[16/10] w-full bg-[var(--surface-muted)] object-cover object-top"
+                  className="block aspect-[16/10] w-full bg-[var(--surface-muted)] object-cover object-top dark:hidden"
+                />
+                <img
+                  src="./screenshots/operator-review-dark.png"
+                  alt="GatherGate inline review sheet in dark mode displaying a decrypted client tax invoice alongside approve and revision controls"
+                  width={1280}
+                  height={800}
+                  className="hidden aspect-[16/10] w-full bg-[var(--surface-muted)] object-cover object-top dark:block"
                 />
               </div>
 
