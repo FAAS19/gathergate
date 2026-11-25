@@ -5,7 +5,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-25
+
 ### Added
+- **Launch Assets & Release Verification (`e2e/`):** 15-second animated workflow GIF (`site/public/screenshots/hero-demo.gif`), `1280x640` social preview / OpenGraph card (`site/public/social-preview.png`), timed `<60s` 1-command Docker quickstart check (`e2e/verify-docker-quickstart.mjs`), and README asset/version verification script (`e2e/verify-readme.mjs`).
 - **GitHub Pages Showcase & Interactive Browser Demo (`site/`, `VITE_DEMO=1`):** Daylight-first static showcase site with product walkthrough tabs, pluggable Validator Pack overview, 1-command Docker quickstart, comparison table, and Managed Cloud enquiry CTA; backed by a zero-server `HashRouter` interactive demo (`site/dist/demo/`) and automated `.github/workflows/pages.yml` deployment.
 - **Launch Assets & Subpath Verification:** Automated viewport screenshot capture (`e2e/capture-showcase.mjs`), strict `/gathergate/` subpath + interactive demo Playwright E2E & WCAG 2.2 AA suite (`e2e/pages.spec.ts`), and global launch-ready `README.md`.
 - Versioned SQLite migration runner (`schema_migrations` + `PRAGMA user_version`) supporting clean upgrades from legacy v0.1.0 databases and fail-closed downgrade protection.

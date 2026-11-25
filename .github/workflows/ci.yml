@@ -59,6 +59,9 @@ jobs:
       - name: GitHub Pages subpath & demo E2E
         run: npm run test:pages
 
+      - name: README assets & version alignment check
+        run: node e2e/verify-readme.mjs
+
       - name: Upload Playwright artefacts on failure
         if: failure()
         uses: actions/upload-artifact@v7

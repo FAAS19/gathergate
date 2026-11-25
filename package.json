@@ -1,6 +1,6 @@
 {
   "name": "gathergate",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Self-hosted magic-link client document checklist, deterministic validator, and auto-chaser.",
   "type": "module",
   "license": "MIT",

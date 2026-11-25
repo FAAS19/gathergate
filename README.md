@@ -8,7 +8,7 @@ A lightweight MIT-licensed alternative to Content Snare and FileInvite built on 
 - **[Client Portal Demo](https://faas19.github.io/gathergate/demo/#/c/demo-bas)**
 - **[Project Site](https://faas19.github.io/gathergate/)**
 
-![GatherGate operator dashboard showing active client intake requests and completion metrics](site/public/screenshots/operator-dashboard.png)
+![GatherGate 15-second workflow showing inline ABN checksum validation, encrypted CSV upload, and keyboard-first operator review](site/public/screenshots/hero-demo.gif)
 
 ---
 
@@ -33,6 +33,8 @@ Open `http://127.0.0.1:3080` to set up your workspace and optionally load three 
 ---
 
 ## Product Tour
+
+![GatherGate operator dashboard showing active client intake requests and completion metrics](site/public/screenshots/operator-dashboard.png)
 
 | Operator Document Review | Passwordless Client Portal |
 | :---: | :---: |
