@@ -7,21 +7,25 @@
 Self-hosted, open-source alternative to Content Snare and FileInvite. Collect client documents via passwordless magic links with deterministic validation, AES-256-GCM encryption, and keyboard-first review in one container.
 
 <p>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-v1.0.0-0F5243?style=flat-square&labelColor=18181B" alt="Release v1.0.0" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-0F5243?style=flat-square&labelColor=18181B" alt="MIT Licence" /></a>
-  <a href="package.json"><img src="https://img.shields.io/badge/node-%3E%3D22.13-0F5243?style=flat-square&labelColor=18181B&logo=nodedotjs&logoColor=white" alt="Node >= 22.13" /></a>
-  <a href="Dockerfile"><img src="https://img.shields.io/badge/docker-amd64%20%7C%20arm64-0F5243?style=flat-square&labelColor=18181B&logo=docker&logoColor=white" alt="Docker amd64 and arm64" /></a>
-  <a href=".github/workflows/ci.yml"><img src="https://img.shields.io/badge/a11y-WCAG%202.2%20AA-0F5243?style=flat-square&labelColor=18181B" alt="WCAG 2.2 AA" /></a>
+  <a href="#quickstart"><img src=".github/assets/cta-quickstart.svg" alt="Quickstart in 30s" height="38" /></a>&nbsp;&nbsp;<a href="#product-tour"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/assets/cta-tour-dark.svg" /><source media="(prefers-color-scheme: light)" srcset=".github/assets/cta-tour-light.svg" /><img src=".github/assets/cta-tour-light.svg" alt="Product Tour" height="38" /></picture></a>&nbsp;&nbsp;<a href="SECURITY.md"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/assets/cta-security-dark.svg" /><source media="(prefers-color-scheme: light)" srcset=".github/assets/cta-security-light.svg" /><img src=".github/assets/cta-security-light.svg" alt="Security Model" height="38" /></picture></a>
 </p>
 
 <p>
-  <a href="#quickstart">Quickstart</a> &middot;
+  <a href=".github/workflows/ci.yml"><img src="https://img.shields.io/badge/CI-passing-2ea043?style=flat&logo=githubactions&logoColor=white" alt="CI passing" /></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/release-v1.0.0-007ec6?style=flat" alt="Release v1.0.0" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-dfb317?style=flat" alt="MIT Licence" /></a>
+  <a href=".github/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-66%20passing-44cc11?style=flat" alt="66 tests passing" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/node-%3E%3D22.13-339933?style=flat&logo=nodedotjs&logoColor=white" alt="Node >= 22.13" /></a>
+  <a href="Dockerfile"><img src="https://img.shields.io/badge/docker-amd64%20%7C%20arm64-2496ED?style=flat&logo=docker&logoColor=white" alt="Docker amd64 and arm64" /></a>
+  <a href=".github/workflows/ci.yml"><img src="https://img.shields.io/badge/WCAG%202.2-AA-7c3aed?style=flat" alt="WCAG 2.2 AA" /></a>
+</p>
+
+<p>
   <a href="#why-gathergate">Why GatherGate</a> &middot;
-  <a href="#product-tour">Product Tour</a> &middot;
   <a href="#validator-packs">Validator Packs</a> &middot;
   <a href="#compare">Compare</a> &middot;
   <a href="#configuration">Configuration</a> &middot;
-  <a href="SECURITY.md">Security</a>
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 </div>
