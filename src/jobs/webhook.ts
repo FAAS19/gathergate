@@ -61,7 +61,7 @@ function buildSignedHeaders(
   const ts = Math.floor(nowMs / 1000).toString();
   const headers: Record<string, string> = {
     "content-type": "application/json",
-    "user-agent": "GatherGate/1.0 (TensorForge; contact@tensorforge.dev)",
+    "user-agent": "GatherGate/1.1 (TensorForge; contact@tensorforge.dev)",
     "x-gathergate-event": event,
     "x-gathergate-timestamp": ts,
   };

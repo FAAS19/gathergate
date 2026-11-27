@@ -62,7 +62,7 @@ class ResendEmailAdapter implements EmailAdapter {
       headers: {
         authorization: `Bearer ${this.apiKey}`,
         "content-type": "application/json",
-        "user-agent": "GatherGate/1.0 (TensorForge; contact@tensorforge.dev)",
+        "user-agent": "GatherGate/1.1 (TensorForge; contact@tensorforge.dev)",
       },
       signal: AbortSignal.timeout(10_000),
       body: JSON.stringify({

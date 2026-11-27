@@ -2,7 +2,7 @@ manifestVersion: 1
 id: gathergate
 category: files
 name: GatherGate
-version: "1.0.0"
+version: "1.1.0"
 tagline: Self-hosted magic-link client document checklist and encrypted intake vault
 description: >-
   GatherGate is an open-source, self-hosted client document collection portal,
@@ -22,7 +22,9 @@ path: ""
 defaultUsername: ""
 defaultPassword: ""
 releaseNotes: >-
-  Initial self-hosted Umbrel manifest with persistent /data storage,
-  built-in SQLite WAL, encrypted local blobs, scoped API keys, and MCP 2.0.
+  v1.1.0 adds scoped workspace API keys, 6 signed webhook events with a 6-attempt
+  retry queue, built-in stateless MCP 2.0 (POST /mcp + SEP-2640 SKILL.md),
+  zero-dependency CLI helpers (doctor, setup, stdio mcp bridge), and container
+  permission hardening.
 submitter: TensorForge
 submission: https://github.com/FAAS19/gathergate

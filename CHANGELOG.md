@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-28
+
+### Added
+- **Scoped Workspace API Keys & 6-Event Webhook Retry Queue (#43):** Least-privilege workspace Bearer tokens (`gg_live_...`, SHA-256 at rest, optional expiry, instant revocation, per-key rate limits, strict session-only route boundary), 6 HMAC-SHA256 lifecycle events (`request.opened`, `item.submitted`, `request.in_review`, `request.completed`, `request.overdue`, `request.purged`), durable SQLite retry queue (6 total attempts across 5 exponential delays), dead-letter manual replay, pre-purge payload shredding, DNS-pinned outbound delivery, and WCAG 2.2 AA Light/Dark Settings UI.
+- **Built-In Stateless MCP 2.0 Server & Bundled Skill (#44):** Metadata-only Streamable HTTP `POST /mcp` supporting MCP `2026-07-28` (`server/discover`, `resultType: "complete"`, `Mcp-Method`/`Mcp-Name`, `ttlMs`/`cacheScope`, `404` unknown methods) and legacy revisions (`2025-11-25`..`2024-11-05`), 7 metadata-only tools, bundled `SEP-2640` Agent Skill (`skills/gathergate/SKILL.md` with SHA-256 digests and byte sizes), Official MCP Registry `server.json`, and shared per-request reminder concurrency lock.
+- **Zero-Dependency CLI (`serve`, `doctor`, `setup`, stdio `mcp`) (#50):** Backwards-compatible `npx gathergate` server boot with automatic `.env` loading, dynamic `--port 0` base URL binding, and graceful shutdown deadlines; read-only `gathergate doctor [--url] [--json]` (non-mutating SQLite page/header validation, `/healthz`, and authenticated `POST /mcp` probe); `gathergate setup` config generator across 9 MCP clients with atomic JSON merge (`--write`) for JSON-configured clients (preserving existing credentials for identical endpoints and refusing symlinks); and zero-dependency `gathergate mcp` stdio-to-HTTP bridge (replacing `mcp-remote`, enforcing `https://` on non-loopback hosts and `redirect: "error"`).
+- **1-Click Self-Hosted Deploy Templates & Agentic Docs (#45, #46, #51):** Root `render.yaml` Blueprint and manifests for Coolify, Dokploy, Railway, Umbrel, CasaOS, and Fly.io; auto-generated `/docs/llms-full.txt` and 12 per-page raw Markdown endpoints (`/docs/<slug>.md`); AI Agents & MCP 2.0 guide; updated webhooks, quickstart, configuration, and security documentation; and automatic container `/data` ownership handoff via `su-exec` entrypoint.
+
+### Changed
+- Extended `e2e/verify-readme.mjs` to enforce version alignment across `docs/package.json`, `server.json`, `deploy/umbrel/umbrel-app.yml`, and the `README.md` release badge, plus zero em-dashes across `AGENTS.md`, `site/public/llms.txt`, `skills/gathergate/`, and `docs/src/content/docs/` (#51).
+- Updated `client/src/pages/request-detail-page.tsx` audit timeline labels for multi-event webhook deliveries, replays, SSRF blocks, overdue transitions, and email send failures (#51).
+- Updated `docs/astro.config.mjs`, `docs/scripts/generate-agent-docs.mjs`, and `.github/workflows/pages.yml` so Starlight sidebar links, relative doc routes, and canonical URLs work across both root (`/docs/`) and GitHub Pages subpath (`/gathergate/docs/`) deployments (#51).
+
+### Security
+- Hardened `POST /mcp` with canonical `Origin` validation, `OPTIONS` CORS preflight, RFC 9110 `Accept` specificity checks (`406`), `Cache-Control: no-store` on authenticated `/api/*` and `/mcp`, JSON `404` for `/.well-known/*`, and JSON-RPC `-32603` error handling (#46).
+- Redacted `portal_url`, `portalUrl`, and `demoPortalUrl` on `requests:read`-only API keys unless `requests:write` is also granted, pinned multi-tenant workspace SMTP sockets against DNS rebinding, expanded IPv6 SSRF guards (`2002::/16`, `fec0::/10`, `2001::/32`, `100::/64`), isolated password-change rate limits, and resolved the dev-only `minimatch` advisory in `client/package-lock.json` (#46).
+- Enforced `https://` for non-loopback Bearer transmission, `redirect: "error"`, CWD `.env` destination isolation for inherited API keys, and sanitised upstream error/version output across `gathergate doctor` and `gathergate mcp` (#50).
+
 ## [1.0.0] - 2026-11-27
 
 ### Added

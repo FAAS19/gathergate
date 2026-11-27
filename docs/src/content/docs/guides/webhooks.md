@@ -39,7 +39,7 @@ Every delivery includes these headers:
 
 ```http
 Content-Type: application/json
-User-Agent: GatherGate/1.0 (TensorForge; contact@tensorforge.dev)
+User-Agent: GatherGate/1.1 (TensorForge; contact@tensorforge.dev)
 X-GatherGate-Event: request.completed
 X-GatherGate-Delivery: whd_01J...
 X-GatherGate-Timestamp: 1764240000
