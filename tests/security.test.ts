@@ -686,15 +686,18 @@ test("Security: expired/purged token rejection and HMAC webhook verification", a
       headers: { cookie: opCookie },
     });
 
-    assert.equal(webhooks.length, 1);
-    assert.match(webhooks[0].headers["user-agent"] || "", /^GatherGate\/1\.0\b/);
-    const sigHeader = webhooks[0].headers["x-gathergate-signature"];
-    const m = sigHeader.match(/^t=(\d+),v1=([0-9a-f]{64})$/);
-    assert.ok(m, `Unexpected signature header: ${sigHeader}`);
-    assert.equal(m[2], hmacSha256Hex(whSecret, `${m[1]}.${webhooks[0].body}`));
-    assert.notEqual(m[2], hmacSha256Hex(whSecret, `${m[1]}.${webhooks[0].body} `));
-    assert.equal(webhooks[0].body.includes("876 543 210"), false);
-    assert.equal(webhooks[0].body.includes("****** 210"), true);
+    const completedHooks = webhooks.filter((w) => w.headers["x-gathergate-event"] === "request.completed");
+    assert.equal(completedHooks.length, 1);
+    for (const wh of webhooks) {
+      assert.match(wh.headers["user-agent"] || "", /^GatherGate\/1\.0\b/);
+      const sigHeader = wh.headers["x-gathergate-signature"];
+      const m = sigHeader.match(/^t=(\d+),v1=([0-9a-f]{64})$/);
+      assert.ok(m, `Unexpected signature header: ${sigHeader}`);
+      assert.equal(m[2], hmacSha256Hex(whSecret, `${m[1]}.${wh.body}`));
+      assert.notEqual(m[2], hmacSha256Hex(whSecret, `${m[1]}.${wh.body} `));
+      assert.equal(wh.body.includes("876 543 210"), false, "Raw TFN must never leak in any webhook event");
+    }
+    assert.equal(completedHooks[0].body.includes("****** 210"), true);
 
     await runPurgeSweep({
       store: ctx.store,

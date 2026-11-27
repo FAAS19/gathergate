@@ -83,6 +83,7 @@ export interface RequestRow {
   welcome_note: string | null;
   last_opened_at: string | null;
   last_manual_reminder_at: string | null;
+  overdue_notified_at: string | null;
   created_at: string;
 }
 
@@ -143,6 +144,40 @@ export interface OutboxEmailRow {
   kind: string;
   is_demo: number;
   created_at: string;
+}
+
+export interface ApiKeyRow {
+  id: string;
+  workspace_id: string;
+  name: string;
+  key_prefix: string;
+  key_hash: string;
+  scopes_json: string;
+  created_by_user_id: string | null;
+  last_used_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+export type WebhookDeliveryStatus = "pending" | "in_flight" | "retrying" | "delivered" | "dead_letter";
+
+export interface WebhookDeliveryRow {
+  id: string;
+  workspace_id: string;
+  request_id: string | null;
+  event: string;
+  target_url: string;
+  payload_json: string;
+  status: WebhookDeliveryStatus;
+  attempts: number;
+  max_attempts: number;
+  last_status_code: number | null;
+  last_error: string | null;
+  next_attempt_at: string | null;
+  delivered_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ClientRequestBrief {
@@ -530,6 +565,8 @@ export class Store {
     isDemo?: boolean;
     remindersSent?: number;
     lastOpenedAt?: string | null;
+    actor?: "operator" | "api_key";
+    actorBy?: string;
   }): { request: RequestRow; magicToken: string } {
     return this.inTransaction(() => {
       const id = generateId("req");
@@ -602,11 +639,12 @@ export class Store {
         );
       });
 
-      this.logAudit(params.workspaceId, id, "operator", "request.created", {
+      this.logAudit(params.workspaceId, id, params.actor ?? "operator", "request.created", {
         clientEmail: params.clientEmail.trim().toLowerCase(),
         itemCount: params.items.length,
         requireOtp: params.requireOtp,
         isDemo: Boolean(params.isDemo),
+        ...(params.actorBy ? { by: params.actorBy } : {}),
       });
 
       return { request: this.getRequestById(params.workspaceId, id)!, magicToken };
@@ -658,10 +696,50 @@ export class Store {
       .get(sha256Hex(magicToken)) as RequestRow | undefined;
   }
 
-  touchRequestOpened(requestId: string): void {
-    this.db
-      .prepare("UPDATE requests SET last_opened_at = ? WHERE id = ?")
-      .run(new Date().toISOString(), requestId);
+  touchRequestOpened(requestId: string): boolean {
+    const now = new Date().toISOString();
+    const first = this.db
+      .prepare("UPDATE requests SET last_opened_at = ? WHERE id = ? AND last_opened_at IS NULL")
+      .run(now, requestId);
+    if (Number(first.changes ?? 0) > 0) return true;
+    this.db.prepare("UPDATE requests SET last_opened_at = ? WHERE id = ?").run(now, requestId);
+    return false;
+  }
+
+  /** Atomically marks first-open and enqueues the request.opened webhook delivery in one transaction. */
+  touchRequestOpenedAndQueueWebhook(
+    requestId: string,
+    nowIso: string,
+    buildDelivery?: (openedAt: string) => {
+      workspaceId: string;
+      targetUrl: string;
+      payloadJson: string;
+      maxAttempts: number;
+    } | null
+  ): { firstOpen: boolean; delivery?: WebhookDeliveryRow } {
+    return this.inTransaction(() => {
+      const first = this.db
+        .prepare("UPDATE requests SET last_opened_at = ? WHERE id = ? AND last_opened_at IS NULL")
+        .run(nowIso, requestId);
+      if (Number(first.changes ?? 0) > 0) {
+        const spec = buildDelivery?.(nowIso);
+        if (spec) {
+          const delivery = this.createWebhookDelivery({
+            workspaceId: spec.workspaceId,
+            requestId,
+            event: "request.opened",
+            targetUrl: spec.targetUrl,
+            payloadJson: spec.payloadJson,
+            maxAttempts: spec.maxAttempts,
+            nowIso,
+          });
+          return { firstOpen: true, delivery };
+        }
+        return { firstOpen: true };
+      }
+      this.db.prepare("UPDATE requests SET last_opened_at = ? WHERE id = ?").run(nowIso, requestId);
+      return { firstOpen: false };
+    });
   }
 
   listRequestItems(requestId: string): RequestItemRow[] {
@@ -905,6 +983,8 @@ export class Store {
     itemId: string;
     decision: "approved" | "rejected";
     note?: string;
+    actor?: "operator" | "api_key";
+    actorBy?: string;
   }): { justCompleted: boolean; request: RequestRow } {
     return this.inTransaction(() => {
       const now = new Date().toISOString();
@@ -942,9 +1022,10 @@ export class Store {
           );
       }
 
-      this.logAudit(params.workspaceId, params.requestId, "operator", `item.${params.decision}`, {
+      this.logAudit(params.workspaceId, params.requestId, params.actor ?? "operator", `item.${params.decision}`, {
         itemId: params.itemId,
         note: params.decision === "rejected" ? params.note || "" : undefined,
+        ...(params.actorBy ? { by: params.actorBy } : {}),
       });
 
       const after = this.recomputeRequestStatus(params.requestId);
@@ -957,7 +1038,9 @@ export class Store {
 
   approveAllSubmitted(
     workspaceId: string,
-    requestId: string
+    requestId: string,
+    actor: "operator" | "api_key" = "operator",
+    actorBy?: string
   ): { approvedCount: number; justCompleted: boolean; request: RequestRow } {
     return this.inTransaction(() => {
       const now = new Date().toISOString();
@@ -974,8 +1057,9 @@ export class Store {
 
       const approvedCount = Number(info.changes ?? 0);
       if (approvedCount > 0) {
-        this.logAudit(workspaceId, requestId, "operator", "request.approved_all_submitted", {
+        this.logAudit(workspaceId, requestId, actor, "request.approved_all_submitted", {
           count: approvedCount,
+          ...(actorBy ? { by: actorBy } : {}),
         });
       }
 
@@ -1035,16 +1119,22 @@ export class Store {
     return this.db.prepare("SELECT * FROM requests WHERE id = ?").get(requestId) as unknown as RequestRow;
   }
 
-  toggleRemindersPaused(workspaceId: string, requestId: string, paused: boolean): void {
+  toggleRemindersPaused(
+    workspaceId: string,
+    requestId: string,
+    paused: boolean,
+    actor: "operator" | "api_key" = "operator",
+    actorBy?: string
+  ): void {
     this.db
       .prepare("UPDATE requests SET reminders_paused = ? WHERE id = ? AND workspace_id = ?")
       .run(paused ? 1 : 0, requestId, workspaceId);
     this.logAudit(
       workspaceId,
       requestId,
-      "operator",
+      actor,
       paused ? "reminders.paused" : "reminders.resumed",
-      {}
+      actorBy ? { by: actorBy } : {}
     );
   }
 
@@ -1095,7 +1185,8 @@ export class Store {
     requestId: string,
     actorEmail: string,
     outstandingCount: number,
-    nowIso = new Date().toISOString()
+    nowIso = new Date().toISOString(),
+    actor: "operator" | "api_key" = "operator"
   ): RequestRow {
     const req = this.getRequestById(workspaceId, requestId)!;
     const sent = req.reminders_sent + 1;
@@ -1108,7 +1199,7 @@ export class Store {
         "UPDATE requests SET reminders_sent = ?, last_manual_reminder_at = ?, next_reminder_at = ? WHERE id = ? AND workspace_id = ?"
       )
       .run(sent, nowIso, nextReminder, requestId, workspaceId);
-    this.logAudit(workspaceId, requestId, "operator", "reminder.manual_sent", {
+    this.logAudit(workspaceId, requestId, actor, "reminder.manual_sent", {
       by: actorEmail,
       outstandingCount,
       reminderNumber: sent,
@@ -1120,14 +1211,15 @@ export class Store {
     workspaceId: string,
     requestId: string,
     dueAt: string | null,
-    actorEmail: string
+    actorEmail: string,
+    actor: "operator" | "api_key" = "operator"
   ): RequestRow | null {
     const req = this.getRequestById(workspaceId, requestId);
     if (!req) return null;
     this.db
-      .prepare("UPDATE requests SET due_at = ? WHERE id = ? AND workspace_id = ?")
+      .prepare("UPDATE requests SET due_at = ?, overdue_notified_at = NULL WHERE id = ? AND workspace_id = ?")
       .run(dueAt, requestId, workspaceId);
-    this.logAudit(workspaceId, requestId, "operator", "request.due_date_updated", {
+    this.logAudit(workspaceId, requestId, actor, "request.due_date_updated", {
       from: req.due_at,
       to: dueAt,
       by: actorEmail,
@@ -1138,7 +1230,9 @@ export class Store {
   addRequestItem(
     workspaceId: string,
     requestId: string,
-    item: TemplateItemSpec
+    item: TemplateItemSpec,
+    actor: "operator" | "api_key" = "operator",
+    actorBy?: string
   ): { item: RequestItemRow; request: RequestRow } | null {
     const req = this.getRequestById(workspaceId, requestId);
     if (!req) return null;
@@ -1173,11 +1267,12 @@ export class Store {
         }),
         now
       );
-    this.logAudit(workspaceId, requestId, "operator", "item.added", {
+    this.logAudit(workspaceId, requestId, actor, "item.added", {
       itemId,
       label: item.label,
       kind: item.kind,
       required: item.required,
+      ...(actorBy ? { by: actorBy } : {}),
     });
     const updatedReq = this.recomputeRequestStatus(requestId);
     return {
@@ -1186,14 +1281,20 @@ export class Store {
     };
   }
 
-  setRemindersPausedBulk(workspaceId: string, ids: string[], paused: boolean): string[] {
+  setRemindersPausedBulk(
+    workspaceId: string,
+    ids: string[],
+    paused: boolean,
+    actor: "operator" | "api_key" = "operator",
+    actorBy?: string
+  ): string[] {
     const updatedIds: string[] = [];
     const closed = new Set(["completed", "purged", "expired"]);
     for (const id of new Set(ids)) {
       const req = this.getRequestById(workspaceId, id);
       if (!req || closed.has(req.status)) continue;
       if (req.reminders_paused !== (paused ? 1 : 0)) {
-        this.toggleRemindersPaused(workspaceId, req.id, paused);
+        this.toggleRemindersPaused(workspaceId, req.id, paused, actor, actorBy);
         updatedIds.push(req.id);
       }
     }
@@ -1221,9 +1322,23 @@ export class Store {
       .run(nowIso, uploadId);
   }
 
-  markRequestPurged(requestId: string, nowIso = new Date().toISOString()): void {
-    this.inTransaction(() => {
-      const req = this.db.prepare("SELECT * FROM requests WHERE id = ?").get(requestId) as unknown as RequestRow;
+  markRequestPurged(
+    requestId: string,
+    nowIso = new Date().toISOString(),
+    purgedWebhook?: {
+      workspaceId: string;
+      targetUrl: string;
+      payloadJson: string;
+      maxAttempts: number;
+    } | null
+  ): { finalized: boolean; delivery?: WebhookDeliveryRow } {
+    return this.inTransaction(() => {
+      const req = this.db.prepare("SELECT * FROM requests WHERE id = ?").get(requestId) as unknown as
+        | RequestRow
+        | undefined;
+      if (!req || req.status === "purged") {
+        return { finalized: false };
+      }
       this.db
         .prepare(
           `UPDATE uploads
@@ -1241,10 +1356,25 @@ export class Store {
       this.db.prepare("DELETE FROM outbox_emails WHERE request_id = ?").run(requestId);
       this.db.prepare("DELETE FROM otp_codes WHERE request_id = ?").run(requestId);
       this.db.prepare("DELETE FROM client_sessions WHERE request_id = ?").run(requestId);
+      // Shred pre-purge webhook payload copies so client name/email/notes cannot linger or retry after purge.
+      this.db.prepare("DELETE FROM webhook_deliveries WHERE request_id = ?").run(requestId);
       this.db
         .prepare("UPDATE requests SET status = 'purged', next_reminder_at = NULL, token_encrypted = '' WHERE id = ?")
         .run(requestId);
       this.logAudit(req.workspace_id, req.id, "system", "request.purged", { purgedAt: nowIso });
+      let delivery: WebhookDeliveryRow | undefined;
+      if (purgedWebhook) {
+        delivery = this.createWebhookDelivery({
+          workspaceId: purgedWebhook.workspaceId,
+          requestId: req.id,
+          event: "request.purged",
+          targetUrl: purgedWebhook.targetUrl,
+          payloadJson: purgedWebhook.payloadJson,
+          maxAttempts: purgedWebhook.maxAttempts,
+          nowIso,
+        });
+      }
+      return { finalized: true, delivery };
     });
   }
 
@@ -1313,7 +1443,7 @@ export class Store {
   logAudit(
     workspaceId: string,
     requestId: string | null,
-    actor: "operator" | "client" | "system",
+    actor: "operator" | "client" | "system" | "api_key",
     action: string,
     meta: Record<string, unknown>
   ): void {
@@ -1480,5 +1610,323 @@ export class Store {
       storageKeys: keyRows.map((r) => r.storage_key),
       deletedRequests: Number(reqRes.changes ?? 0),
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Scoped Workspace API Keys
+  // ---------------------------------------------------------------------------
+  createApiKey(params: {
+    workspaceId: string;
+    name: string;
+    keyPrefix: string;
+    keyHash: string;
+    scopes: string[];
+    createdByUserId: string | null;
+    actorEmail?: string;
+    expiresAt: string | null;
+    maxActiveKeys?: number;
+    nowIso?: string;
+  }): ApiKeyRow {
+    return this.inTransaction(() => {
+      const now = params.nowIso ?? new Date().toISOString();
+      if (params.maxActiveKeys && this.countActiveApiKeys(params.workspaceId, now) >= params.maxActiveKeys) {
+        throw new Error(`Active API key limit (${params.maxActiveKeys}) reached. Revoke unused keys first.`);
+      }
+      const id = generateId("key");
+      this.db
+        .prepare(
+          `INSERT INTO api_keys (
+             id, workspace_id, name, key_prefix, key_hash, scopes_json,
+             created_by_user_id, expires_at, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          id,
+          params.workspaceId,
+          params.name.trim(),
+          params.keyPrefix,
+          params.keyHash,
+          JSON.stringify(params.scopes),
+          params.createdByUserId,
+          params.expiresAt,
+          now
+        );
+      if (params.actorEmail) {
+        this.logAudit(params.workspaceId, null, "operator", "api_key.created", {
+          apiKeyId: id,
+          name: params.name.trim(),
+          keyPrefix: params.keyPrefix,
+          scopes: params.scopes,
+          expiresAt: params.expiresAt,
+          by: params.actorEmail,
+        });
+      }
+      return this.db.prepare("SELECT * FROM api_keys WHERE id = ?").get(id) as unknown as ApiKeyRow;
+    });
+  }
+
+  countActiveApiKeys(workspaceId: string, nowIso = new Date().toISOString()): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) as c FROM api_keys
+         WHERE workspace_id = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`
+      )
+      .get(workspaceId, nowIso) as { c: number };
+    return Number(row.c);
+  }
+
+  listApiKeys(workspaceId: string): ApiKeyRow[] {
+    return this.db
+      .prepare("SELECT * FROM api_keys WHERE workspace_id = ? ORDER BY created_at DESC")
+      .all(workspaceId) as unknown as ApiKeyRow[];
+  }
+
+  getApiKeyByHash(keyHash: string): ApiKeyRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM api_keys WHERE key_hash = ?")
+      .get(keyHash) as ApiKeyRow | undefined;
+  }
+
+  touchApiKeyLastUsed(id: string, nowIso: string): void {
+    this.db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(nowIso, id);
+  }
+
+  revokeApiKey(workspaceId: string, id: string, nowIso = new Date().toISOString()): ApiKeyRow | null {
+    const existing = this.db
+      .prepare("SELECT * FROM api_keys WHERE id = ? AND workspace_id = ?")
+      .get(id, workspaceId) as ApiKeyRow | undefined;
+    if (!existing) return null;
+    if (!existing.revoked_at) {
+      this.db
+        .prepare("UPDATE api_keys SET revoked_at = ? WHERE id = ? AND workspace_id = ?")
+        .run(nowIso, id, workspaceId);
+    }
+    return this.db
+      .prepare("SELECT * FROM api_keys WHERE id = ? AND workspace_id = ?")
+      .get(id, workspaceId) as unknown as ApiKeyRow;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Durable Webhook Deliveries & Overdue Detection
+  // ---------------------------------------------------------------------------
+  createWebhookDelivery(params: {
+    workspaceId: string;
+    requestId: string | null;
+    event: string;
+    targetUrl: string;
+    payloadJson: string;
+    maxAttempts?: number;
+    nowIso?: string;
+  }): WebhookDeliveryRow {
+    const id = generateId("whd");
+    const now = params.nowIso ?? new Date().toISOString();
+    this.db
+      .prepare(
+        `INSERT INTO webhook_deliveries (
+           id, workspace_id, request_id, event, target_url, payload_json,
+           status, attempts, max_attempts, next_attempt_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        params.workspaceId,
+        params.requestId,
+        params.event,
+        params.targetUrl,
+        params.payloadJson,
+        params.maxAttempts ?? 6,
+        now,
+        now,
+        now
+      );
+    return this.getWebhookDeliveryById(id)!;
+  }
+
+  getWebhookDeliveryById(id: string): WebhookDeliveryRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM webhook_deliveries WHERE id = ?")
+      .get(id) as WebhookDeliveryRow | undefined;
+  }
+
+  getWebhookDeliveryForWorkspace(workspaceId: string, id: string): WebhookDeliveryRow | undefined {
+    return this.db
+      .prepare("SELECT * FROM webhook_deliveries WHERE id = ? AND workspace_id = ?")
+      .get(id, workspaceId) as WebhookDeliveryRow | undefined;
+  }
+
+  listWebhookDeliveries(
+    workspaceId: string,
+    options?: { status?: WebhookDeliveryStatus; limit?: number; offset?: number } | number
+  ): WebhookDeliveryRow[] {
+    const opts = typeof options === "number" ? { limit: options } : (options ?? {});
+    const limit = Math.min(100, Math.max(1, opts.limit ?? 50));
+    const offset = Math.max(0, opts.offset ?? 0);
+    if (opts.status) {
+      return this.db
+        .prepare(
+          "SELECT * FROM webhook_deliveries WHERE workspace_id = ? AND status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        )
+        .all(workspaceId, opts.status, limit, offset) as unknown as WebhookDeliveryRow[];
+    }
+    return this.db
+      .prepare(
+        "SELECT * FROM webhook_deliveries WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"
+      )
+      .all(workspaceId, limit, offset) as unknown as WebhookDeliveryRow[];
+  }
+
+  countWebhookDeliveries(workspaceId: string, status?: WebhookDeliveryStatus): number {
+    if (status) {
+      const row = this.db
+        .prepare("SELECT COUNT(*) as c FROM webhook_deliveries WHERE workspace_id = ? AND status = ?")
+        .get(workspaceId, status) as { c: number };
+      return Number(row.c);
+    }
+    const row = this.db
+      .prepare("SELECT COUNT(*) as c FROM webhook_deliveries WHERE workspace_id = ?")
+      .get(workspaceId) as { c: number };
+    return Number(row.c);
+  }
+
+  listDueWebhookDeliveries(nowIso = new Date().toISOString(), limit = 50): WebhookDeliveryRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM webhook_deliveries
+         WHERE status IN ('pending', 'retrying', 'in_flight')
+           AND next_attempt_at IS NOT NULL
+           AND next_attempt_at <= ?
+         ORDER BY next_attempt_at ASC
+         LIMIT ?`
+      )
+      .all(nowIso, limit) as unknown as WebhookDeliveryRow[];
+  }
+
+  /**
+   * Atomically claims a webhook delivery before any outbound I/O so concurrent immediate
+   * dispatch and cron retry sweeps cannot send duplicate POSTs or overwrite newer outcomes.
+   * Crashed workers recover automatically once the 2-minute in_flight lease expires.
+   */
+  claimWebhookDelivery(params: {
+    id: string;
+    expectedUpdatedAt: string;
+    claimToken: string;
+    leaseUntilIso: string;
+    isReplay: boolean;
+  }): WebhookDeliveryRow | null {
+    const sql = params.isReplay
+      ? `UPDATE webhook_deliveries
+         SET status = 'in_flight', next_attempt_at = ?, updated_at = ?
+         WHERE id = ? AND status != 'in_flight' AND updated_at = ?`
+      : `UPDATE webhook_deliveries
+         SET status = 'in_flight', next_attempt_at = ?, updated_at = ?
+         WHERE id = ? AND status IN ('pending', 'retrying', 'in_flight') AND updated_at = ?`;
+    const info = this.db
+      .prepare(sql)
+      .run(params.leaseUntilIso, params.claimToken, params.id, params.expectedUpdatedAt);
+    if (Number(info.changes ?? 0) === 0) return null;
+    return this.getWebhookDeliveryById(params.id) ?? null;
+  }
+
+  completeWebhookDeliveryAttempt(params: {
+    id: string;
+    claimToken: string;
+    targetUrl: string;
+    status: WebhookDeliveryStatus;
+    attempts: number;
+    lastStatusCode: number | null;
+    lastError: string | null;
+    nextAttemptAt: string | null;
+    deliveredAt: string | null;
+    nowIso: string;
+  }): WebhookDeliveryRow | undefined {
+    this.db
+      .prepare(
+        `UPDATE webhook_deliveries
+         SET target_url = ?, status = ?, attempts = ?, last_status_code = ?,
+             last_error = ?, next_attempt_at = ?, delivered_at = ?, updated_at = ?
+         WHERE id = ? AND updated_at = ?`
+      )
+      .run(
+        params.targetUrl,
+        params.status,
+        params.attempts,
+        params.lastStatusCode,
+        params.lastError,
+        params.nextAttemptAt,
+        params.deliveredAt,
+        params.nowIso,
+        params.id,
+        params.claimToken
+      );
+    return this.getWebhookDeliveryById(params.id);
+  }
+
+  listNewlyOverdueRequests(nowIso = new Date().toISOString()): RequestRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM requests
+         WHERE status IN ('open', 'in_review')
+           AND is_demo = 0
+           AND due_at IS NOT NULL
+           AND due_at <= ?
+           AND overdue_notified_at IS NULL`
+      )
+      .all(nowIso) as unknown as RequestRow[];
+  }
+
+  /**
+   * Atomically verifies the selected deadline is still unchanged and overdue, marks
+   * overdue_notified_at, writes the audit event, and queues any request.overdue webhook delivery.
+   */
+  claimOverdueNotification(params: {
+    requestId: string;
+    workspaceId: string;
+    expectedDueAt: string;
+    nowIso: string;
+    webhookDelivery?: {
+      targetUrl: string;
+      payloadJson: string;
+      maxAttempts: number;
+    } | null;
+  }): { claimed: boolean; delivery?: WebhookDeliveryRow } {
+    return this.inTransaction(() => {
+      const info = this.db
+        .prepare(
+          `UPDATE requests
+           SET overdue_notified_at = ?
+           WHERE id = ?
+             AND workspace_id = ?
+             AND status IN ('open', 'in_review')
+             AND due_at = ?
+             AND due_at <= ?
+             AND overdue_notified_at IS NULL`
+        )
+        .run(
+          params.nowIso,
+          params.requestId,
+          params.workspaceId,
+          params.expectedDueAt,
+          params.nowIso
+        );
+      if (Number(info.changes ?? 0) === 0) {
+        return { claimed: false };
+      }
+      this.logAudit(params.workspaceId, params.requestId, "system", "request.overdue", {
+        dueAt: params.expectedDueAt,
+      });
+      let delivery: WebhookDeliveryRow | undefined;
+      if (params.webhookDelivery) {
+        delivery = this.createWebhookDelivery({
+          workspaceId: params.workspaceId,
+          requestId: params.requestId,
+          event: "request.overdue",
+          targetUrl: params.webhookDelivery.targetUrl,
+          payloadJson: params.webhookDelivery.payloadJson,
+          maxAttempts: params.webhookDelivery.maxAttempts,
+          nowIso: params.nowIso,
+        });
+      }
+      return { claimed: true, delivery };
+    });
   }
 }

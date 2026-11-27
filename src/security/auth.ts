@@ -85,3 +85,53 @@ export function verifyOtpCode(code: string, expectedHash: string): boolean {
   if (!/^\d{6}$/.test(cleaned)) return false;
   return safeEqualHex(sha256Hex(`otp:${cleaned}`), expectedHash);
 }
+
+export const API_KEY_SCOPES = [
+  "requests:read",
+  "requests:write",
+  "templates:read",
+  "mcp:read",
+] as const;
+
+export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
+
+const API_KEY_SCOPE_SET: ReadonlySet<string> = new Set(API_KEY_SCOPES);
+
+export const API_KEY_PREFIX = "gg_live_";
+
+export function isValidApiKeyScope(value: string): value is ApiKeyScope {
+  return API_KEY_SCOPE_SET.has(value);
+}
+
+export function normalizeApiKeyScopes(raw: unknown): ApiKeyScope[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error("Select at least one API key scope.");
+  }
+  const seen = new Set<ApiKeyScope>();
+  for (const entry of raw) {
+    if (typeof entry !== "string" || !isValidApiKeyScope(entry)) {
+      throw new Error(`Unknown API key scope: ${String(entry)}`);
+    }
+    seen.add(entry);
+  }
+  return [...seen];
+}
+
+export function generateApiKey(): { rawKey: string; keyPrefix: string; keyHash: string } {
+  const rawKey = `${API_KEY_PREFIX}${crypto.randomBytes(24).toString("base64url")}`;
+  return {
+    rawKey,
+    keyPrefix: rawKey.slice(0, 16),
+    keyHash: sha256Hex(rawKey),
+  };
+}
+
+export function parseApiKeyScopesJson(rawJson: string): ApiKeyScope[] {
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((s): s is ApiKeyScope => typeof s === "string" && isValidApiKeyScope(s));
+  } catch {
+    return [];
+  }
+}

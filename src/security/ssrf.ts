@@ -164,15 +164,76 @@ export async function assertPublicHostname(
   }
 }
 
+export type WebhookEndpointResolution =
+  | { ok: true; resolvedAddresses?: Array<{ address: string; family: 4 | 6 }> }
+  | { ok: false; kind: "policy" | "transient_dns"; error: string };
+
+export async function resolveWebhookEndpointRuntime(
+  rawUrl: string,
+  multiTenant: boolean,
+  options?: { skipDns?: boolean; lookupImpl?: LookupAllFn }
+): Promise<WebhookEndpointResolution> {
+  const basicErr = validateWebhookEndpoint(rawUrl, multiTenant);
+  if (basicErr) return { ok: false, kind: "policy", error: basicErr };
+  if (!multiTenant || options?.skipDns) return { ok: true };
+
+  const parsed = new URL(rawUrl);
+  const host = parsed.hostname.replace(/^\[|\]$/g, "").toLowerCase().replace(/\.$/, "").trim();
+  if (isPrivateOrLocalHost(host)) {
+    return {
+      ok: false,
+      kind: "policy",
+      error: "Webhook URL must target a public https endpoint in multi-tenant mode.",
+    };
+  }
+  const ipKind = net.isIP(host);
+  if (ipKind === 4 || ipKind === 6) {
+    if (isNonPublicIp(host)) {
+      return {
+        ok: false,
+        kind: "policy",
+        error: "Webhook URL must target a public https endpoint in multi-tenant mode.",
+      };
+    }
+    return { ok: true, resolvedAddresses: [{ address: host, family: ipKind }] };
+  }
+
+  try {
+    const records = options?.lookupImpl
+      ? await options.lookupImpl(host)
+      : await dns.promises.lookup(host, { all: true });
+    if (!records || records.length === 0) {
+      return { ok: false, kind: "transient_dns", error: "Webhook hostname could not be resolved." };
+    }
+    const validated: Array<{ address: string; family: 4 | 6 }> = [];
+    for (const rec of records) {
+      if (isNonPublicIp(rec.address)) {
+        return {
+          ok: false,
+          kind: "policy",
+          error: "Webhook URL must target a public https endpoint in multi-tenant mode.",
+        };
+      }
+      const family: 4 | 6 = rec.family === 6 || net.isIP(rec.address) === 6 ? 6 : 4;
+      validated.push({ address: rec.address, family });
+    }
+    return { ok: true, resolvedAddresses: validated };
+  } catch (err) {
+    // Node dns.lookup can emit ENOTFOUND/EAI_AGAIN transiently (e.g. FD exhaustion); retry within budget.
+    const code = (err as NodeJS.ErrnoException | undefined)?.code || "lookup error";
+    return {
+      ok: false,
+      kind: "transient_dns",
+      error: `Webhook DNS lookup failed (${code}).`,
+    };
+  }
+}
+
 export async function validateWebhookEndpointRuntime(
   rawUrl: string,
   multiTenant: boolean,
   options?: { skipDns?: boolean; lookupImpl?: LookupAllFn }
 ): Promise<string | null> {
-  const basicErr = validateWebhookEndpoint(rawUrl, multiTenant);
-  if (basicErr) return basicErr;
-  if (!multiTenant || options?.skipDns) return null;
-  const parsed = new URL(rawUrl);
-  const dnsErr = await assertPublicHostname(parsed.hostname, options?.lookupImpl);
-  return dnsErr ? "Webhook URL must target a public https endpoint in multi-tenant mode." : null;
+  const res = await resolveWebhookEndpointRuntime(rawUrl, multiTenant, options);
+  return res.ok ? null : res.error;
 }

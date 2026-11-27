@@ -229,6 +229,69 @@ export interface EmailSettingsDto {
   };
 }
 
+export type ApiKeyScope = "requests:read" | "requests:write" | "templates:read" | "mcp:read";
+
+export const API_KEY_SCOPE_OPTIONS: ReadonlyArray<{
+  value: ApiKeyScope;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "requests:read",
+    label: "requests:read",
+    description: "List requests, checklist statuses, masked values, and client summaries.",
+  },
+  {
+    value: "requests:write",
+    label: "requests:write",
+    description: "Create requests, update due dates, send reminders, and review items.",
+  },
+  {
+    value: "templates:read",
+    label: "templates:read",
+    description: "Read workspace checklist templates and item definitions.",
+  },
+  {
+    value: "mcp:read",
+    label: "mcp:read",
+    description: "Read-only metadata access for MCP AI agent integrations (zero raw PII or files).",
+  },
+];
+
+export interface ApiKeyDto {
+  id: string;
+  name: string;
+  key_prefix: string;
+  scopes: ApiKeyScope[];
+  last_used_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+  created_at: string;
+}
+
+export interface WebhookDeliveryDto {
+  id: string;
+  request_id: string | null;
+  event: string;
+  target_url: string;
+  status: "pending" | "in_flight" | "retrying" | "delivered" | "dead_letter";
+  attempts: number;
+  max_attempts: number;
+  last_status_code: number | null;
+  last_error: string | null;
+  next_attempt_at: string | null;
+  delivered_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebhookDeliveriesResponse {
+  deliveries: WebhookDeliveryDto[];
+  total: number;
+  deadLetterCount: number;
+  hasMore: boolean;
+}
+
 export interface SettingsResponse {
   webhookUrl: string;
   webhookSecret: string;

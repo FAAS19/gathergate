@@ -1,6 +1,8 @@
 import {
   ApiError,
   VALIDATOR_OPTIONS,
+  type ApiKeyDto,
+  type ApiKeyScope,
   type AuditEventDto,
   type BrandingDto,
   type ClientPortalResponse,
@@ -18,6 +20,7 @@ import {
   type TemplateDto,
   type TemplateItemSpec,
   type UploadDto,
+  type WebhookDeliveryDto,
   type WorkspaceDto,
 } from "./api";
 import {
@@ -101,6 +104,8 @@ interface DemoState {
   templates: TemplateDto[];
   requests: DemoRequestRecord[];
   outbox: OutboxEmailDto[];
+  apiKeys: ApiKeyDto[];
+  webhookDeliveries: WebhookDeliveryDto[];
   blobs: Map<string, Blob>;
   otpVerifiedRequestIds: Set<string>;
 }
@@ -1207,6 +1212,8 @@ function createInitialState(): DemoState {
     templates,
     requests,
     outbox,
+    apiKeys: [],
+    webhookDeliveries: [],
     blobs,
     otpVerifiedRequestIds: new Set<string>(),
   };
@@ -1243,6 +1250,8 @@ function persistDemoState(): void {
       templates: state.templates,
       requests: state.requests,
       outbox: state.outbox,
+      apiKeys: state.apiKeys,
+      webhookDeliveries: state.webhookDeliveries,
       otpVerifiedRequestIds: [...state.otpVerifiedRequestIds],
       uploadedBlobs: [...uploadedBlobData.entries()],
     };
@@ -1286,6 +1295,10 @@ function loadDemoState(): DemoState {
       templates: saved.templates,
       requests: saved.requests,
       outbox: Array.isArray(saved.outbox) ? saved.outbox : fresh.outbox,
+      apiKeys: Array.isArray(saved.apiKeys) ? saved.apiKeys : fresh.apiKeys,
+      webhookDeliveries: Array.isArray(saved.webhookDeliveries)
+        ? saved.webhookDeliveries
+        : fresh.webhookDeliveries,
       blobs,
       otpVerifiedRequestIds: new Set(saved.otpVerifiedRequestIds ?? []),
     };
@@ -2592,7 +2605,106 @@ async function handleDemoApiJson<T>(url: string, init?: RequestInit): Promise<T>
     if (!state.workspace.webhook_url) {
       throw new ApiError("Configure a webhook URL first.", 400);
     }
+    const nowIso = new Date().toISOString();
+    state.webhookDeliveries.unshift({
+      id: nextId("whd"),
+      request_id: null,
+      event: "webhook.test",
+      target_url: state.workspace.webhook_url,
+      status: "delivered",
+      attempts: 1,
+      max_attempts: 6,
+      last_status_code: 200,
+      last_error: null,
+      next_attempt_at: null,
+      delivered_at: nowIso,
+      created_at: nowIso,
+      updated_at: nowIso,
+    });
     return { ok: true, status: 200 } as T;
+  }
+
+  if (method === "GET" && pathname === "/api/settings/webhook/deliveries") {
+    const queryStr = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
+    const params = new URLSearchParams(queryStr);
+    const statusFilter = params.get("status");
+    const limit = Math.min(100, Math.max(1, Number(params.get("limit") || 50) || 50));
+    const offset = Math.max(0, Number(params.get("offset") || 0) || 0);
+    const filtered =
+      statusFilter && statusFilter !== "all"
+        ? state.webhookDeliveries.filter((d) => d.status === statusFilter)
+        : state.webhookDeliveries;
+    const page = filtered.slice(offset, offset + limit).map((d) => ({ ...d }));
+    return {
+      deliveries: page,
+      total: filtered.length,
+      deadLetterCount: state.webhookDeliveries.filter((d) => d.status === "dead_letter").length,
+      hasMore: offset + page.length < filtered.length,
+    } as T;
+  }
+
+  const whReplayMatch = pathname.match(/^\/api\/settings\/webhook\/deliveries\/([^/]+)\/replay$/);
+  if (method === "POST" && whReplayMatch) {
+    const target = state.webhookDeliveries.find((d) => d.id === decodeURIComponent(whReplayMatch[1]));
+    if (!target) throw new ApiError("Webhook delivery not found.", 404);
+    if (!state.workspace.webhook_url) {
+      throw new ApiError("Configure a webhook URL before replaying deliveries.", 400);
+    }
+    const nowIso = new Date().toISOString();
+    target.status = "delivered";
+    target.attempts += 1;
+    target.last_status_code = 200;
+    target.last_error = null;
+    target.next_attempt_at = null;
+    target.delivered_at = nowIso;
+    target.updated_at = nowIso;
+    return { ok: true, status: 200, delivery: { ...target } } as T;
+  }
+
+  if (method === "GET" && pathname === "/api/api-keys") {
+    return { apiKeys: state.apiKeys.map((k) => ({ ...k, scopes: [...k.scopes] })) } as T;
+  }
+
+  if (method === "POST" && pathname === "/api/api-keys") {
+    const body = parseJsonBody<{ name?: string; scopes?: unknown; expiresInDays?: number | null }>(init);
+    const name = String(body.name || "").trim();
+    if (!name || name.length > 80) throw new ApiError("Enter a key name between 1 and 80 characters.", 400);
+    const allowed = new Set<ApiKeyScope>(["requests:read", "requests:write", "templates:read", "mcp:read"]);
+    if (!Array.isArray(body.scopes) || body.scopes.length === 0) {
+      throw new ApiError("Select at least one API key scope.", 400);
+    }
+    const scopes: ApiKeyScope[] = [];
+    for (const s of body.scopes) {
+      if (typeof s !== "string" || !allowed.has(s as ApiKeyScope)) {
+        throw new ApiError(`Unknown API key scope: ${String(s)}`, 400);
+      }
+      if (!scopes.includes(s as ApiKeyScope)) scopes.push(s as ApiKeyScope);
+    }
+    const nowIso = new Date().toISOString();
+    const secret = `gg_live_demo_${syntheticSha256(`${name}:${nowIso}:${state.seq++}`).slice(0, 24)}`;
+    const created: ApiKeyDto = {
+      id: nextId("key"),
+      name,
+      key_prefix: secret.slice(0, 16),
+      scopes,
+      last_used_at: null,
+      expires_at:
+        typeof body.expiresInDays === "number" && body.expiresInDays > 0
+          ? addDaysIso(nowIso, body.expiresInDays)
+          : null,
+      revoked_at: null,
+      created_at: nowIso,
+    };
+    state.apiKeys.unshift(created);
+    return { apiKey: { ...created, scopes: [...created.scopes] }, secret } as T;
+  }
+
+  const apiKeyMatch = pathname.match(/^\/api\/api-keys\/([^/]+)$/);
+  if (method === "DELETE" && apiKeyMatch) {
+    const target = state.apiKeys.find((k) => k.id === decodeURIComponent(apiKeyMatch[1]));
+    if (!target) throw new ApiError("API key not found.", 404);
+    if (!target.revoked_at) target.revoked_at = new Date().toISOString();
+    return { ok: true, apiKey: { ...target, scopes: [...target.scopes] } } as T;
   }
 
   if (method === "PUT" && pathname === "/api/settings/email") {

@@ -242,6 +242,13 @@ test("Versioned migrations upgrade legacy v0.1.0 SQLite DB cleanly and fail clos
     };
     assert.equal(uploadRow.enc_version, "v1");
 
+    const v5Tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('api_keys', 'webhook_deliveries')")
+      .all() as Array<{ name: string }>;
+    assert.equal(v5Tables.length, 2);
+    const reqCols = db.prepare("PRAGMA table_info(requests)").all() as Array<{ name: string }>;
+    assert.ok(reqCols.some((c) => c.name === "overdue_notified_at"));
+
     const { app } = createApp({
       config,
       db,
@@ -250,7 +257,13 @@ test("Versioned migrations upgrade legacy v0.1.0 SQLite DB cleanly and fail clos
     });
     const cookie = `gg_session=${rawSessionToken}`;
 
-    for (const url of ["/api/requests", "/api/clients", "/api/settings"]) {
+    for (const url of [
+      "/api/requests",
+      "/api/clients",
+      "/api/settings",
+      "/api/api-keys",
+      "/api/settings/webhook/deliveries",
+    ]) {
       const res = await app.request(url, { headers: { cookie } });
       assert.equal(res.status, 200, `Expected 200 on ${url} after upgrade`);
     }

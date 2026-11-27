@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { PNG, screenshot, trackErrors } from "./helpers";
+import { expectAccessible, PNG, screenshot, trackErrors } from "./helpers";
 
 test("operator configures branding RGB picker, email delivery, account profile and views standalone outbox", async ({
   page,
@@ -52,6 +52,42 @@ test("operator configures branding RGB picker, email delivery, account profile a
   await page.getByRole("button", { name: "Save profile" }).click();
   await expect(page.getByText("Profile updated.")).toBeVisible();
   await expect(page.getByRole("button", { name: /Sarah Mitchell/ })).toBeVisible();
+
+  // API Keys: create scoped key, verify one-time secret works via Bearer auth, check Light & Dark WCAG AA, then revoke.
+  await page.goto("/settings?section=api-keys");
+  await expect(page.getByRole("button", { name: "API Keys", exact: true })).toHaveAttribute("aria-current", "page");
+  await page.getByLabel("Key label").fill("n8n Intake Automation");
+  await page.getByRole("button", { name: "Create API key" }).click();
+  const secretEl = page.getByTestId("new-api-key-secret");
+  await expect(secretEl).toBeVisible();
+  const rawSecret = (await secretEl.textContent())?.trim() ?? "";
+  expect(rawSecret.startsWith("gg_live_")).toBe(true);
+
+  const bearerReq = await page.request.get("/api/requests", {
+    headers: { authorization: `Bearer ${rawSecret}` },
+  });
+  expect(bearerReq.status()).toBe(200);
+
+  await expectAccessible(page, testInfo, "settings-api-keys-light");
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await expectAccessible(page, testInfo, "settings-api-keys-dark");
+  await page.getByRole("button", { name: "Switch to daylight mode" }).click();
+
+  await page.getByRole("button", { name: "Revoke" }).first().click();
+  await expect(page.getByText("Revoked", { exact: true }).first()).toBeVisible();
+
+  const revokedReq = await page.request.get("/api/requests", {
+    headers: { authorization: `Bearer ${rawSecret}` },
+  });
+  expect(revokedReq.status()).toBe(401);
+
+  // Webhooks: delivery log section renders cleanly in Light & Dark modes.
+  await page.goto("/settings?section=webhooks");
+  await expect(page.getByText("Recent Deliveries & Dead-Letter Queue")).toBeVisible();
+  await expectAccessible(page, testInfo, "settings-webhooks-light");
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await expectAccessible(page, testInfo, "settings-webhooks-dark");
+  await page.getByRole("button", { name: "Switch to daylight mode" }).click();
 
   // Standalone Local Email Outbox page renders invites + test email with branded HTML iframe.
   await page.goto("/outbox");

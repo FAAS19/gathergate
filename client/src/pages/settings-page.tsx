@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
 import {
+  ArrowClockwise,
   CheckCircle,
   Copy,
   EnvelopeSimple,
@@ -15,6 +16,7 @@ import {
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { AccountSettings } from "@/components/account-settings";
+import { ApiKeysSettings } from "@/components/api-keys-settings";
 import { AppShell } from "@/components/app-shell";
 import { BrandingSettings } from "@/components/branding-settings";
 import { EmailSettings } from "@/components/email-settings";
@@ -27,13 +29,16 @@ import {
   apiJson,
   ApiError,
   formatBytes,
+  formatRelativeTime,
   IS_DEMO,
   type SessionResponse,
   type SettingsResponse,
+  type WebhookDeliveriesResponse,
+  type WebhookDeliveryDto,
 } from "@/lib/api";
 import { cn, copyText } from "@/lib/utils";
 
-type SettingsSection = "branding" | "email" | "account" | "webhooks" | "instance";
+type SettingsSection = "branding" | "email" | "account" | "api-keys" | "webhooks" | "instance";
 
 const SECTIONS: ReadonlyArray<{
   id: SettingsSection;
@@ -43,6 +48,7 @@ const SECTIONS: ReadonlyArray<{
   { id: "branding", label: "Branding", icon: Palette },
   { id: "email", label: "Email Delivery", icon: EnvelopeSimple },
   { id: "account", label: "Account & Security", icon: UserCircle },
+  { id: "api-keys", label: "API Keys", icon: Key },
   { id: "webhooks", label: "Webhooks", icon: WebhooksLogo },
   { id: "instance", label: "Instance & Data", icon: HardDrives },
 ];
@@ -70,6 +76,40 @@ export function SettingsPage({
   const [webhookSecret, setWebhookSecret] = useState("");
   const [savingWebhook, setSavingWebhook] = useState(false);
   const [testingWebhook, setTestingWebhook] = useState(false);
+  const [deliveries, setDeliveries] = useState<WebhookDeliveryDto[]>([]);
+  const [deliveryFilter, setDeliveryFilter] = useState<"all" | "dead_letter" | "retrying" | "delivered">("all");
+  const [deadLetterCount, setDeadLetterCount] = useState(0);
+  const [hasMoreDeliveries, setHasMoreDeliveries] = useState(false);
+  const [loadingDeliveries, setLoadingDeliveries] = useState(false);
+  const [replayingId, setReplayingId] = useState<string | null>(null);
+  const deliveryReqSeq = useRef(0);
+
+  const loadDeliveries = useCallback(
+    async (options?: { status?: "all" | "dead_letter" | "retrying" | "delivered"; offset?: number; append?: boolean }) => {
+      const targetStatus = options?.status ?? deliveryFilter;
+      const offset = options?.offset ?? 0;
+      const seq = ++deliveryReqSeq.current;
+      if (!options?.append) setDeliveries([]);
+      setLoadingDeliveries(true);
+      try {
+        const qs = new URLSearchParams({ limit: "50", offset: String(offset) });
+        if (targetStatus !== "all") qs.set("status", targetStatus);
+        const res = await apiJson<WebhookDeliveriesResponse>(
+          `/api/settings/webhook/deliveries?${qs.toString()}`
+        );
+        if (seq !== deliveryReqSeq.current) return;
+        setDeliveries((prev) => (options?.append ? [...prev, ...res.deliveries] : res.deliveries));
+        setDeadLetterCount(res.deadLetterCount ?? 0);
+        setHasMoreDeliveries(Boolean(res.hasMore));
+      } catch {
+        if (seq !== deliveryReqSeq.current) return;
+        if (!options?.append) setDeliveries([]);
+      } finally {
+        if (seq === deliveryReqSeq.current) setLoadingDeliveries(false);
+      }
+    },
+    [deliveryFilter]
+  );
 
   const loadAll = useCallback(async () => {
     try {
@@ -85,6 +125,12 @@ export function SettingsPage({
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    if (activeSection === "webhooks") {
+      loadDeliveries({ status: deliveryFilter, offset: 0, append: false });
+    }
+  }, [activeSection, deliveryFilter, loadDeliveries]);
 
   function selectSection(section: SettingsSection) {
     setSearchParams({ section }, { replace: true });
@@ -129,6 +175,27 @@ export function SettingsPage({
       toast.error(err instanceof ApiError ? err.message : "Webhook test failed.");
     } finally {
       setTestingWebhook(false);
+    }
+  }
+
+  async function replayDelivery(id: string) {
+    setReplayingId(id);
+    try {
+      const res = await apiJson<{ status?: number }>(
+        `/api/settings/webhook/deliveries/${encodeURIComponent(id)}/replay`,
+        { method: "POST" }
+      );
+      toast.success(
+        IS_DEMO
+          ? "Demo mode: webhook replay simulated locally."
+          : `Webhook replayed (HTTP ${res.status ?? 200}).`
+      );
+      await loadDeliveries();
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Webhook replay failed.");
+      await loadDeliveries();
+    } finally {
+      setReplayingId(null);
     }
   }
 
@@ -209,79 +276,230 @@ export function SettingsPage({
               />
             )}
 
+            {activeSection === "api-keys" && <ApiKeysSettings />}
+
             {activeSection === "webhooks" && (
-              <Card className="paper-shadow max-w-2xl">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <WebhooksLogo className="size-4 text-primary" />
-                    Completion Webhook (n8n / Automation)
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    When every required item in a checklist is approved, GatherGate POSTs a signed{" "}
-                    <code className="font-mono">request.completed</code> payload with{" "}
-                    <code className="font-mono">x-gathergate-signature</code> HMAC-SHA256. Sensitive identifiers (TFN, Medicare, UK NINO, US SSN) stay masked.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form onSubmit={saveWebhook} className="space-y-4">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="wh-url">Webhook Endpoint URL</Label>
-                      <Input
-                        id="wh-url"
-                        type="url"
-                        placeholder="https://n8n.example.com/webhook/gathergate"
-                        value={webhookUrl}
-                        onChange={(e) => setWebhookUrl(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="wh-secret">HMAC-SHA256 Signing Secret</Label>
-                      <div className="flex gap-2">
+              <div className="max-w-3xl space-y-6">
+                <Card className="paper-shadow">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <WebhooksLogo className="size-4 text-primary" />
+                      Signed Webhooks (n8n / Automation)
+                    </CardTitle>
+                    <CardDescription className="text-xs">
+                      GatherGate POSTs HMAC-SHA256 signed payloads (<code className="font-mono">x-gathergate-signature</code>) for{" "}
+                      <code className="font-mono">request.opened</code>, <code className="font-mono">item.submitted</code>,{" "}
+                      <code className="font-mono">request.in_review</code>, <code className="font-mono">request.completed</code>,{" "}
+                      <code className="font-mono">request.overdue</code>, and <code className="font-mono">request.purged</code>. Failed deliveries retry 5 times with exponential backoff. Sensitive identifiers stay masked.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <form onSubmit={saveWebhook} className="space-y-4">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="wh-url">Webhook Endpoint URL</Label>
                         <Input
-                          id="wh-secret"
-                          className="font-mono text-xs"
-                          placeholder="whsec_..."
-                          value={webhookSecret}
-                          onChange={(e) => setWebhookSecret(e.target.value)}
+                          id="wh-url"
+                          type="url"
+                          placeholder="https://n8n.example.com/webhook/gathergate"
+                          value={webhookUrl}
+                          onChange={(e) => setWebhookUrl(e.target.value)}
                         />
-                        <Button type="button" variant="outline" size="sm" onClick={generateSecret}>
-                          <Key className="mr-1.5 size-3.5" />
-                          Generate
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="wh-secret">HMAC-SHA256 Signing Secret</Label>
+                        <div className="flex gap-2">
+                          <Input
+                            id="wh-secret"
+                            className="font-mono text-xs"
+                            placeholder="whsec_..."
+                            value={webhookSecret}
+                            onChange={(e) => setWebhookSecret(e.target.value)}
+                          />
+                          <Button type="button" variant="outline" size="sm" onClick={generateSecret}>
+                            <Key className="mr-1.5 size-3.5" />
+                            Generate
+                          </Button>
+                          {webhookSecret && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              aria-label="Copy signing secret"
+                              onClick={async () => {
+                                const ok = await copyText(webhookSecret);
+                                if (ok) toast.success("Secret copied.");
+                                else toast.error("Could not copy signing secret.");
+                              }}
+                            >
+                              <Copy className="size-3.5" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 pt-2">
+                        <Button type="submit" disabled={savingWebhook}>
+                          {savingWebhook ? "Saving..." : "Save webhook settings"}
                         </Button>
-                        {webhookSecret && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={testingWebhook || !webhookUrl}
+                          onClick={testWebhook}
+                        >
+                          <PaperPlaneTilt className="mr-1.5 size-3.5" />
+                          {testingWebhook ? "Sending..." : "Send test event"}
+                        </Button>
+                      </div>
+                    </form>
+                  </CardContent>
+                </Card>
+
+                <Card className="paper-shadow">
+                  <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+                    <div>
+                      <CardTitle className="text-base">Recent Deliveries & Dead-Letter Queue</CardTitle>
+                      <CardDescription className="text-xs">
+                        Inspect signed webhook attempts and replay failed or dead-lettered events manually.
+                      </CardDescription>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={loadingDeliveries}
+                      onClick={() => loadDeliveries({ status: deliveryFilter, offset: 0, append: false })}
+                    >
+                      <ArrowClockwise className={cn("mr-1.5 size-3.5", loadingDeliveries && "animate-spin")} />
+                      Refresh
+                    </Button>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter webhook deliveries">
+                      {(
+                        [
+                          { id: "all", label: "All" },
+                          {
+                            id: "dead_letter",
+                            label: deadLetterCount > 0 ? `Dead letter (${deadLetterCount})` : "Dead letter",
+                          },
+                          { id: "retrying", label: "Retrying" },
+                          { id: "delivered", label: "Delivered" },
+                        ] as const
+                      ).map((tab) => (
+                        <Button
+                          key={tab.id}
+                          type="button"
+                          size="sm"
+                          aria-pressed={deliveryFilter === tab.id}
+                          variant={deliveryFilter === tab.id ? "secondary" : "outline"}
+                          onClick={() => setDeliveryFilter(tab.id)}
+                        >
+                          {tab.label}
+                        </Button>
+                      ))}
+                    </div>
+                    {loadingDeliveries && deliveries.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Loading deliveries...</p>
+                    ) : deliveries.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        {deliveryFilter === "all"
+                          ? "No webhook deliveries recorded yet. Lifecycle events will appear here once a webhook URL is configured."
+                          : "No deliveries match this status filter."}
+                      </p>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="divide-y divide-border rounded-lg border border-border">
+                          {deliveries.map((d) => {
+                            const statusLabel =
+                              d.status === "delivered"
+                                ? "Delivered"
+                                : d.status === "retrying"
+                                  ? "Retrying"
+                                  : d.status === "in_flight"
+                                    ? "Sending"
+                                    : d.status === "dead_letter"
+                                      ? "Dead letter"
+                                      : "Pending";
+                            return (
+                              <div
+                                key={d.id}
+                                className="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between"
+                              >
+                                <div className="min-w-0 space-y-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <code className="font-mono text-xs font-medium text-foreground">
+                                      {d.event}
+                                    </code>
+                                    <Badge
+                                      variant={d.status === "delivered" ? "secondary" : "outline"}
+                                      className={
+                                        d.status === "dead_letter"
+                                          ? "border-destructive/30 text-destructive"
+                                          : d.status === "retrying" || d.status === "in_flight"
+                                            ? "border-amber-600/30 text-amber-800 dark:border-amber-400/40 dark:text-amber-300"
+                                            : undefined
+                                      }
+                                    >
+                                      {statusLabel}
+                                    </Badge>
+                                    {d.last_status_code !== null && (
+                                      <span className="font-mono text-xs text-muted-foreground">
+                                        HTTP {d.last_status_code}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                    <span className="tabular-nums">
+                                      Attempts: {d.attempts}/{d.max_attempts}
+                                    </span>
+                                    <span>{formatRelativeTime(d.updated_at)}</span>
+                                    {d.next_attempt_at && d.status === "retrying" && (
+                                      <span>Next retry: {formatRelativeTime(d.next_attempt_at)}</span>
+                                    )}
+                                  </div>
+                                  {d.last_error && (
+                                    <p className="truncate text-xs text-destructive">{d.last_error}</p>
+                                  )}
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={replayingId === d.id || !webhookUrl}
+                                  onClick={() => replayDelivery(d.id)}
+                                  className="shrink-0"
+                                >
+                                  <ArrowClockwise
+                                    className={cn("mr-1.5 size-3.5", replayingId === d.id && "animate-spin")}
+                                  />
+                                  Replay
+                                </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {hasMoreDeliveries && (
                           <Button
                             type="button"
                             variant="outline"
-                            size="icon"
-                            aria-label="Copy signing secret"
-                            onClick={async () => {
-                              const ok = await copyText(webhookSecret);
-                              if (ok) toast.success("Secret copied.");
-                              else toast.error("Could not copy signing secret.");
-                            }}
+                            size="sm"
+                            disabled={loadingDeliveries}
+                            onClick={() =>
+                              loadDeliveries({
+                                status: deliveryFilter,
+                                offset: deliveries.length,
+                                append: true,
+                              })
+                            }
                           >
-                            <Copy className="size-3.5" />
+                            Load older deliveries
                           </Button>
                         )}
                       </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 pt-2">
-                      <Button type="submit" disabled={savingWebhook}>
-                        {savingWebhook ? "Saving..." : "Save webhook settings"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={testingWebhook || !webhookUrl}
-                        onClick={testWebhook}
-                      >
-                        <PaperPlaneTilt className="mr-1.5 size-3.5" />
-                        {testingWebhook ? "Sending..." : "Send test event"}
-                      </Button>
-                    </div>
-                  </form>
-                </CardContent>
-              </Card>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
             )}
 
             {activeSection === "instance" && settings && (
