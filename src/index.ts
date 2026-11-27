@@ -7,6 +7,7 @@ import { loadConfig } from "./config.js";
 import { openDatabase } from "./db/client.js";
 import { runReminderSweep } from "./jobs/chaser.js";
 import { runPurgeSweep } from "./jobs/purge.js";
+import { runOverdueSweep, runWebhookRetrySweep } from "./jobs/webhook.js";
 
 const config = loadConfig();
 if (config.masterKeySource === "file") {
@@ -41,7 +42,9 @@ if (config.cronIntervalMinutes > 0) {
     cronInFlight = true;
     try {
       let sent = 0;
+      let overdue = 0;
       let purged = { requestsPurged: 0, filesDeleted: 0 };
+      let webhooks = { processed: 0, delivered: 0, retrying: 0, deadLetter: 0 };
       try {
         sent = await runReminderSweep({
           store,
@@ -55,13 +58,38 @@ if (config.cronIntervalMinutes > 0) {
         console.error("[GatherGate Cron] reminder sweep failed:", err);
       }
       try {
-        purged = await runPurgeSweep({ store, storage });
+        overdue = await runOverdueSweep({
+          store,
+          masterKey: config.masterKey,
+          baseUrl: config.baseUrl,
+          multiTenant: config.multiTenant,
+        });
+      } catch (err) {
+        console.error("[GatherGate Cron] overdue sweep failed:", err);
+      }
+      try {
+        purged = await runPurgeSweep({
+          store,
+          storage,
+          masterKey: config.masterKey,
+          baseUrl: config.baseUrl,
+          multiTenant: config.multiTenant,
+        });
       } catch (err) {
         console.error("[GatherGate Cron] purge sweep failed:", err);
       }
-      if (sent > 0 || purged.requestsPurged > 0) {
+      try {
+        webhooks = await runWebhookRetrySweep({
+          store,
+          masterKey: config.masterKey,
+          multiTenant: config.multiTenant,
+        });
+      } catch (err) {
+        console.error("[GatherGate Cron] webhook retry sweep failed:", err);
+      }
+      if (sent > 0 || overdue > 0 || purged.requestsPurged > 0 || webhooks.processed > 0) {
         console.log(
-          `[GatherGate Cron] reminders_sent=${sent} requests_purged=${purged.requestsPurged} files_deleted=${purged.filesDeleted}`
+          `[GatherGate Cron] reminders_sent=${sent} overdue=${overdue} requests_purged=${purged.requestsPurged} files_deleted=${purged.filesDeleted} webhook_retries=${webhooks.processed}`
         );
       }
     } finally {

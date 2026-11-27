@@ -21,12 +21,17 @@ import {
   type EmailBackend,
 } from "./config.js";
 import {
+  addDaysIso,
   ClientWriteConflictError,
   SetupAlreadyCompletedError,
   slugify,
   Store,
+  type ApiKeyRow,
+  type RequestItemRow,
+  type RequestRow,
   type UploadRow,
   type UserRow,
+  type WebhookDeliveryRow,
   type WorkspaceRow,
 } from "./db/queries.js";
 import {
@@ -40,14 +45,32 @@ import {
   type RenderedEmail,
 } from "./emails/templates.js";
 import { seedDemoWorkspace } from "./jobs/demo.js";
-import { dispatchCompletionWebhook, dispatchTestWebhook, resolveWebhookSecret } from "./jobs/webhook.js";
-import { generateOtpCode, hashPassword, verifyOtpCode, verifyPassword } from "./security/auth.js";
+import {
+  dispatchCompletionWebhook,
+  dispatchTestWebhook,
+  dispatchWebhookEvent,
+  replayWebhookDelivery,
+  resolveWebhookSecret,
+  type WebhookEventType,
+} from "./jobs/webhook.js";
+import {
+  API_KEY_PREFIX,
+  generateApiKey,
+  generateOtpCode,
+  hashPassword,
+  normalizeApiKeyScopes,
+  parseApiKeyScopesJson,
+  verifyOtpCode,
+  verifyPassword,
+  type ApiKeyScope,
+} from "./security/auth.js";
 import {
   decryptBuffer,
   decryptField,
   encryptBuffer,
   encryptField,
   generateId,
+  safeEqualHex,
   sha256Hex,
 } from "./security/crypto.js";
 import { detectFileSignature, resolveAllowedMimes } from "./security/magic-bytes.js";
@@ -78,8 +101,40 @@ const MAX_TEXTAREA_ITEM_CHARS = 20_000;
 const MAX_PASSWORD_CHARS = 256;
 const MAX_FILES_PER_UPLOAD = 10;
 const MAX_ITEM_FILE_MB = 50;
+const MAX_ACTIVE_API_KEYS = 50;
 const DEFAULT_MANUAL_REMINDER_COOLDOWN_MS = 15 * 60_000;
 const MULTI_TENANT_SMTP_PORTS = new Set([25, 465, 587, 2525]);
+
+function formatApiKey(row: ApiKeyRow) {
+  return {
+    id: row.id,
+    name: row.name,
+    key_prefix: row.key_prefix,
+    scopes: parseApiKeyScopesJson(row.scopes_json),
+    last_used_at: row.last_used_at,
+    expires_at: row.expires_at,
+    revoked_at: row.revoked_at,
+    created_at: row.created_at,
+  };
+}
+
+function formatWebhookDelivery(row: WebhookDeliveryRow) {
+  return {
+    id: row.id,
+    request_id: row.request_id,
+    event: row.event,
+    target_url: row.target_url,
+    status: row.status,
+    attempts: row.attempts,
+    max_attempts: row.max_attempts,
+    last_status_code: row.last_status_code,
+    last_error: row.last_error,
+    next_attempt_at: row.next_attempt_at,
+    delivered_at: row.delivered_at,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
+}
 
 function isValidEmailAddress(email: string): boolean {
   return Boolean(email && !hasCrLf(email) && !/[,\s;<>]/.test(email) && validateTextValue("email", email).valid);
@@ -130,7 +185,9 @@ export type RateLimitKey =
   | "loginAccount"
   | "signupIp"
   | "setupIp"
-  | "settingsTest";
+  | "settingsTest"
+  | "apiKey"
+  | "apiAuthIp";
 
 export interface RateLimitRule {
   limit: number;
@@ -149,6 +206,8 @@ const DEFAULT_RATE_LIMITS: Record<RateLimitKey, RateLimitRule> = {
   signupIp: { limit: 5, windowMs: 15 * 60_000 },
   setupIp: { limit: 10, windowMs: 15 * 60_000 },
   settingsTest: { limit: 10, windowMs: 15 * 60_000 },
+  apiKey: { limit: 120, windowMs: 60_000 },
+  apiAuthIp: { limit: 30, windowMs: 15 * 60_000 },
 };
 
 export interface GatherGateAppDeps {
@@ -314,10 +373,158 @@ export function createApp(deps: GatherGateAppDeps) {
 
   app.get("/healthz", (c) => c.json({ ok: true, service: "gathergate" }));
 
-  function requireAuth(c: import("hono").Context<AppEnv>) {
+  type AuthActor =
+    | {
+        kind: "session";
+        user: UserRow;
+        workspace: WorkspaceRow;
+        actor: "operator";
+        actorLabel: string;
+      }
+    | {
+        kind: "api_key";
+        apiKey: ApiKeyRow;
+        scopes: Set<ApiKeyScope>;
+        workspace: WorkspaceRow;
+        actor: "api_key";
+        actorLabel: string;
+      };
+
+  function getSessionAuth(c: import("hono").Context<AppEnv>) {
     const token = getCookie(c, SESSION_COOKIE);
     if (!token) return null;
     return store.getUserBySessionToken(token);
+  }
+
+  function resolveScopedAuth(
+    c: import("hono").Context<AppEnv>,
+    requiredScope?: ApiKeyScope
+  ): { auth: AuthActor; error?: undefined } | { auth?: undefined; error: Response } {
+    const authHeader = c.req.header("authorization")?.trim();
+    if (authHeader) {
+      const match = authHeader.match(/^Bearer\s+(\S+)$/i);
+      const rawKey = match?.[1] ?? "";
+      const ip = extractClientIp(c, config.trustProxy);
+
+      if (!rawKey || !rawKey.startsWith(API_KEY_PREFIX)) {
+        const limited = enforceRateLimit(
+          c,
+          [{ bucket: "apiAuthIp", key: ip }],
+          "Too many failed API authentication attempts. Please wait and try again."
+        );
+        if (limited) return { error: limited };
+        return { error: c.json({ error: "Invalid API key." }, 401) };
+      }
+
+      const keyHash = sha256Hex(rawKey);
+      const row = store.getApiKeyByHash(keyHash);
+      const nowMs = nowFn();
+      const nowIso = new Date(nowMs).toISOString();
+      if (
+        !row ||
+        !safeEqualHex(keyHash, row.key_hash) ||
+        row.revoked_at ||
+        (row.expires_at && row.expires_at <= nowIso)
+      ) {
+        const limited = enforceRateLimit(
+          c,
+          [{ bucket: "apiAuthIp", key: ip }],
+          "Too many failed API authentication attempts. Please wait and try again."
+        );
+        if (limited) return { error: limited };
+        return { error: c.json({ error: "Invalid or revoked API key." }, 401) };
+      }
+
+      const workspace = store.getWorkspaceById(row.workspace_id);
+      if (!workspace) {
+        return { error: c.json({ error: "Invalid or revoked API key." }, 401) };
+      }
+
+      const keyLimited = enforceRateLimit(
+        c,
+        [{ bucket: "apiKey", key: row.id }],
+        "API key rate limit exceeded. Please slow down and try again."
+      );
+      if (keyLimited) return { error: keyLimited };
+
+      if (!requiredScope) {
+        return { error: c.json({ error: "This endpoint requires an interactive operator session." }, 403) };
+      }
+
+      const scopes = new Set(parseApiKeyScopesJson(row.scopes_json));
+      if (!scopes.has(requiredScope)) {
+        return {
+          error: c.json(
+            { error: `API key lacks required scope "${requiredScope}".`, requiredScope },
+            403
+          ),
+        };
+      }
+
+      if (!row.last_used_at || nowMs - Date.parse(row.last_used_at) >= 60_000) {
+        store.touchApiKeyLastUsed(row.id, nowIso);
+      }
+
+      return {
+        auth: {
+          kind: "api_key",
+          apiKey: row,
+          scopes,
+          workspace,
+          actor: "api_key",
+          actorLabel: `api_key:${row.id}`,
+        },
+      };
+    }
+
+    const session = getSessionAuth(c);
+    if (!session) return { error: c.json({ error: "Unauthorized" }, 401) };
+    return {
+      auth: {
+        kind: "session",
+        user: session.user,
+        workspace: session.workspace,
+        actor: "operator",
+        actorLabel: session.user.email,
+      },
+    };
+  }
+
+  function requireSessionOnly(
+    c: import("hono").Context<AppEnv>
+  ): { user: UserRow; workspace: WorkspaceRow; error?: undefined } | { user?: undefined; workspace?: undefined; error: Response } {
+    const res = resolveScopedAuth(c, undefined);
+    if (res.error) return { error: res.error };
+    if (res.auth.kind !== "session") {
+      return { error: c.json({ error: "This endpoint requires an interactive operator session." }, 403) };
+    }
+    return { user: res.auth.user, workspace: res.auth.workspace };
+  }
+
+  async function emitWebhookSafe(params: {
+    workspace: WorkspaceRow;
+    request: RequestRow;
+    event: WebhookEventType;
+    item?: RequestItemRow;
+  }) {
+    if (!params.workspace.webhook_url?.trim()) return;
+    try {
+      await dispatchWebhookEvent({
+        store,
+        workspace: params.workspace,
+        request: params.request,
+        event: params.event,
+        item: params.item,
+        masterKey: config.masterKey,
+        baseUrl: config.baseUrl,
+        multiTenant: config.multiTenant,
+        fetchImpl: deps.fetchImpl,
+        lookupImpl: deps.lookupImpl,
+        nowMs: nowFn(),
+      });
+    } catch {
+      // Delivery errors are already persisted inside webhook_deliveries.
+    }
   }
 
   function summarizeWorkspaceEmail(ws: WorkspaceRow) {
@@ -414,7 +621,7 @@ export function createApp(deps: GatherGateAppDeps) {
   // ---------------------------------------------------------------------------
   app.get("/api/session", (c) => {
     const needsSetup = store.countUsers() === 0;
-    const auth = needsSetup ? null : requireAuth(c);
+    const auth = needsSetup ? null : getSessionAuth(c);
     const resolvedEmail = auth ? resolveWorkspaceEmail(auth.workspace, config, config.masterKey) : null;
     return c.json({
       needsSetup,
@@ -635,14 +842,16 @@ export function createApp(deps: GatherGateAppDeps) {
   // Requests, Review & Exports
   // ---------------------------------------------------------------------------
   app.get("/api/clients", (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const resolved = resolveScopedAuth(c, "requests:read");
+    if (resolved.error) return resolved.error;
+    const { auth } = resolved;
     return c.json({ clients: store.listClients(auth.workspace.id) });
   });
 
   app.get("/api/requests", (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const resolved = resolveScopedAuth(c, "requests:read");
+    if (resolved.error) return resolved.error;
+    const { auth } = resolved;
 
     const rows = store.listRequests(auth.workspace.id);
     const enriched = rows.map((r) => {
@@ -697,8 +906,9 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.post("/api/requests", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const resolved = resolveScopedAuth(c, "requests:write");
+    if (resolved.error) return resolved.error;
+    const { auth } = resolved;
 
     if (
       auth.workspace.max_active_requests > 0 &&
@@ -803,6 +1013,8 @@ export function createApp(deps: GatherGateAppDeps) {
       purgeAfterDays,
       dueAt,
       masterKey: config.masterKey,
+      actor: auth.actor,
+      actorBy: auth.actorLabel,
     });
 
     const portalUrl = `${config.baseUrl}/c/${magicToken}`;
@@ -843,8 +1055,9 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.get("/api/requests/:id", (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const resolved = resolveScopedAuth(c, "requests:read");
+    if (resolved.error) return resolved.error;
+    const { auth } = resolved;
     const request = store.getRequestById(auth.workspace.id, c.req.param("id"));
     if (!request) return c.json({ error: "Not found" }, 404);
 
@@ -916,8 +1129,8 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.post("/api/requests/:id/items/:itemId/reveal", (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const requestId = c.req.param("id");
     const itemId = c.req.param("itemId");
     const req = store.getRequestById(auth.workspace.id, requestId);
@@ -937,8 +1150,9 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.post("/api/requests/bulk-reminders", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const resolved = resolveScopedAuth(c, "requests:write");
+    if (resolved.error) return resolved.error;
+    const { auth } = resolved;
     const body = (await c.req.json().catch(() => ({}))) as { ids?: unknown; paused?: unknown };
     if (
       !Array.isArray(body.ids) ||
@@ -949,26 +1163,34 @@ export function createApp(deps: GatherGateAppDeps) {
     ) {
       return c.json({ error: "Provide 1 to 200 request IDs and a paused boolean." }, 400);
     }
-    const updatedIds = store.setRemindersPausedBulk(auth.workspace.id, body.ids, body.paused);
+    const updatedIds = store.setRemindersPausedBulk(
+      auth.workspace.id,
+      body.ids,
+      body.paused,
+      auth.actor,
+      auth.actorLabel
+    );
     return c.json({ ok: true, updatedIds, paused: body.paused });
   });
 
   app.post("/api/requests/:id/toggle-reminders", (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const resolved = resolveScopedAuth(c, "requests:write");
+    if (resolved.error) return resolved.error;
+    const { auth } = resolved;
     const req = store.getRequestById(auth.workspace.id, c.req.param("id"));
     if (!req) return c.json({ error: "Not found" }, 404);
     if (req.status === "completed" || req.status === "purged" || req.status === "expired") {
       return c.json({ error: "Checklist is closed." }, 409);
     }
     const paused = req.reminders_paused === 0;
-    store.toggleRemindersPaused(auth.workspace.id, req.id, paused);
+    store.toggleRemindersPaused(auth.workspace.id, req.id, paused, auth.actor, auth.actorLabel);
     return c.json({ ok: true, reminders_paused: paused });
   });
 
   app.post("/api/requests/:id/remind-now", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const resolved = resolveScopedAuth(c, "requests:write");
+    if (resolved.error) return resolved.error;
+    const { auth } = resolved;
     const req = store.getRequestById(auth.workspace.id, c.req.param("id"));
     if (!req) return c.json({ error: "Not found" }, 404);
     if (req.status === "completed" || req.status === "purged" || req.status === "expired") {
@@ -1035,8 +1257,10 @@ export function createApp(deps: GatherGateAppDeps) {
     const updated = store.recordManualReminderSent(
       auth.workspace.id,
       req.id,
-      auth.user.email,
-      outstanding.length
+      auth.actorLabel,
+      outstanding.length,
+      new Date(nowFn()).toISOString(),
+      auth.actor
     );
 
     return c.json({
@@ -1048,8 +1272,9 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.patch("/api/requests/:id", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const resolved = resolveScopedAuth(c, "requests:write");
+    if (resolved.error) return resolved.error;
+    const { auth } = resolved;
     const req = store.getRequestById(auth.workspace.id, c.req.param("id"));
     if (!req) return c.json({ error: "Not found" }, 404);
     if (req.status === "completed" || req.status === "purged" || req.status === "expired") {
@@ -1070,13 +1295,14 @@ export function createApp(deps: GatherGateAppDeps) {
       return c.json({ error: "Invalid due date." }, 400);
     }
 
-    store.updateRequestDueAt(auth.workspace.id, req.id, nextDue, auth.user.email);
+    store.updateRequestDueAt(auth.workspace.id, req.id, nextDue, auth.actorLabel, auth.actor);
     return c.json({ ok: true, due_at: nextDue });
   });
 
   app.post("/api/requests/:id/items", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const resolved = resolveScopedAuth(c, "requests:write");
+    if (resolved.error) return resolved.error;
+    const { auth } = resolved;
     const req = store.getRequestById(auth.workspace.id, c.req.param("id"));
     if (!req) return c.json({ error: "Not found" }, 404);
     if (req.status === "completed" || req.status === "purged" || req.status === "expired") {
@@ -1091,7 +1317,7 @@ export function createApp(deps: GatherGateAppDeps) {
       return c.json({ error: err instanceof Error ? err.message : "Invalid checklist item." }, 400);
     }
 
-    const added = store.addRequestItem(auth.workspace.id, req.id, spec)!;
+    const added = store.addRequestItem(auth.workspace.id, req.id, spec, auth.actor, auth.actorLabel)!;
     return c.json(
       {
         ok: true,
@@ -1121,8 +1347,9 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.post("/api/requests/:id/items/:itemId/review", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const resolved = resolveScopedAuth(c, "requests:write");
+    if (resolved.error) return resolved.error;
+    const { auth } = resolved;
     const requestId = c.req.param("id");
     const itemId = c.req.param("itemId");
     const body = (await c.req.json().catch(() => ({}))) as {
@@ -1151,6 +1378,8 @@ export function createApp(deps: GatherGateAppDeps) {
       itemId,
       decision,
       note,
+      actor: auth.actor,
+      actorBy: auth.actorLabel,
     });
 
     let emailError: string | undefined;
@@ -1196,6 +1425,7 @@ export function createApp(deps: GatherGateAppDeps) {
         multiTenant: config.multiTenant,
         fetchImpl: deps.fetchImpl,
         lookupImpl: deps.lookupImpl,
+        nowMs: nowFn(),
       });
     }
 
@@ -1208,8 +1438,9 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.post("/api/requests/:id/approve-all-submitted", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const resolved = resolveScopedAuth(c, "requests:write");
+    if (resolved.error) return resolved.error;
+    const { auth } = resolved;
     const requestId = c.req.param("id");
     const existing = store.getRequestById(auth.workspace.id, requestId);
     if (!existing) return c.json({ error: "Not found" }, 404);
@@ -1219,7 +1450,9 @@ export function createApp(deps: GatherGateAppDeps) {
 
     const { approvedCount, justCompleted, request } = store.approveAllSubmitted(
       auth.workspace.id,
-      requestId
+      requestId,
+      auth.actor,
+      auth.actorLabel
     );
 
     if (justCompleted) {
@@ -1232,6 +1465,7 @@ export function createApp(deps: GatherGateAppDeps) {
         multiTenant: config.multiTenant,
         fetchImpl: deps.fetchImpl,
         lookupImpl: deps.lookupImpl,
+        nowMs: nowFn(),
       });
     }
 
@@ -1243,8 +1477,8 @@ export function createApp(deps: GatherGateAppDeps) {
     uploadId: string,
     inline: boolean
   ) {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const upload = store.getUploadForWorkspace(auth.workspace.id, uploadId);
     if (!upload) return c.json({ error: "Not found" }, 404);
 
@@ -1284,8 +1518,8 @@ export function createApp(deps: GatherGateAppDeps) {
   );
 
   app.get("/api/requests/:id/export.zip", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const request = store.getRequestById(auth.workspace.id, c.req.param("id"));
     if (!request || request.status === "purged") return c.json({ error: "Not found" }, 404);
 
@@ -1364,8 +1598,9 @@ export function createApp(deps: GatherGateAppDeps) {
   // Templates CRUD
   // ---------------------------------------------------------------------------
   app.get("/api/templates", (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const resolved = resolveScopedAuth(c, "templates:read");
+    if (resolved.error) return resolved.error;
+    const { auth } = resolved;
     const list = store.listTemplates(auth.workspace.id).map((t) => ({
       id: t.id,
       name: t.name,
@@ -1378,8 +1613,8 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.post("/api/templates/:id/duplicate", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const body = (await c.req.json().catch(() => ({}))) as { name?: string };
     const dup = store.duplicateTemplate(auth.workspace.id, c.req.param("id"), body.name);
     if (!dup) return c.json({ error: "Template not found" }, 404);
@@ -1399,8 +1634,8 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.post("/api/templates", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const body = (await c.req.json().catch(() => ({}))) as {
       name?: string;
       description?: string;
@@ -1432,8 +1667,8 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.put("/api/templates/:id", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const body = (await c.req.json().catch(() => ({}))) as {
       name?: string;
       description?: string;
@@ -1463,8 +1698,8 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.delete("/api/templates/:id", (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const result = store.deleteTemplate(auth.workspace.id, c.req.param("id"));
     if (!result.deleted) {
       return c.json({ error: result.reason || "Cannot delete template" }, result.reason?.includes("Built-in") ? 400 : 404);
@@ -1473,11 +1708,100 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   // ---------------------------------------------------------------------------
+  // Scoped Workspace API Keys (Interactive Session Only)
+  // ---------------------------------------------------------------------------
+  app.get("/api/api-keys", (c) => {
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
+    return c.json({
+      apiKeys: store.listApiKeys(auth.workspace.id).map(formatApiKey),
+    });
+  });
+
+  app.post("/api/api-keys", async (c) => {
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
+    const body = (await c.req.json().catch(() => ({}))) as {
+      name?: unknown;
+      scopes?: unknown;
+      expiresInDays?: unknown;
+    };
+    const name = String(body.name || "").trim();
+    if (!name || name.length > 80 || hasCrLf(name)) {
+      return c.json({ error: "Enter a key name between 1 and 80 characters." }, 400);
+    }
+
+    let scopes: ApiKeyScope[];
+    try {
+      scopes = normalizeApiKeyScopes(body.scopes);
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : "Invalid API key scopes." }, 400);
+    }
+
+    const nowIso = new Date(nowFn()).toISOString();
+    let expiresAt: string | null = null;
+    if (
+      body.expiresInDays !== undefined &&
+      body.expiresInDays !== null &&
+      String(body.expiresInDays).trim() !== ""
+    ) {
+      const days = Number(body.expiresInDays);
+      if (!Number.isInteger(days) || days < 1 || days > 3650) {
+        return c.json({ error: "Expiry must be between 1 and 3650 days." }, 400);
+      }
+      expiresAt = addDaysIso(nowIso, days);
+    }
+
+    if (store.countActiveApiKeys(auth.workspace.id, nowIso) >= MAX_ACTIVE_API_KEYS) {
+      return c.json(
+        { error: `Active API key limit (${MAX_ACTIVE_API_KEYS}) reached. Revoke unused keys first.` },
+        409
+      );
+    }
+
+    const { rawKey, keyPrefix, keyHash } = generateApiKey();
+    const created = store.createApiKey({
+      workspaceId: auth.workspace.id,
+      name,
+      keyPrefix,
+      keyHash,
+      scopes,
+      createdByUserId: auth.user.id,
+      expiresAt,
+      nowIso,
+    });
+    store.logAudit(auth.workspace.id, null, "operator", "api_key.created", {
+      apiKeyId: created.id,
+      name: created.name,
+      keyPrefix: created.key_prefix,
+      scopes,
+      expiresAt,
+      by: auth.user.email,
+    });
+    return c.json({ apiKey: formatApiKey(created), secret: rawKey }, 201);
+  });
+
+  app.delete("/api/api-keys/:id", (c) => {
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
+    const nowIso = new Date(nowFn()).toISOString();
+    const revoked = store.revokeApiKey(auth.workspace.id, c.req.param("id"), nowIso);
+    if (!revoked) return c.json({ error: "API key not found." }, 404);
+    store.logAudit(auth.workspace.id, null, "operator", "api_key.revoked", {
+      apiKeyId: revoked.id,
+      name: revoked.name,
+      keyPrefix: revoked.key_prefix,
+      by: auth.user.email,
+    });
+    return c.json({ ok: true, apiKey: formatApiKey(revoked) });
+  });
+
+  // ---------------------------------------------------------------------------
   // Settings, Readiness, Local Email Outbox & Demo Controls
   // ---------------------------------------------------------------------------
   app.get("/api/settings", (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const emailSummary = summarizeWorkspaceEmail(auth.workspace);
     return c.json({
       webhookUrl: auth.workspace.webhook_url || "",
@@ -1507,8 +1831,8 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.put("/api/settings/branding", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const body = (await c.req.json().catch(() => ({}))) as {
       brandColor?: string | null;
       supportEmail?: string | null;
@@ -1563,13 +1887,14 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.get("/api/validators", (c) => {
-    if (!requireAuth(c)) return c.json({ error: "Unauthorized" }, 401);
+    const resolved = resolveScopedAuth(c, "requests:read");
+    if (resolved.error) return resolved.error;
     return c.json({ validators: listValidators() });
   });
 
   app.put("/api/settings/webhook", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const body = (await c.req.json().catch(() => ({}))) as {
       webhookUrl?: string;
       webhookSecret?: string;
@@ -1590,8 +1915,8 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.post("/api/settings/webhook/test", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const limited = enforceRateLimit(
       c,
       [{ bucket: "settingsTest", key: auth.workspace.id }],
@@ -1620,9 +1945,58 @@ export function createApp(deps: GatherGateAppDeps) {
     return c.json({ ok: true, status: result.status });
   });
 
+  app.get("/api/settings/webhook/deliveries", (c) => {
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
+    return c.json({
+      deliveries: store.listWebhookDeliveries(auth.workspace.id, 50).map(formatWebhookDelivery),
+    });
+  });
+
+  app.post("/api/settings/webhook/deliveries/:id/replay", async (c) => {
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
+    const limited = enforceRateLimit(
+      c,
+      [{ bucket: "settingsTest", key: auth.workspace.id }],
+      "Too many webhook replay requests. Please wait and try again."
+    );
+    if (limited) return limited;
+
+    const delivery = store.getWebhookDeliveryForWorkspace(auth.workspace.id, c.req.param("id"));
+    if (!delivery) return c.json({ error: "Webhook delivery not found." }, 404);
+
+    const savedUrl = auth.workspace.webhook_url?.trim();
+    if (!savedUrl) {
+      return c.json({ ok: false, error: "Configure a webhook URL before replaying deliveries." }, 400);
+    }
+    const urlErr = validateWebhookEndpoint(savedUrl, config.multiTenant);
+    if (urlErr) return c.json({ ok: false, error: urlErr }, 400);
+
+    const result = await replayWebhookDelivery({
+      store,
+      workspace: auth.workspace,
+      delivery,
+      masterKey: config.masterKey,
+      actorEmail: auth.user.email,
+      multiTenant: config.multiTenant,
+      fetchImpl: deps.fetchImpl,
+      lookupImpl: deps.lookupImpl,
+      nowMs: nowFn(),
+    });
+    const formatted = formatWebhookDelivery(result.delivery);
+    if (!result.ok) {
+      return c.json(
+        { ok: false, status: result.status, error: result.error || `HTTP ${result.status}`, delivery: formatted },
+        400
+      );
+    }
+    return c.json({ ok: true, status: result.status, delivery: formatted });
+  });
+
   app.put("/api/settings/email", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const body = (await c.req.json().catch(() => ({}))) as {
       backend?: unknown;
       from?: unknown;
@@ -1745,8 +2119,8 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.post("/api/settings/email/test", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const limited = enforceRateLimit(
       c,
       [{ bucket: "settingsTest", key: auth.workspace.id }],
@@ -1807,8 +2181,8 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.put("/api/account", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const body = (await c.req.json().catch(() => ({}))) as {
       displayName?: unknown;
       workspaceName?: unknown;
@@ -1862,8 +2236,8 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.put("/api/account/password", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const body = (await c.req.json().catch(() => ({}))) as {
       currentPassword?: unknown;
       newPassword?: unknown;
@@ -1888,8 +2262,8 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.get("/api/outbox", (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const resolvedEmail = resolveWorkspaceEmail(auth.workspace, config, config.masterKey);
     return c.json({
       emailBackend: resolvedEmail.backend,
@@ -1898,8 +2272,8 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.post("/api/demo/seed", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const res = await seedDemoWorkspace({
       store,
       storage,
@@ -1911,8 +2285,8 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.post("/api/demo/clear", async (c) => {
-    const auth = requireAuth(c);
-    if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const auth = requireSessionOnly(c);
+    if (auth.error) return auth.error;
     const { storageKeys, deletedRequests } = store.clearDemoData(auth.workspace.id);
     for (const key of storageKeys) {
       await storage.delete(key);
@@ -1932,7 +2306,7 @@ export function createApp(deps: GatherGateAppDeps) {
     return store.hasValidClientSession(req.id, cookieVal);
   }
 
-  app.get("/api/client/:token", (c) => {
+  app.get("/api/client/:token", async (c) => {
     const token = c.req.param("token");
     const request = store.getRequestByMagicToken(token);
     if (!request) return c.json({ error: "Invalid or expired checklist link." }, 404);
@@ -1974,7 +2348,11 @@ export function createApp(deps: GatherGateAppDeps) {
       });
     }
 
-    store.touchRequestOpened(request.id);
+    const firstOpen = store.touchRequestOpened(request.id);
+    if (firstOpen) {
+      const openedReq = store.getRequestById(request.workspace_id, request.id) ?? request;
+      await emitWebhookSafe({ workspace, request: openedReq, event: "request.opened" });
+    }
 
     const rawItems = store.listRequestItems(request.id);
     const allUploads = store.listUploadsForRequest(request.id);
@@ -2167,6 +2545,7 @@ export function createApp(deps: GatherGateAppDeps) {
     }
 
     const workspace = store.getWorkspaceById(request.workspace_id)!;
+    const prevRequestStatus = request.status;
 
     if (item.kind === "checkbox") {
       const body = (await c.req.json().catch(() => ({}))) as { checked?: boolean | string };
@@ -2192,6 +2571,10 @@ export function createApp(deps: GatherGateAppDeps) {
       });
       const updated = store.getRequestItem(request.id, item.id)!;
       const reqAfter = store.getRequestById(request.workspace_id, request.id)!;
+      await emitWebhookSafe({ workspace, request: reqAfter, event: "item.submitted", item: updated });
+      if (prevRequestStatus !== "in_review" && reqAfter.status === "in_review") {
+        await emitWebhookSafe({ workspace, request: reqAfter, event: "request.in_review" });
+      }
       return c.json({
         ok: true,
         requestStatus: reqAfter.status,
@@ -2229,6 +2612,10 @@ export function createApp(deps: GatherGateAppDeps) {
       });
       const updated = store.getRequestItem(request.id, item.id)!;
       const reqAfter = store.getRequestById(request.workspace_id, request.id)!;
+      await emitWebhookSafe({ workspace, request: reqAfter, event: "item.submitted", item: updated });
+      if (prevRequestStatus !== "in_review" && reqAfter.status === "in_review") {
+        await emitWebhookSafe({ workspace, request: reqAfter, event: "request.in_review" });
+      }
       const isSensitiveMasked = SENSITIVE_VALIDATORS.has(item.validator);
       return c.json({
         ok: true,
@@ -2402,7 +2789,12 @@ export function createApp(deps: GatherGateAppDeps) {
       itemId: item.id,
       count: savedUploads.length,
     });
+    const updatedFileItem = store.getRequestItem(request.id, item.id)!;
     const reqAfter = store.getRequestById(request.workspace_id, request.id)!;
+    await emitWebhookSafe({ workspace, request: reqAfter, event: "item.submitted", item: updatedFileItem });
+    if (prevRequestStatus !== "in_review" && reqAfter.status === "in_review") {
+      await emitWebhookSafe({ workspace, request: reqAfter, event: "request.in_review" });
+    }
     return c.json({
       ok: true,
       requestStatus: reqAfter.status,
@@ -2445,6 +2837,7 @@ export function createApp(deps: GatherGateAppDeps) {
     if (notApplicable && !note) {
       return c.json({ error: "Tell us briefly why this does not apply." }, 400);
     }
+    const prevRequestStatus = request.status;
     try {
       store.setClientNote(
         item.id,
@@ -2463,6 +2856,15 @@ export function createApp(deps: GatherGateAppDeps) {
     });
     const updated = store.getRequestItem(request.id, item.id)!;
     const reqAfter = store.getRequestById(request.workspace_id, request.id)!;
+    if (notApplicable) {
+      const ws = store.getWorkspaceById(request.workspace_id);
+      if (ws) {
+        await emitWebhookSafe({ workspace: ws, request: reqAfter, event: "item.submitted", item: updated });
+        if (prevRequestStatus !== "in_review" && reqAfter.status === "in_review") {
+          await emitWebhookSafe({ workspace: ws, request: reqAfter, event: "request.in_review" });
+        }
+      }
+    }
     return c.json({
       ok: true,
       requestStatus: reqAfter.status,

@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS requests (
   welcome_note TEXT,
   last_opened_at TEXT,
   last_manual_reminder_at TEXT,
+  overdue_notified_at TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -165,6 +166,43 @@ CREATE TABLE IF NOT EXISTS outbox_emails (
 );
 
 CREATE INDEX IF NOT EXISTS idx_outbox_workspace ON outbox_emails(workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  key_prefix TEXT NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  scopes_json TEXT NOT NULL,
+  created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  last_used_at TEXT,
+  expires_at TEXT,
+  revoked_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_workspace ON api_keys(workspace_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  request_id TEXT REFERENCES requests(id) ON DELETE SET NULL,
+  event TEXT NOT NULL,
+  target_url TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 6,
+  last_status_code INTEGER,
+  last_error TEXT,
+  next_attempt_at TEXT,
+  delivered_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries(status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_ws ON webhook_deliveries(workspace_id, created_at DESC);
 `;
 
 interface Migration {
@@ -245,6 +283,49 @@ const MIGRATIONS: Migration[] = [
     name: "004_upload_enc_version",
     up: (db) => {
       ensureColumn(db, "uploads", "enc_version", "TEXT NOT NULL DEFAULT 'v1'");
+    },
+  },
+  {
+    version: 5,
+    name: "005_api_keys_and_webhook_deliveries",
+    up: (db) => {
+      ensureColumn(db, "requests", "overdue_notified_at", "TEXT");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS api_keys (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          key_prefix TEXT NOT NULL,
+          key_hash TEXT NOT NULL UNIQUE,
+          scopes_json TEXT NOT NULL,
+          created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+          last_used_at TEXT,
+          expires_at TEXT,
+          revoked_at TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_api_keys_workspace ON api_keys(workspace_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS webhook_deliveries (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          request_id TEXT REFERENCES requests(id) ON DELETE SET NULL,
+          event TEXT NOT NULL,
+          target_url TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          max_attempts INTEGER NOT NULL DEFAULT 6,
+          last_status_code INTEGER,
+          last_error TEXT,
+          next_attempt_at TEXT,
+          delivered_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_due ON webhook_deliveries(status, next_attempt_at);
+        CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_ws ON webhook_deliveries(workspace_id, created_at DESC);
+      `);
     },
   },
 ];

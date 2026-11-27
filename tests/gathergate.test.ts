@@ -430,13 +430,20 @@ test("End-to-end JSON API lifecycle: setup, demo seed/clear, outbox, OTP, previe
     assert.equal(approveAllJson.status, "completed");
     assert.equal(approveAllJson.justCompleted, true);
 
-    assert.equal(webhookCalls.length, 2);
-    const wh = webhookCalls[1];
+    const completedCalls = webhookCalls.filter(
+      (call) => call.headers["x-gathergate-event"] === "request.completed"
+    );
+    assert.equal(completedCalls.length, 1);
+    const wh = completedCalls[0];
     const ts = wh.headers["x-gathergate-timestamp"];
     const expectedSig = `t=${ts},v1=${hmacSha256Hex(whSecret, `${ts}.${wh.body}`)}`;
     assert.equal(wh.headers["x-gathergate-signature"], expectedSig);
+    assert.ok(wh.headers["x-gathergate-delivery"]?.startsWith("whd_"));
     assert.doesNotMatch(wh.body, /876 543 210/);
     assert.match(wh.body, /\*\*\*\*\*\* 210/);
+    assert.ok(webhookCalls.some((c) => c.headers["x-gathergate-event"] === "request.opened"));
+    assert.ok(webhookCalls.some((c) => c.headers["x-gathergate-event"] === "item.submitted"));
+    assert.ok(webhookCalls.some((c) => c.headers["x-gathergate-event"] === "request.in_review"));
 
     // 9. Streaming ZIP export returns PKZIP
     const zipRes = await app.request(`/api/requests/${requestId}/export.zip`, {
