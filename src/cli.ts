@@ -59,7 +59,7 @@ export function normalizeBaseUrl(raw: string): string {
   try {
     parsed = new URL(trimmed);
   } catch {
-    throw new Error(`Invalid URL "${raw}"; expected http:// or https:// URL.`);
+    throw new Error("Invalid URL; expected http:// or https:// URL.");
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     throw new Error(`Invalid URL protocol "${parsed.protocol}"; expected http:// or https://.`);
@@ -76,6 +76,38 @@ export function normalizeBaseUrl(raw: string): string {
 
 export function normalizeMcpEndpointUrl(raw: string): string {
   return `${normalizeBaseUrl(raw)}/mcp`;
+}
+
+export function isLoopbackHostname(hostname: string): boolean {
+  const bare = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  return bare === "localhost" || bare === "::1" || /^127(?:\.\d{1,3}){3}$/.test(bare);
+}
+
+export function isSecureCredentialUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol === "https:") return true;
+    if (parsed.protocol === "http:") return isLoopbackHostname(parsed.hostname);
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function inspectSqliteHeaderReadOnly(dbPath: string): { journalMode: "wal" | "rollback"; userVersion: number } {
+  const fd = fs.openSync(dbPath, "r");
+  try {
+    const header = Buffer.alloc(100);
+    const bytesRead = fs.readSync(fd, header, 0, 100, 0);
+    if (bytesRead < 100 || header.subarray(0, 16).toString("utf8") !== "SQLite format 3\0") {
+      throw new Error("file is not a valid SQLite 3 database");
+    }
+    const journalMode = header[18] === 2 || header[19] === 2 ? "wal" : "rollback";
+    const userVersion = header.readUInt32BE(60);
+    return { journalMode, userVersion };
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function normalizeBearerToken(raw: string | undefined): { token: string; error?: string } {
@@ -125,9 +157,11 @@ export function isSupportedNodeVersion(version: string): boolean {
 export async function runDoctor(options?: {
   url?: string;
   env?: NodeJS.ProcessEnv;
+  trustedEnv?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
 }): Promise<DoctorReport> {
   const env = options?.env ?? process.env;
+  const trustedEnv = options?.trustedEnv;
   const doFetch = options?.fetchImpl ?? fetch;
   const version = getPackageVersion();
   const checks: DoctorCheck[] = [];
@@ -151,15 +185,26 @@ export async function runDoctor(options?: {
     checks.push({ name: "node", status: "ok", detail: `Node.js v${nodeVer}` });
   }
 
-  // 2. Read-only configuration validation
+  // 2. Read-only configuration validation (omit unsafe/credential-bearing URLs from diagnostics)
   const cfg = inspectConfig(env);
-  if (cfg.errors.length > 0) {
-    checks.push({ name: "config", status: "fail", detail: cfg.errors.join("; ") });
+  let safeConfigBaseUrl: string | null = null;
+  let configBaseUrlError: string | null = null;
+  try {
+    safeConfigBaseUrl = normalizeBaseUrl(cfg.baseUrl);
+  } catch (err) {
+    configBaseUrlError = err instanceof Error ? err.message : String(err);
+  }
+  const configErrors = [...cfg.errors];
+  if (configBaseUrlError) {
+    configErrors.push(`BASE_URL: ${configBaseUrlError}`);
+  }
+  if (configErrors.length > 0) {
+    checks.push({ name: "config", status: "fail", detail: configErrors.join("; ") });
   } else {
     checks.push({
       name: "config",
       status: "ok",
-      detail: `storage=${cfg.storageBackend}, email=${cfg.emailBackend}, bind=${cfg.host}:${cfg.port}, base=${cfg.baseUrl}`,
+      detail: `storage=${cfg.storageBackend}, email=${cfg.emailBackend}, bind=${cfg.host}:${cfg.port}, base=${safeConfigBaseUrl}`,
     });
   }
 
@@ -226,7 +271,7 @@ export async function runDoctor(options?: {
     });
   }
 
-  // 5. SQLite WAL check (read-only if database already exists)
+  // 5. SQLite header check (strictly non-mutating: reads 100-byte header so WAL sidecars are never created)
   if (!fs.existsSync(cfg.dbPath)) {
     checks.push({
       name: "database",
@@ -235,24 +280,17 @@ export async function runDoctor(options?: {
     });
   } else {
     try {
-      const { DatabaseSync } = await import("node:sqlite");
-      const db = new DatabaseSync(cfg.dbPath, { readOnly: true });
-      try {
-        const journalRow = db.prepare("PRAGMA journal_mode").get() as { journal_mode?: string } | undefined;
-        const versionRow = db.prepare("PRAGMA user_version").get() as { user_version?: number } | undefined;
-        checks.push({
-          name: "database",
-          status: "ok",
-          detail: `${cfg.dbPath} readable (journal=${journalRow?.journal_mode ?? "unknown"}, schema_v=${versionRow?.user_version ?? 0}).`,
-        });
-      } finally {
-        db.close();
-      }
+      const dbInfo = inspectSqliteHeaderReadOnly(cfg.dbPath);
+      checks.push({
+        name: "database",
+        status: "ok",
+        detail: `${cfg.dbPath} readable (journal=${dbInfo.journalMode}, schema_v=${dbInfo.userVersion}).`,
+      });
     } catch (err) {
       checks.push({
         name: "database",
         status: "fail",
-        detail: `Could not open SQLite database at ${cfg.dbPath}: ${err instanceof Error ? err.message : String(err)}`,
+        detail: `Could not read SQLite database at ${cfg.dbPath}: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
   }
@@ -301,6 +339,7 @@ export async function runDoctor(options?: {
       const healthRes = await doFetch(`${probeBaseUrl}/healthz`, {
         method: "GET",
         headers: { accept: "application/json" },
+        redirect: "error",
         signal: AbortSignal.timeout(4_000),
       });
       if (healthRes.ok) {
@@ -339,6 +378,21 @@ export async function runDoctor(options?: {
 
   // 8. MCP probe (when server is healthy and GATHERGATE_API_KEY is configured)
   const parsedKey = normalizeBearerToken(env.GATHERGATE_API_KEY);
+  const inheritedApiKey = Boolean(trustedEnv?.GATHERGATE_API_KEY?.trim());
+  let untrustedDotenvTargetForInheritedKey = false;
+  if (trustedEnv && inheritedApiKey && probeBaseUrl && !options?.url?.trim()) {
+    const trustedRawTarget = trustedEnv.GATHERGATE_URL?.trim() || inspectConfig(trustedEnv).baseUrl;
+    let trustedNormalized: string | null = null;
+    try {
+      trustedNormalized = normalizeBaseUrl(trustedRawTarget);
+    } catch {
+      trustedNormalized = null;
+    }
+    if (trustedNormalized !== probeBaseUrl) {
+      untrustedDotenvTargetForInheritedKey = true;
+    }
+  }
+
   if (serverHealthy && probeBaseUrl) {
     if (parsedKey.error) {
       checks.push({
@@ -351,6 +405,20 @@ export async function runDoctor(options?: {
         name: "remote_mcp",
         status: "warn",
         detail: "GATHERGATE_API_KEY not set; skipping authenticated POST /mcp probe.",
+      });
+    } else if (untrustedDotenvTargetForInheritedKey) {
+      checks.push({
+        name: "remote_mcp",
+        status: "warn",
+        detail:
+          "Skipped authenticated POST /mcp probe because target URL came from CWD .env while GATHERGATE_API_KEY was inherited; pass --url explicitly to probe this endpoint.",
+      });
+    } else if (!isSecureCredentialUrl(probeBaseUrl)) {
+      checks.push({
+        name: "remote_mcp",
+        status: "fail",
+        detail:
+          "Refusing to send GATHERGATE_API_KEY over cleartext http:// to a non-loopback host; use https://.",
       });
     } else {
       const apiKey = parsedKey.token;
@@ -366,6 +434,7 @@ export async function runDoctor(options?: {
             "mcp-method": "server/discover",
           },
           body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "server/discover" }),
+          redirect: "error",
           signal: AbortSignal.timeout(5_000),
         });
         if (discoverRes.status === 401) {
@@ -395,9 +464,10 @@ export async function runDoctor(options?: {
             checks.push({
               name: "remote_mcp",
               status: "fail",
-              detail: discoverJson?.error?.message
-                ? `POST /mcp server/discover returned JSON-RPC error: ${discoverJson.error.message}`
-                : "POST /mcp server/discover returned an unexpected JSON-RPC payload.",
+              detail:
+                typeof discoverJson?.error?.code === "number"
+                  ? `POST /mcp server/discover returned JSON-RPC error ${discoverJson.error.code}.`
+                  : "POST /mcp server/discover returned an unexpected JSON-RPC payload.",
             });
           } else {
             const toolsRes = await doFetch(mcpUrl, {
@@ -410,6 +480,7 @@ export async function runDoctor(options?: {
                 "mcp-method": "tools/list",
               },
               body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+              redirect: "error",
               signal: AbortSignal.timeout(5_000),
             });
             const toolsJson = toolsRes.ok
@@ -428,9 +499,10 @@ export async function runDoctor(options?: {
               checks.push({
                 name: "remote_mcp",
                 status: "fail",
-                detail: toolsJson?.error?.message
-                  ? `POST /mcp tools/list returned JSON-RPC error: ${toolsJson.error.message}`
-                  : "POST /mcp tools/list returned an unexpected JSON-RPC payload.",
+                detail:
+                  typeof toolsJson?.error?.code === "number"
+                    ? `POST /mcp tools/list returned JSON-RPC error ${toolsJson.error.code}.`
+                    : "POST /mcp tools/list returned an unexpected JSON-RPC payload.",
               });
             } else {
               const versions = discoverJson.result.supportedVersions.map(String).join(", ");
@@ -444,10 +516,13 @@ export async function runDoctor(options?: {
           }
         }
       } catch (err) {
+        const isTimeout = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
         checks.push({
           name: "remote_mcp",
           status: "fail",
-          detail: `POST /mcp probe failed: ${err instanceof Error ? err.message : String(err)}`,
+          detail: isTimeout
+            ? "POST /mcp probe timed out."
+            : "POST /mcp probe failed (network error or redirect rejected).",
         });
       }
     }
@@ -495,6 +570,12 @@ export async function runMcpStdioBridge(options: McpBridgeOptions): Promise<numb
   const doFetch = options.fetchImpl ?? fetch;
   const timeoutMs = Math.min(120_000, Math.max(1_000, options.timeoutMs ?? 30_000));
 
+  if (!isSecureCredentialUrl(endpoint)) {
+    errorOutput.write(
+      "[GatherGate MCP] Refusing to send GATHERGATE_API_KEY over cleartext http:// to a non-loopback host; use https://.\n"
+    );
+    return 1;
+  }
   if (parsedKey.error) {
     errorOutput.write(`[GatherGate MCP] ${parsedKey.error}\n`);
     return 1;
@@ -600,6 +681,7 @@ export async function runMcpStdioBridge(options: McpBridgeOptions): Promise<numb
           method: "POST",
           headers,
           body: JSON.stringify(parsed),
+          redirect: "error",
           signal: AbortSignal.timeout(timeoutMs),
         });
 
@@ -639,9 +721,11 @@ export async function runMcpStdioBridge(options: McpBridgeOptions): Promise<numb
         }
 
         const serverMessage =
-          responseJson && typeof responseJson.error === "string"
-            ? responseJson.error
-            : `HTTP ${res.status} from ${endpoint}`;
+          res.status === 401
+            ? "Authentication failed (HTTP 401 from MCP endpoint)."
+            : res.status === 403
+              ? "Forbidden (HTTP 403 from MCP endpoint; check API key scopes)."
+              : `Upstream MCP endpoint returned HTTP ${res.status}.`;
         errorOutput.write(`[GatherGate MCP] ${serverMessage}\n`);
         if (expectsResponse) {
           writeLine({
@@ -654,13 +738,16 @@ export async function runMcpStdioBridge(options: McpBridgeOptions): Promise<numb
           });
         }
       } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err);
-        errorOutput.write(`[GatherGate MCP] Upstream request failed: ${reason}\n`);
+        const isTimeout = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+        const reason = isTimeout
+          ? "Upstream request timed out."
+          : "Upstream request failed (network error or redirect rejected).";
+        errorOutput.write(`[GatherGate MCP] ${reason}\n`);
         if (expectsResponse) {
           writeLine({
             jsonrpc: "2.0",
             id: safeId,
-            error: { code: -32000, message: `Upstream request failed: ${reason}` },
+            error: { code: -32000, message: reason },
           });
         }
       }
@@ -933,6 +1020,87 @@ export function generateClientSetup(params: {
   };
 }
 
+function isPlaceholderCredential(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    !trimmed ||
+    trimmed === "gg_live_replace_me" ||
+    trimmed === "Bearer gg_live_replace_me" ||
+    trimmed.includes("${")
+  );
+}
+
+function preserveExistingCredential(
+  existingEntry: unknown,
+  nextEntry: Record<string, unknown>
+): Record<string, unknown> {
+  if (!existingEntry || typeof existingEntry !== "object" || Array.isArray(existingEntry)) {
+    return nextEntry;
+  }
+  const prev = existingEntry as Record<string, unknown>;
+  const cloned: Record<string, unknown> = { ...nextEntry };
+
+  // Preserve stdio GATHERGATE_API_KEY only for the same base URL.
+  const nextEnv =
+    cloned.env && typeof cloned.env === "object" && !Array.isArray(cloned.env)
+      ? ({ ...(cloned.env as Record<string, unknown>) } as Record<string, unknown>)
+      : null;
+  const prevEnv =
+    prev.env && typeof prev.env === "object" && !Array.isArray(prev.env)
+      ? (prev.env as Record<string, unknown>)
+      : null;
+  if (
+    typeof cloned.command === "string" &&
+    typeof prev.command === "string" &&
+    nextEnv &&
+    prevEnv &&
+    nextEnv.GATHERGATE_API_KEY === "gg_live_replace_me" &&
+    typeof nextEnv.GATHERGATE_URL === "string" &&
+    typeof prevEnv.GATHERGATE_URL === "string" &&
+    typeof prevEnv.GATHERGATE_API_KEY === "string" &&
+    !isPlaceholderCredential(prevEnv.GATHERGATE_API_KEY)
+  ) {
+    try {
+      if (normalizeBaseUrl(prevEnv.GATHERGATE_URL) === normalizeBaseUrl(nextEnv.GATHERGATE_URL)) {
+        nextEnv.GATHERGATE_API_KEY = prevEnv.GATHERGATE_API_KEY;
+        cloned.env = nextEnv;
+      }
+    } catch {
+      // Ignore invalid existing URL; do not carry credentials across endpoints.
+    }
+  }
+
+  // Preserve HTTP Authorization header only for the same MCP endpoint URL.
+  const nextHeaders =
+    cloned.headers && typeof cloned.headers === "object" && !Array.isArray(cloned.headers)
+      ? ({ ...(cloned.headers as Record<string, unknown>) } as Record<string, unknown>)
+      : null;
+  const prevHeaders =
+    prev.headers && typeof prev.headers === "object" && !Array.isArray(prev.headers)
+      ? (prev.headers as Record<string, unknown>)
+      : null;
+  if (
+    typeof cloned.url === "string" &&
+    typeof prev.url === "string" &&
+    nextHeaders &&
+    prevHeaders &&
+    nextHeaders.Authorization === "Bearer gg_live_replace_me" &&
+    typeof prevHeaders.Authorization === "string" &&
+    !isPlaceholderCredential(prevHeaders.Authorization)
+  ) {
+    try {
+      if (normalizeMcpEndpointUrl(prev.url) === normalizeMcpEndpointUrl(cloned.url)) {
+        nextHeaders.Authorization = prevHeaders.Authorization;
+        cloned.headers = nextHeaders;
+      }
+    } catch {
+      // Ignore invalid existing URL; do not carry credentials across endpoints.
+    }
+  }
+
+  return cloned;
+}
+
 export function writeClientConfig(setup: GeneratedClientSetup, targetPath: string): void {
   if (setup.format !== "json" || !setup.containerKey || !setup.serverEntry) {
     throw new Error(
@@ -942,14 +1110,20 @@ export function writeClientConfig(setup: GeneratedClientSetup, targetPath: strin
 
   const resolvedPath = path.resolve(targetPath);
   let root: Record<string, unknown> = {};
-  if (fs.existsSync(resolvedPath)) {
-    const lstat = fs.lstatSync(resolvedPath);
-    if (lstat.isSymbolicLink()) {
+  let existingStat: fs.Stats | null = null;
+  try {
+    existingStat = fs.lstatSync(resolvedPath);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "ENOENT") throw err;
+  }
+  if (existingStat) {
+    if (existingStat.isSymbolicLink()) {
       throw new Error(
         `Refusing to overwrite symlink at ${resolvedPath}; edit the symlink target directly.`
       );
     }
-    if (!lstat.isFile()) {
+    if (!existingStat.isFile()) {
       throw new Error(`Target path ${resolvedPath} is not a regular file.`);
     }
     const raw = fs.readFileSync(resolvedPath, "utf8").trim();
@@ -994,9 +1168,12 @@ export function writeClientConfig(setup: GeneratedClientSetup, targetPath: strin
     root.inputs = existingInputs;
   }
 
+  const containerRecord = (existingContainer as Record<string, unknown> | undefined) ?? {};
+  const mergedServerEntry = preserveExistingCredential(containerRecord.gathergate, setup.serverEntry);
+
   root[setup.containerKey] = {
-    ...((existingContainer as Record<string, unknown> | undefined) ?? {}),
-    gathergate: setup.serverEntry,
+    ...containerRecord,
+    gathergate: mergedServerEntry,
   };
 
   const parentDir = path.dirname(resolvedPath);
@@ -1145,7 +1322,9 @@ export async function runCli(
       stdout.write(`${formatHelpText()}\n`);
       return 0;
     }
+    let preDotenvEnv: NodeJS.ProcessEnv | undefined;
     if (!io?.env) {
+      preDotenvEnv = { ...process.env };
       const dotenvErr = loadDotEnvIfPresent();
       if (dotenvErr) {
         stderr.write(`[GatherGate] ${dotenvErr}\n`);
@@ -1155,6 +1334,7 @@ export async function runCli(
     const report = await runDoctor({
       url: values.url,
       env: io?.env ?? process.env,
+      trustedEnv: preDotenvEnv,
       fetchImpl: io?.fetchImpl,
     });
     stdout.write(values.json ? `${JSON.stringify(report, null, 2)}\n` : `${formatDoctorReport(report)}\n`);

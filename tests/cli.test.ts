@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -90,48 +91,75 @@ async function bootLiveTcpGatherGate() {
   const email = new MemoryEmailAdapter();
   const { app } = createApp({ config, db, storage, email });
   const server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
-  await new Promise<void>((resolve) => {
-    if (server.listening) resolve();
-    else server.once("listening", () => resolve());
-  });
-  const port = (server.address() as AddressInfo).port;
-  const baseUrl = `http://127.0.0.1:${port}`;
-  config.baseUrl = baseUrl;
-
-  const setupRes = await fetch(`${baseUrl}/api/setup`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      workspaceName: "CLI Advisory",
-      email: "ops@cli.test",
-      password: "cli-secure-password",
-      loadDemo: false,
-    }),
-  });
-  assert.equal(setupRes.status, 200);
-  const cookie = extractCookie(setupRes.headers.get("set-cookie"), "gg_session");
-
-  const mintKey = async (name: string, scopes: string[]) => {
-    const res = await fetch(`${baseUrl}/api/api-keys`, {
-      method: "POST",
-      headers: { cookie, "content-type": "application/json" },
-      body: JSON.stringify({ name, scopes }),
+  let cleaned = false;
+  const cleanup = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    await new Promise<void>((resolve) => {
+      if (!server.listening) {
+        resolve();
+        return;
+      }
+      server.close(() => resolve());
+      if ("closeAllConnections" in server && typeof server.closeAllConnections === "function") {
+        server.closeAllConnections();
+      }
     });
-    assert.equal(res.status, 201);
-    return (await res.json()) as { apiKey: { id: string }; secret: string };
+    try {
+      db.close();
+    } catch {
+      // Ignore already-closed DB during cleanup.
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   };
 
-  return {
-    tmpDir,
-    masterKeyHex,
-    baseUrl,
-    mintKey,
-    cleanup: () => {
-      server.close();
-      db.close();
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    },
-  };
+  try {
+    await new Promise<void>((resolve, reject) => {
+      if (server.listening) {
+        resolve();
+        return;
+      }
+      server.once("listening", () => resolve());
+      server.once("error", reject);
+    });
+    const port = (server.address() as AddressInfo).port;
+    const baseUrl = `http://127.0.0.1:${port}`;
+    config.baseUrl = baseUrl;
+
+    const setupRes = await fetch(`${baseUrl}/api/setup`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workspaceName: "CLI Advisory",
+        email: "ops@cli.test",
+        password: "cli-secure-password",
+        loadDemo: false,
+      }),
+    });
+    assert.equal(setupRes.status, 200);
+    const cookie = extractCookie(setupRes.headers.get("set-cookie"), "gg_session");
+
+    const mintKey = async (name: string, scopes: string[]) => {
+      const res = await fetch(`${baseUrl}/api/api-keys`, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ name, scopes }),
+      });
+      assert.equal(res.status, 201);
+      return (await res.json()) as { apiKey: { id: string }; secret: string };
+    };
+
+    return {
+      tmpDir,
+      masterKeyHex,
+      baseUrl,
+      mintKey,
+      cleanup,
+    };
+  } catch (err) {
+    await cleanup();
+    throw err;
+  }
 }
 
 test("CLI: --help, --version, unknown command fail-closed, and zero DATA_DIR mutation", async () => {
@@ -240,8 +268,107 @@ test("CLI doctor: read-only diagnostics, live health + MCP probe, error states, 
     });
     assert.equal(unreachable.ok, false);
     assert.equal(unreachable.checks.find((c) => c.name === "remote_health")?.status, "fail");
+
+    // 6. Credentials embedded in BASE_URL never appear in doctor output
+    const credUrlReport = await runDoctor({
+      env: { DATA_DIR: live.tmpDir, MASTER_KEY: live.masterKeyHex, BASE_URL: "http://alice:supersecret@127.0.0.1:1" },
+    });
+    assert.equal(credUrlReport.ok, false);
+    assert.equal(JSON.stringify(credUrlReport).includes("supersecret"), false);
+    assert.equal(JSON.stringify(credUrlReport).includes("alice"), false);
+
+    // 7. Inspecting a cleanly closed WAL SQLite database creates ZERO -wal/-shm sidecars
+    const closedDbDir = fs.mkdtempSync(path.join(os.tmpdir(), "gathergate-closed-wal-"));
+    try {
+      const closedDbPath = path.join(closedDbDir, "gathergate.sqlite");
+      const closedDb = openDatabase(closedDbPath);
+      closedDb.close();
+      assert.equal(fs.existsSync(`${closedDbPath}-wal`), false);
+      assert.equal(fs.existsSync(`${closedDbPath}-shm`), false);
+      const walReport = await runDoctor({
+        env: { DATA_DIR: closedDbDir, MASTER_KEY: live.masterKeyHex, BASE_URL: "http://127.0.0.1:1" },
+      });
+      const dbCheck = walReport.checks.find((c) => c.name === "database");
+      assert.equal(dbCheck?.status, "ok");
+      assert.match(dbCheck?.detail || "", /journal=wal/);
+      assert.equal(fs.existsSync(`${closedDbPath}-wal`), false, "doctor must not create -wal sidecar");
+      assert.equal(fs.existsSync(`${closedDbPath}-shm`), false, "doctor must not create -shm sidecar");
+    } finally {
+      fs.rmSync(closedDbDir, { recursive: true, force: true });
+    }
+
+    // 8. Non-loopback cleartext http:// refuses to send GATHERGATE_API_KEY and upstream errors never echo secrets
+    let mcpAuthFetchCalled = false;
+    const cleartextReport = await runDoctor({
+      url: "http://intake.example.com",
+      env: { DATA_DIR: live.tmpDir, MASTER_KEY: live.masterKeyHex, GATHERGATE_API_KEY: mcpKey.secret },
+      fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
+        const reqUrl = String(input);
+        assert.equal(init?.redirect, "error");
+        if (reqUrl.endsWith("/healthz")) {
+          return new Response(JSON.stringify({ ok: true, service: "gathergate" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        mcpAuthFetchCalled = true;
+        return new Response("unexpected", { status: 500 });
+      }) as typeof fetch,
+    });
+    assert.equal(mcpAuthFetchCalled, false, "doctor must never transmit Bearer key over non-loopback http://");
+    assert.equal(cleartextReport.checks.find((c) => c.name === "remote_mcp")?.status, "fail");
+    assert.match(cleartextReport.checks.find((c) => c.name === "remote_mcp")?.detail || "", /https:\/\//);
+
+    // 9. Upstream JSON-RPC error text echoing a secret is omitted from doctor diagnostics
+    const echoReport = await runDoctor({
+      url: "https://intake.example.com",
+      env: { DATA_DIR: live.tmpDir, MASTER_KEY: live.masterKeyHex, GATHERGATE_API_KEY: mcpKey.secret },
+      fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
+        assert.equal(init?.redirect, "error");
+        if (String(input).endsWith("/healthz")) {
+          return new Response(JSON.stringify({ ok: true, service: "gathergate" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(
+          JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32020, message: `ECHO:${mcpKey.secret}` } }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }) as typeof fetch,
+    });
+    assert.equal(echoReport.ok, false);
+    assert.equal(JSON.stringify(echoReport).includes(mcpKey.secret), false);
+    assert.match(echoReport.checks.find((c) => c.name === "remote_mcp")?.detail || "", /-32020/);
+
+    // 10. Inherited GATHERGATE_API_KEY is NOT sent to a destination selected by CWD .env
+    let dotenvTrapAuthSent = false;
+    const dotenvTrapReport = await runDoctor({
+      env: {
+        DATA_DIR: live.tmpDir,
+        MASTER_KEY: live.masterKeyHex,
+        GATHERGATE_URL: "https://evil.example.com",
+        GATHERGATE_API_KEY: mcpKey.secret,
+      },
+      trustedEnv: {
+        GATHERGATE_API_KEY: mcpKey.secret,
+      },
+      fetchImpl: (async (input: string | URL | Request) => {
+        if (String(input).endsWith("/healthz")) {
+          return new Response(JSON.stringify({ ok: true, service: "gathergate" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        dotenvTrapAuthSent = true;
+        return new Response("unexpected", { status: 500 });
+      }) as typeof fetch,
+    });
+    assert.equal(dotenvTrapAuthSent, false, "inherited API key must not be sent to CWD .env target");
+    assert.equal(dotenvTrapReport.checks.find((c) => c.name === "remote_mcp")?.status, "warn");
+    assert.match(dotenvTrapReport.checks.find((c) => c.name === "remote_mcp")?.detail || "", /--url explicitly/);
   } finally {
-    live.cleanup();
+    await live.cleanup();
     fs.rmSync(missingDataDir, { recursive: true, force: true });
   }
 });
@@ -340,6 +467,73 @@ test("CLI setup: generates configs for all 9 clients, supports mcp setup alias, 
     fs.writeFileSync(corruptPath, "{broken-json");
     assert.throws(() => writeClientConfig(vscodeSetup, corruptPath), /not valid JSON/);
     assert.equal(fs.readFileSync(corruptPath, "utf8"), "{broken-json");
+
+    // 6. Repeated setup --write preserves a configured API key for the SAME endpoint,
+    //    and never carries it across when the URL changes.
+    const repeatPath = path.join(tmpDir, "repeat-claude.json");
+    const claudeUrlA = generateClientSetup({
+      client: "claude-desktop",
+      url: "https://intake-a.harbour.com.au",
+      transport: "stdio",
+    });
+    writeClientConfig(claudeUrlA, repeatPath);
+    const filled = JSON.parse(fs.readFileSync(repeatPath, "utf8")) as {
+      mcpServers: { gathergate: { env: { GATHERGATE_API_KEY: string } } };
+    };
+    filled.mcpServers.gathergate.env.GATHERGATE_API_KEY = "gg_live_real_user_key_123";
+    fs.writeFileSync(repeatPath, JSON.stringify(filled, null, 2));
+
+    // Re-running setup --write for the SAME URL preserves real key
+    writeClientConfig(claudeUrlA, repeatPath);
+    const preserved = JSON.parse(fs.readFileSync(repeatPath, "utf8")) as {
+      mcpServers: { gathergate: { env: { GATHERGATE_API_KEY: string } } };
+    };
+    assert.equal(preserved.mcpServers.gathergate.env.GATHERGATE_API_KEY, "gg_live_real_user_key_123");
+
+    // Running setup --write for a DIFFERENT URL resets to placeholder (never leaks key to new host)
+    const claudeUrlB = generateClientSetup({
+      client: "claude-desktop",
+      url: "https://intake-b.harbour.com.au",
+      transport: "stdio",
+    });
+    writeClientConfig(claudeUrlB, repeatPath);
+    const switched = JSON.parse(fs.readFileSync(repeatPath, "utf8")) as {
+      mcpServers: { gathergate: { env: { GATHERGATE_API_KEY: string } } };
+    };
+    assert.equal(switched.mcpServers.gathergate.env.GATHERGATE_API_KEY, "gg_live_replace_me");
+
+    // Same preservation check for Zed HTTP Authorization header
+    const zedHttpPath = path.join(tmpDir, "zed-settings.json");
+    const zedHttpA = generateClientSetup({
+      client: "zed",
+      url: "https://intake-a.harbour.com.au",
+      transport: "http",
+    });
+    writeClientConfig(zedHttpA, zedHttpPath);
+    const zedFilled = JSON.parse(fs.readFileSync(zedHttpPath, "utf8")) as {
+      context_servers: { gathergate: { headers: { Authorization: string } } };
+    };
+    zedFilled.context_servers.gathergate.headers.Authorization = "Bearer gg_live_zed_real_456";
+    fs.writeFileSync(zedHttpPath, JSON.stringify(zedFilled, null, 2));
+    writeClientConfig(zedHttpA, zedHttpPath);
+    const zedPreserved = JSON.parse(fs.readFileSync(zedHttpPath, "utf8")) as {
+      context_servers: { gathergate: { headers: { Authorization: string } } };
+    };
+    assert.equal(zedPreserved.context_servers.gathergate.headers.Authorization, "Bearer gg_live_zed_real_456");
+
+    // 7. Dangling symlinks are refused without being replaced (skip if OS disallows unprivileged symlinks)
+    const danglingLink = path.join(tmpDir, "dangling-mcp.json");
+    let symlinkCreated = false;
+    try {
+      fs.symlinkSync(path.join(tmpDir, "missing-target.json"), danglingLink);
+      symlinkCreated = true;
+    } catch {
+      symlinkCreated = false;
+    }
+    if (symlinkCreated) {
+      assert.throws(() => writeClientConfig(vscodeSetup, danglingLink), /symlink/i);
+      assert.equal(fs.lstatSync(danglingLink).isSymbolicLink(), true);
+    }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -454,8 +648,16 @@ test("CLI mcp stdio bridge: real child-process modern 2026-07-28 + legacy initia
     // 4b. Batch array JSON-RPC frame gets -32600 response on stdout (never hangs silently),
     //     and untrusted CWD .env is NEVER loaded by `gathergate mcp`
     const untrustedRepo = fs.mkdtempSync(path.join(os.tmpdir(), "gathergate-untrusted-cwd-"));
+    let trapHits = 0;
+    const trapServer = http.createServer((_req, res) => {
+      trapHits += 1;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: 7, result: { trap: true } }));
+    });
+    await new Promise<void>((resolve) => trapServer.listen(0, "127.0.0.1", () => resolve()));
+    const trapPort = (trapServer.address() as AddressInfo).port;
     try {
-      fs.writeFileSync(path.join(untrustedRepo, ".env"), "GATHERGATE_URL=https://evil.invalid\n");
+      fs.writeFileSync(path.join(untrustedRepo, ".env"), `GATHERGATE_URL=http://127.0.0.1:${trapPort}\n`);
       const batchProc = await spawnCliProcess(["mcp", "--url", live.baseUrl], {
         cwd: untrustedRepo,
         env: { PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT, GATHERGATE_API_KEY: rwKey.secret },
@@ -466,19 +668,79 @@ test("CLI mcp stdio bridge: real child-process modern 2026-07-28 + legacy initia
       assert.equal(batchResp.id, null);
       assert.equal(batchResp.error.code, -32600);
 
-      // Even without --url, untrusted CWD .env must NOT redirect default GATHERGATE_URL to evil.invalid
-      const hijackCheck = await spawnCliProcess(["mcp"], {
+      // Without --url, `mcp` must NEVER load CWD .env GATHERGATE_URL and hit trapServer
+      const noUrlProc = await spawnCliProcess(["mcp", "--timeout", "1500"], {
+        cwd: untrustedRepo,
+        env: { PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT, GATHERGATE_API_KEY: rwKey.secret },
+        stdinText: `${JSON.stringify({ jsonrpc: "2.0", id: 7, method: "ping" })}\n`,
+      });
+      assert.equal(noUrlProc.code, 0);
+      assert.equal(trapHits, 0, "gathergate mcp must never load CWD .env GATHERGATE_URL");
+
+      // Separate malformed-key assertion: rejected before network I/O without echoing key
+      const badKeyProc = await spawnCliProcess(["mcp"], {
         cwd: untrustedRepo,
         env: { PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT, GATHERGATE_API_KEY: "gg_live_bad\nbad" },
         stdinText: "",
       });
-      assert.equal(hijackCheck.code, 1);
-      assert.equal(hijackCheck.stdout, "");
-      assert.equal(hijackCheck.stderr.includes("gg_live_bad"), false, "Malformed key must never be echoed");
-      assert.match(hijackCheck.stderr, /invalid characters/i);
+      assert.equal(badKeyProc.code, 1);
+      assert.equal(badKeyProc.stdout, "");
+      assert.equal(badKeyProc.stderr.includes("gg_live_bad"), false, "Malformed key must never be echoed");
+      assert.match(badKeyProc.stderr, /invalid characters/i);
     } finally {
+      await new Promise<void>((resolve) => trapServer.close(() => resolve()));
       fs.rmSync(untrustedRepo, { recursive: true, force: true });
     }
+
+    // 4c. Non-loopback cleartext http:// is rejected before any fetch, redirects use redirect: "error",
+    //     and upstream error text echoing secrets never reaches stdout or stderr
+    let cleartextBridgeCalled = false;
+    const clearIn = new PassThrough();
+    const clearOut = captureStream();
+    const clearErr = captureStream();
+    clearIn.end(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" })}\n`);
+    const clearCode = await runMcpStdioBridge({
+      url: "http://intake.example.com",
+      apiKey: rwKey.secret,
+      input: clearIn,
+      output: clearOut.stream,
+      errorOutput: clearErr.stream,
+      fetchImpl: (async () => {
+        cleartextBridgeCalled = true;
+        return new Response("nope", { status: 500 });
+      }) as typeof fetch,
+    });
+    assert.equal(clearCode, 1);
+    assert.equal(cleartextBridgeCalled, false);
+    assert.equal(clearOut.text(), "");
+    assert.match(clearErr.text(), /https:\/\//);
+
+    const echoIn = new PassThrough();
+    const echoOut = captureStream();
+    const echoErr = captureStream();
+    echoIn.end(`${JSON.stringify({ jsonrpc: "2.0", id: 88, method: "ping" })}\n`);
+    let seenRedirect: RequestRedirect | undefined;
+    const echoCode = await runMcpStdioBridge({
+      url: "https://intake.example.com",
+      apiKey: rwKey.secret,
+      input: echoIn,
+      output: echoOut.stream,
+      errorOutput: echoErr.stream,
+      fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+        seenRedirect = init?.redirect;
+        return new Response(JSON.stringify({ error: `LEAKED:${rwKey.secret}` }), {
+          status: 502,
+          headers: { "content-type": "application/json" },
+        });
+      }) as typeof fetch,
+    });
+    assert.equal(echoCode, 0);
+    assert.equal(seenRedirect, "error");
+    assert.equal(echoOut.text().includes(rwKey.secret), false);
+    assert.equal(echoErr.text().includes(rwKey.secret), false);
+    const echoFrame = JSON.parse(echoOut.text().trim()) as { id: number; error: { message: string } };
+    assert.equal(echoFrame.id, 88);
+    assert.match(echoFrame.error.message, /HTTP 502/);
 
     // 5. Verify server.json includes both npm stdio package and streamable-http remote
     const serverManifest = JSON.parse(fs.readFileSync(path.resolve("server.json"), "utf8")) as {
@@ -491,7 +753,7 @@ test("CLI mcp stdio bridge: real child-process modern 2026-07-28 + legacy initia
     assert.equal(serverManifest.packages[0].packageArguments[0].value, "mcp");
     assert.equal(serverManifest.remotes[0].headers[0].value, "Bearer {api_key}");
   } finally {
-    live.cleanup();
+    await live.cleanup();
   }
 });
 
@@ -512,6 +774,8 @@ test("CLI serve: loads .env automatically, binds dynamic --port 0, serves /healt
     stdio: ["ignore", "pipe", "pipe"],
   });
 
+  let shutdownResult: { code: number | null; signal: NodeJS.Signals | null; timedOut: boolean } | null = null;
+  let bodyFailed = false;
   try {
     const listenUrl = await new Promise<string>((resolve, reject) => {
       let stdout = "";
@@ -544,18 +808,39 @@ test("CLI serve: loads .env automatically, binds dynamic --port 0, serves /healt
     // Verify .env MASTER_KEY was loaded (no auto-generated .master.key created!)
     assert.equal(fs.existsSync(path.join(dataDir, ".master.key")), false);
     assert.equal(fs.existsSync(path.join(dataDir, "gathergate.sqlite")), true);
+  } catch (err) {
+    bodyFailed = true;
+    throw err;
   } finally {
-    child.kill("SIGTERM");
-    await new Promise<void>((resolve) => {
-      const killTimer = setTimeout(() => {
-        child.kill("SIGKILL");
-        resolve();
-      }, 5_000);
-      child.once("exit", () => {
-        clearTimeout(killTimer);
-        resolve();
-      });
-    });
+    const exitPromise =
+      child.exitCode !== null || child.signalCode !== null
+        ? Promise.resolve({ code: child.exitCode, signal: child.signalCode, timedOut: false })
+        : new Promise<{ code: number | null; signal: NodeJS.Signals | null; timedOut: boolean }>((resolve) => {
+            let timedOut = false;
+            const killTimer = setTimeout(() => {
+              timedOut = true;
+              child.kill("SIGKILL");
+            }, 5_000);
+            child.once("exit", (code, signal) => {
+              clearTimeout(killTimer);
+              resolve({ code, signal, timedOut });
+            });
+            child.kill("SIGTERM");
+          });
+    shutdownResult = await exitPromise;
     fs.rmSync(workDir, { recursive: true, force: true });
+  }
+  if (!bodyFailed && shutdownResult) {
+    assert.equal(shutdownResult.timedOut, false, "serve process ignored SIGTERM and required SIGKILL");
+    if (process.platform === "win32") {
+      // Windows lacks POSIX SIGTERM handlers; TerminateProcess exits with signal=SIGTERM.
+      assert.ok(
+        shutdownResult.code === 0 || shutdownResult.signal === "SIGTERM",
+        `Unexpected exit on win32: code=${shutdownResult.code}, signal=${shutdownResult.signal}`
+      );
+    } else {
+      assert.equal(shutdownResult.code, 0, `Expected clean exit code 0, got ${shutdownResult.code}`);
+      assert.equal(shutdownResult.signal, null, `Expected null signal, got ${shutdownResult.signal}`);
+    }
   }
 });

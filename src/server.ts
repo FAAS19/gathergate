@@ -154,22 +154,40 @@ export function startServer(overrides?: StartServerOverrides): void {
   let shuttingDown = false;
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
     process.on(sig, () => {
-      if (shuttingDown) return;
+      if (shuttingDown) {
+        process.exit(1);
+        return;
+      }
       shuttingDown = true;
       if (cronTimer) clearInterval(cronTimer);
 
-      const forceTimer = setTimeout(() => {
+      // Keep one overall shutdown deadline active across both HTTP draining and cron completion.
+      const shutdownDeadline = setTimeout(() => {
+        if ("closeAllConnections" in server && typeof server.closeAllConnections === "function") {
+          server.closeAllConnections();
+        }
+        try {
+          db.close();
+        } catch {
+          // Ignore close errors at forced shutdown deadline.
+        }
+        process.exit(1);
+      }, 15_000);
+      shutdownDeadline.unref();
+
+      const connForceTimer = setTimeout(() => {
         if ("closeAllConnections" in server && typeof server.closeAllConnections === "function") {
           server.closeAllConnections();
         }
       }, 10_000);
-      forceTimer.unref();
+      connForceTimer.unref();
 
       server.close(async () => {
-        clearTimeout(forceTimer);
+        clearTimeout(connForceTimer);
         if (cronPromise) {
           await cronPromise.catch(() => {});
         }
+        clearTimeout(shutdownDeadline);
         try {
           db.close();
         } catch {
