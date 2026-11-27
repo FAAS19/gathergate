@@ -11,6 +11,7 @@ export interface BundledSkillFile {
   description: string;
   content: string;
   sha256: string;
+  size: number;
 }
 
 export interface BundledSkill {
@@ -90,6 +91,7 @@ export function getBundledGatherGateSkill(): BundledSkill {
       description: spec.description,
       content,
       sha256: sha256Hex(content),
+      size: Buffer.byteLength(content, "utf8"),
     });
   }
 

@@ -1216,9 +1216,12 @@ export class Store {
   ): RequestRow | null {
     const req = this.getRequestById(workspaceId, requestId);
     if (!req) return null;
+    const deadlineChanged = dueAt !== req.due_at;
     this.db
-      .prepare("UPDATE requests SET due_at = ?, overdue_notified_at = NULL WHERE id = ? AND workspace_id = ?")
-      .run(dueAt, requestId, workspaceId);
+      .prepare(
+        "UPDATE requests SET due_at = ?, overdue_notified_at = CASE WHEN ? THEN NULL ELSE overdue_notified_at END WHERE id = ? AND workspace_id = ?"
+      )
+      .run(dueAt, deadlineChanged ? 1 : 0, requestId, workspaceId);
     this.logAudit(workspaceId, requestId, actor, "request.due_date_updated", {
       from: req.due_at,
       to: dueAt,

@@ -13,7 +13,11 @@ import {
   validateTextValue,
 } from "../validators/index.js";
 import { SENSITIVE_DEFAULT_PURGE_DAYS } from "../config.js";
-import { getBundledGatherGateSkill, getBundledSkillResource } from "./skills.js";
+import {
+  getBundledGatherGateSkill,
+  getBundledSkillResource,
+  type BundledSkill,
+} from "./skills.js";
 
 export const MCP_PROTOCOL_VERSIONS = [
   "2026-07-28",
@@ -24,6 +28,10 @@ export const MCP_PROTOCOL_VERSIONS = [
 ] as const;
 
 export const MCP_DEFAULT_PROTOCOL_VERSION = "2026-07-28";
+const SUPPORTED_PROTOCOL_VERSIONS = new Set<string>(MCP_PROTOCOL_VERSIONS);
+const FALLBACK_IN_FLIGHT_REMINDERS = new Set<string>();
+const MCP_SERVER_INSTRUCTIONS =
+  "GatherGate MCP is strictly metadata-only: never ask for or expect decrypted national IDs, client notes, file names, or uploaded bytes. Direct operators to review_url to inspect documents inside GatherGate's browser ReviewSheet. Read skill://gathergate/SKILL.md for workflows.";
 
 function loadServerVersion(): string {
   try {
@@ -61,6 +69,11 @@ export interface McpHandlerDeps {
   }) => Promise<void>;
   nowFn: () => number;
   manualReminderCooldownMs?: number;
+  inFlightReminders?: Set<string>;
+}
+
+export interface McpRequestOptions {
+  protocolVersionHeader?: string | null;
 }
 
 interface JsonRpcRequest {
@@ -283,15 +296,54 @@ function isValidEmailAddress(email: string): boolean {
 function maskEmail(email: string): string {
   const [local, domain] = email.split("@");
   if (!local || !domain) return "***";
-  const prefix = local.slice(0, Math.min(2, local.length));
-  return `${prefix}***@${domain}`;
+  if (local.length <= 2) return `***@${domain}`;
+  const visible = local.length === 3 ? 1 : 2;
+  return `${local.slice(0, visible)}***@${domain}`;
 }
 
-function rpcOk(id: string | number | null, result: Record<string, unknown>): McpHttpResult {
+function serializeSkillEntry(skill: BundledSkill) {
+  return {
+    uri: skill.uri,
+    frontmatter: {
+      name: skill.name,
+      description: skill.description,
+    },
+    resources: skill.files.map((f) => ({
+      uri: f.uri,
+      digest: `sha256:${f.sha256}`,
+      size: f.size,
+    })),
+  };
+}
+
+function safeLogAudit(
+  store: Store,
+  workspaceId: string,
+  requestId: string | null,
+  actor: "operator" | "client" | "system" | "api_key",
+  action: string,
+  detail: Record<string, unknown>
+): void {
+  try {
+    store.logAudit(workspaceId, requestId, actor, action, detail);
+  } catch {
+    // Audit logging is best-effort once state or mail delivery has already committed.
+  }
+}
+
+function rpcOk(
+  id: string | number | null,
+  result: Record<string, unknown>,
+  protocolVersion: string = MCP_DEFAULT_PROTOCOL_VERSION
+): McpHttpResult {
+  const payload =
+    protocolVersion === "2026-07-28"
+      ? { resultType: "complete", ...result }
+      : result;
   return {
     status: 200,
-    headers: { "mcp-protocol-version": MCP_DEFAULT_PROTOCOL_VERSION },
-    body: { jsonrpc: "2.0", id, result },
+    headers: { "mcp-protocol-version": protocolVersion },
+    body: { jsonrpc: "2.0", id, result: payload },
   };
 }
 
@@ -300,11 +352,12 @@ function rpcError(
   code: number,
   message: string,
   data?: Record<string, unknown>,
-  httpStatus = 200
+  httpStatus = 200,
+  protocolVersion: string = MCP_DEFAULT_PROTOCOL_VERSION
 ): McpHttpResult {
   return {
     status: httpStatus,
-    headers: { "mcp-protocol-version": MCP_DEFAULT_PROTOCOL_VERSION },
+    headers: { "mcp-protocol-version": protocolVersion },
     body: {
       jsonrpc: "2.0",
       id,
@@ -367,7 +420,8 @@ function serializeRequestSummary(
 export async function handleMcpJsonRpc(
   rawBody: unknown,
   auth: McpAuthContext,
-  deps: McpHandlerDeps
+  deps: McpHandlerDeps,
+  options?: McpRequestOptions
 ): Promise<McpHttpResult> {
   if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
     return rpcError(null, -32600, "Invalid Request: expected a single JSON-RPC 2.0 object.", undefined, 400);
@@ -385,134 +439,182 @@ export async function handleMcpJsonRpc(
     return rpcError(id, -32600, "Invalid Request: expected jsonrpc '2.0' and string method.", undefined, 400);
   }
 
-  // JSON-RPC notifications (no id) return 202 Accepted cleanly with no response body.
-  if (!hasId) {
-    return { status: 202, headers: { "mcp-protocol-version": MCP_DEFAULT_PROTOCOL_VERSION } };
-  }
-
   const params =
     msg.params && typeof msg.params === "object" && !Array.isArray(msg.params)
       ? (msg.params as Record<string, unknown>)
       : {};
 
-  if (msg.method === "initialize") {
-    const requested = typeof params.protocolVersion === "string" ? params.protocolVersion : "";
-    const negotiated = (MCP_PROTOCOL_VERSIONS as readonly string[]).includes(requested)
-      ? requested
-      : MCP_DEFAULT_PROTOCOL_VERSION;
-    return {
-      status: 200,
-      headers: { "mcp-protocol-version": negotiated },
-      body: {
-        jsonrpc: "2.0",
+  // Validate per-request protocol version (MCP-Protocol-Version header and _meta) for all
+  // non-initialize requests; leave legacy initialize negotiation unchanged.
+  let activeVersion: string = MCP_DEFAULT_PROTOCOL_VERSION;
+  if (msg.method !== "initialize") {
+    const headerVersion = options?.protocolVersionHeader?.trim() ?? "";
+    const metaObj =
+      params._meta && typeof params._meta === "object" && !Array.isArray(params._meta)
+        ? (params._meta as Record<string, unknown>)
+        : null;
+    const rawMetaVersion = metaObj ? metaObj["io.modelcontextprotocol/protocolVersion"] : undefined;
+    if (rawMetaVersion !== undefined && typeof rawMetaVersion !== "string") {
+      return rpcError(
         id,
-        result: {
-          protocolVersion: negotiated,
-          capabilities: {
-            tools: { listChanged: false },
-            resources: { subscribe: false, listChanged: false },
-            extensions: {
-              "io.modelcontextprotocol/skills": {},
-            },
-          },
-          serverInfo: {
+        -32022,
+        "Unsupported protocol version.",
+        { supported: [...MCP_PROTOCOL_VERSIONS] },
+        400
+      );
+    }
+    const metaVersion = typeof rawMetaVersion === "string" ? rawMetaVersion.trim() : "";
+
+    if (
+      (headerVersion && !SUPPORTED_PROTOCOL_VERSIONS.has(headerVersion)) ||
+      (metaVersion && !SUPPORTED_PROTOCOL_VERSIONS.has(metaVersion)) ||
+      (headerVersion && metaVersion && headerVersion !== metaVersion)
+    ) {
+      const requested =
+        (metaVersion && !SUPPORTED_PROTOCOL_VERSIONS.has(metaVersion) ? metaVersion : "") ||
+        (headerVersion && !SUPPORTED_PROTOCOL_VERSIONS.has(headerVersion) ? headerVersion : "") ||
+        metaVersion ||
+        headerVersion;
+      return rpcError(
+        id,
+        -32022,
+        "Unsupported protocol version.",
+        { supported: [...MCP_PROTOCOL_VERSIONS], requested },
+        400
+      );
+    }
+    if (metaVersion || headerVersion) {
+      activeVersion = metaVersion || headerVersion;
+    }
+  }
+
+  // JSON-RPC notifications (no id) return 202 Accepted cleanly with no response body.
+  if (!hasId) {
+    return { status: 202, headers: { "mcp-protocol-version": activeVersion } };
+  }
+
+  const serverCapabilities = {
+    tools: { listChanged: false },
+    resources: { subscribe: false, listChanged: false },
+    extensions: {
+      "io.modelcontextprotocol/skills": {},
+    },
+  };
+
+  if (msg.method === "server/discover") {
+    return rpcOk(
+      id,
+      {
+        supportedVersions: [...MCP_PROTOCOL_VERSIONS],
+        capabilities: serverCapabilities,
+        instructions: MCP_SERVER_INSTRUCTIONS,
+        ttlMs: 300_000,
+        cacheScope: "public",
+        _meta: {
+          "io.modelcontextprotocol/serverInfo": {
             name: "gathergate",
             title: "GatherGate",
             version: MCP_SERVER_VERSION,
           },
-          instructions:
-            "GatherGate MCP is strictly metadata-only: never ask for or expect decrypted national IDs, client notes, file names, or uploaded bytes. Direct operators to review_url to inspect documents inside GatherGate's browser ReviewSheet. Read skill://gathergate/SKILL.md for workflows.",
         },
       },
-    };
+      activeVersion
+    );
+  }
+
+  if (msg.method === "initialize") {
+    const requested = typeof params.protocolVersion === "string" ? params.protocolVersion : "";
+    const negotiated = SUPPORTED_PROTOCOL_VERSIONS.has(requested)
+      ? requested
+      : MCP_DEFAULT_PROTOCOL_VERSION;
+    return rpcOk(
+      id,
+      {
+        protocolVersion: negotiated,
+        capabilities: serverCapabilities,
+        serverInfo: {
+          name: "gathergate",
+          title: "GatherGate",
+          version: MCP_SERVER_VERSION,
+        },
+        instructions: MCP_SERVER_INSTRUCTIONS,
+      },
+      negotiated
+    );
   }
 
   if (msg.method === "ping") {
-    return rpcOk(id, {});
+    return rpcOk(id, {}, activeVersion);
   }
 
   if (msg.method === "tools/list") {
-    return rpcOk(id, {
-      tools: MCP_TOOLS.map((t) => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: t.inputSchema,
-        annotations: t.annotations,
-      })),
-    });
+    return rpcOk(
+      id,
+      {
+        tools: MCP_TOOLS.map((t) => ({
+          name: t.name,
+          description: t.description,
+          inputSchema: t.inputSchema,
+          annotations: t.annotations,
+        })),
+      },
+      activeVersion
+    );
   }
 
   if (msg.method === "resources/list") {
     const skill = getBundledGatherGateSkill();
-    return rpcOk(id, {
-      resources: skill.files.map((f) => ({
-        uri: f.uri,
-        name: f.name,
-        description: f.description,
-        mimeType: f.mimeType,
-      })),
-    });
+    return rpcOk(
+      id,
+      {
+        resources: skill.files.map((f) => ({
+          uri: f.uri,
+          name: f.name,
+          description: f.description,
+          mimeType: f.mimeType,
+        })),
+      },
+      activeVersion
+    );
   }
 
   if (msg.method === "resources/read") {
     const uri = typeof params.uri === "string" ? params.uri.trim() : "";
     if (!uri) {
-      return rpcError(id, -32602, "Invalid params: uri is required.");
+      return rpcError(id, -32602, "Invalid params: uri is required.", undefined, 200, activeVersion);
     }
     const resource = getBundledSkillResource(uri);
     if (!resource) {
-      return rpcError(id, -32602, `Resource not found: ${uri}`);
+      return rpcError(id, -32602, `Resource not found: ${uri}`, undefined, 200, activeVersion);
     }
-    return rpcOk(id, {
-      contents: [
-        {
-          uri: resource.uri,
-          mimeType: resource.mimeType,
-          text: resource.content,
-        },
-      ],
-    });
+    return rpcOk(
+      id,
+      {
+        contents: [
+          {
+            uri: resource.uri,
+            mimeType: resource.mimeType,
+            text: resource.content,
+          },
+        ],
+      },
+      activeVersion
+    );
   }
 
   // SEP-2640 (io.modelcontextprotocol/skills) progressive-disclosure discovery methods
   if (msg.method === "skills/list") {
     const skill = getBundledGatherGateSkill();
-    return rpcOk(id, {
-      skills: [
-        {
-          uri: skill.uri,
-          name: skill.name,
-          description: skill.description,
-          files: skill.files.map((f) => ({
-            uri: f.uri,
-            path: f.relativePath,
-            mimeType: f.mimeType,
-            sha256: f.sha256,
-          })),
-        },
-      ],
-    });
+    return rpcOk(id, { skills: [serializeSkillEntry(skill)] }, activeVersion);
   }
 
   if (msg.method === "skills/get") {
     const uri = typeof params.uri === "string" ? params.uri.trim() : "";
     const skill = getBundledGatherGateSkill();
     if (uri !== skill.uri && uri !== `skill://${skill.name}`) {
-      return rpcError(id, -32602, `Skill not found: ${uri || "(empty)"}`);
+      return rpcError(id, -32602, `Skill not found: ${uri || "(empty)"}`, undefined, 200, activeVersion);
     }
-    return rpcOk(id, {
-      skill: {
-        uri: skill.uri,
-        name: skill.name,
-        description: skill.description,
-        files: skill.files.map((f) => ({
-          uri: f.uri,
-          path: f.relativePath,
-          mimeType: f.mimeType,
-          sha256: f.sha256,
-        })),
-      },
-    });
+    return rpcOk(id, serializeSkillEntry(skill), activeVersion);
   }
 
   if (msg.method === "tools/call") {
@@ -523,19 +625,24 @@ export async function handleMcpJsonRpc(
         : {};
     const tool = MCP_TOOLS.find((t) => t.name === toolName);
     if (!tool) {
-      return rpcError(id, -32602, `Unknown tool: ${toolName}`);
+      return rpcError(id, -32602, `Unknown tool: ${toolName}`, undefined, 200, activeVersion);
     }
     if (!auth.scopes.has(tool.requiredScope)) {
-      return rpcError(id, -32003, `API key lacks required scope "${tool.requiredScope}".`, {
-        requiredScope: tool.requiredScope,
-      });
+      return rpcError(
+        id,
+        -32003,
+        `API key lacks required scope "${tool.requiredScope}".`,
+        { requiredScope: tool.requiredScope },
+        200,
+        activeVersion
+      );
     }
 
     const result = await executeMcpTool(tool.name, args, auth, deps);
-    return rpcOk(id, result);
+    return rpcOk(id, result, activeVersion);
   }
 
-  return rpcError(id, -32601, `Method not found: ${msg.method}`);
+  return rpcError(id, -32601, `Method not found: ${msg.method}`, undefined, 200, activeVersion);
 }
 
 async function executeMcpTool(
@@ -660,8 +767,9 @@ async function executeMcpTool(
       return toolErr("within_days must be an integer between 0 and 30.");
     }
     const withinDays = args.within_days === undefined ? 0 : args.within_days;
-    const cutoffIso = new Date(nowFn() + withinDays * 86400_000).toISOString();
-    const nowIso = new Date(nowFn()).toISOString();
+    const nowMs = nowFn();
+    const cutoffIso = new Date(nowMs + withinDays * 86400_000).toISOString();
+    const nowIso = new Date(nowMs).toISOString();
 
     const rows = store
       .listRequests(auth.workspace.id)
@@ -778,6 +886,7 @@ async function executeMcpTool(
     let inviteError: string | undefined;
     if (sendInvite) {
       const portalUrl = `${config.baseUrl}/c/${magicToken}`;
+      let rawInviteError: string | undefined;
       try {
         await deps.sendEmail({
           workspace: auth.workspace,
@@ -797,20 +906,25 @@ async function executeMcpTool(
           kind: "invite",
         });
         inviteSent = true;
-        store.logAudit(auth.workspace.id, request.id, "system", "invite.sent", {
-          to: clientEmail,
-          via: "mcp",
-        });
       } catch (err) {
+        rawInviteError = err instanceof Error ? err.message : String(err);
         inviteError = config.multiTenant
           ? "Invite email failed to send. Check outbound email settings."
           : err instanceof Error
             ? err.message
             : "Invite email failed to send.";
-        store.logAudit(auth.workspace.id, request.id, "system", "invite.failed", {
+      }
+
+      if (inviteSent) {
+        safeLogAudit(store, auth.workspace.id, request.id, "system", "invite.sent", {
           to: clientEmail,
           via: "mcp",
-          error: err instanceof Error ? err.message : String(err),
+        });
+      } else {
+        safeLogAudit(store, auth.workspace.id, request.id, "system", "invite.failed", {
+          to: clientEmail,
+          via: "mcp",
+          error: rawInviteError ?? "Invite email failed to send.",
         });
       }
     }
@@ -858,55 +972,65 @@ async function executeMcpTool(
       }
     }
 
-    const magicToken = decryptField(config.masterKey, req.token_encrypted, req.id);
-    const message = reminderEmail({
-      brand: emailBrand(auth.workspace, config.baseUrl),
-      clientName: req.client_name,
-      title: req.title,
-      portalUrl: `${config.baseUrl}/c/${magicToken}`,
-      outstanding: outstanding.map((i) => ({
-        label: i.label,
-        needsRevision: i.status === "rejected",
-        note: i.review_note,
-      })),
-    });
+    const inFlight = deps.inFlightReminders ?? FALLBACK_IN_FLIGHT_REMINDERS;
+    if (inFlight.has(req.id)) {
+      return toolErr("A reminder is already being sent for this request. Wait a moment and retry.");
+    }
+    inFlight.add(req.id);
 
     try {
-      await deps.sendEmail({
-        workspace: auth.workspace,
-        workspaceId: auth.workspace.id,
-        requestId: req.id,
-        to: req.client_email,
-        message,
-        kind: "reminder",
-        isDemo: req.is_demo === 1,
+      const magicToken = decryptField(config.masterKey, req.token_encrypted, req.id);
+      const message = reminderEmail({
+        brand: emailBrand(auth.workspace, config.baseUrl),
+        clientName: req.client_name,
+        title: req.title,
+        portalUrl: `${config.baseUrl}/c/${magicToken}`,
+        outstanding: outstanding.map((i) => ({
+          label: i.label,
+          needsRevision: i.status === "rejected",
+          note: i.review_note,
+        })),
       });
-    } catch (err) {
-      const detail = config.multiTenant
-        ? "Reminder email failed to send. Check outbound email settings."
-        : err instanceof Error
-          ? err.message
-          : "Reminder email failed to send.";
-      return toolErr(detail);
+
+      try {
+        await deps.sendEmail({
+          workspace: auth.workspace,
+          workspaceId: auth.workspace.id,
+          requestId: req.id,
+          to: req.client_email,
+          message,
+          kind: "reminder",
+          isDemo: req.is_demo === 1,
+        });
+      } catch (err) {
+        const detail = config.multiTenant
+          ? "Reminder email failed to send. Check outbound email settings."
+          : err instanceof Error
+            ? err.message
+            : "Reminder email failed to send.";
+        return toolErr(detail);
+      }
+
+      const updated = store.recordManualReminderSent(
+        auth.workspace.id,
+        req.id,
+        actorLabel,
+        outstanding.length,
+        new Date(nowFn()).toISOString(),
+        "api_key"
+      );
+
+      return toolOk({
+        ok: true,
+        request_id: req.id,
+        reminders_sent: updated.reminders_sent,
+        outstanding_count: outstanding.length,
+        next_reminder_at: updated.next_reminder_at,
+        review_url: `${config.baseUrl}/requests/${req.id}`,
+      });
+    } finally {
+      inFlight.delete(req.id);
     }
-
-    const updated = store.recordManualReminderSent(
-      auth.workspace.id,
-      req.id,
-      actorLabel,
-      outstanding.length,
-      new Date(nowFn()).toISOString(),
-      "api_key"
-    );
-
-    return toolOk({
-      ok: true,
-      request_id: req.id,
-      reminders_sent: updated.reminders_sent,
-      outstanding_count: outstanding.length,
-      next_reminder_at: updated.next_reminder_at,
-      review_url: `${config.baseUrl}/requests/${req.id}`,
-    });
   }
 
   if (name === "update_due_date") {
