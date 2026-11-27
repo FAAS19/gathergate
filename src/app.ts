@@ -46,6 +46,7 @@ import {
   type RenderedEmail,
 } from "./emails/templates.js";
 import { seedDemoWorkspace } from "./jobs/demo.js";
+import { handleMcpJsonRpc } from "./mcp/server.js";
 import {
   attemptWebhookDelivery,
   buildWebhookEventPayload,
@@ -272,6 +273,28 @@ function extractAddress(raw: string): string {
   return (match ? match[1] : raw).trim();
 }
 
+function isAllowedMcpOrigin(originHeader: string, baseUrl: string, multiTenant: boolean): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(originHeader);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  try {
+    if (parsed.origin === new URL(baseUrl).origin) return true;
+  } catch {
+    return false;
+  }
+  if (!multiTenant && parsed.protocol === "http:") {
+    const host = parsed.hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1") {
+      return true;
+    }
+  }
+  return false;
+}
+
 function resolveDefaultClientDistDir(): string {
   const here = path.dirname(fileURLToPath(import.meta.url));
   return path.resolve(here, "..", "client", "dist");
@@ -373,6 +396,15 @@ export function createApp(deps: GatherGateAppDeps) {
     if (!isPreview) {
       c.header("X-Frame-Options", "DENY");
     }
+  });
+
+  const inFlightReminders = new Set<string>();
+
+  app.use("/mcp", async (c, next) => {
+    if (c.req.method === "POST") {
+      return defaultJsonLimit(c, next);
+    }
+    return next();
   });
 
   app.get("/healthz", (c) => c.json({ ok: true, service: "gathergate" }));
@@ -1227,52 +1259,61 @@ export function createApp(deps: GatherGateAppDeps) {
       }
     }
 
-    const magicToken = decryptField(config.masterKey, req.token_encrypted, req.id);
-    const message = reminderEmail({
-      brand: emailBrand(auth.workspace, config.baseUrl),
-      clientName: req.client_name,
-      title: req.title,
-      portalUrl: `${config.baseUrl}/c/${magicToken}`,
-      outstanding: outstanding.map((i) => ({
-        label: i.label,
-        needsRevision: i.status === "rejected",
-        note: i.review_note,
-      })),
-    });
+    if (inFlightReminders.has(req.id)) {
+      return c.json({ error: "A reminder is already being sent for this request." }, 409);
+    }
+    inFlightReminders.add(req.id);
 
     try {
-      await sendEmailTracked({
-        workspaceId: auth.workspace.id,
-        requestId: req.id,
-        to: req.client_email,
-        message,
-        kind: "reminder",
-        isDemo: req.is_demo === 1,
+      const magicToken = decryptField(config.masterKey, req.token_encrypted, req.id);
+      const message = reminderEmail({
+        brand: emailBrand(auth.workspace, config.baseUrl),
+        clientName: req.client_name,
+        title: req.title,
+        portalUrl: `${config.baseUrl}/c/${magicToken}`,
+        outstanding: outstanding.map((i) => ({
+          label: i.label,
+          needsRevision: i.status === "rejected",
+          note: i.review_note,
+        })),
       });
-    } catch (err) {
-      const detail = config.multiTenant
-        ? "Reminder email failed to send. Check your outbound email settings."
-        : err instanceof Error
-          ? err.message
-          : "Reminder email failed to send.";
-      return c.json({ error: detail }, 502);
+
+      try {
+        await sendEmailTracked({
+          workspaceId: auth.workspace.id,
+          requestId: req.id,
+          to: req.client_email,
+          message,
+          kind: "reminder",
+          isDemo: req.is_demo === 1,
+        });
+      } catch (err) {
+        const detail = config.multiTenant
+          ? "Reminder email failed to send. Check your outbound email settings."
+          : err instanceof Error
+            ? err.message
+            : "Reminder email failed to send.";
+        return c.json({ error: detail }, 502);
+      }
+
+      const updated = store.recordManualReminderSent(
+        auth.workspace.id,
+        req.id,
+        auth.actorLabel,
+        outstanding.length,
+        new Date(nowFn()).toISOString(),
+        auth.actor
+      );
+
+      return c.json({
+        ok: true,
+        reminders_sent: updated.reminders_sent,
+        last_manual_reminder_at: updated.last_manual_reminder_at,
+        next_reminder_at: updated.next_reminder_at,
+      });
+    } finally {
+      inFlightReminders.delete(req.id);
     }
-
-    const updated = store.recordManualReminderSent(
-      auth.workspace.id,
-      req.id,
-      auth.actorLabel,
-      outstanding.length,
-      new Date(nowFn()).toISOString(),
-      auth.actor
-    );
-
-    return c.json({
-      ok: true,
-      reminders_sent: updated.reminders_sent,
-      last_manual_reminder_at: updated.last_manual_reminder_at,
-      next_reminder_at: updated.next_reminder_at,
-    });
   });
 
   app.patch("/api/requests/:id", async (c) => {
@@ -2975,6 +3016,89 @@ export function createApp(deps: GatherGateAppDeps) {
     return c.json({ ok: true, requestStatus: reqAfter.status, item: { status: updated.status } });
   });
 
+  // ---------------------------------------------------------------------------
+  // Built-In Stateless MCP 2.0 Endpoint (POST /mcp, Bearer API Key Only)
+  // ---------------------------------------------------------------------------
+  app.post("/mcp", async (c) => {
+    const originHeader = c.req.header("origin")?.trim();
+    if (originHeader && !isAllowedMcpOrigin(originHeader, config.baseUrl, config.multiTenant)) {
+      return c.json({ error: "Forbidden Origin header." }, 403);
+    }
+
+    const authHeader = c.req.header("authorization")?.trim();
+    if (!authHeader) {
+      c.header("WWW-Authenticate", 'Bearer realm="GatherGate MCP"');
+      return c.json({ error: "Bearer API key required for MCP." }, 401);
+    }
+
+    const resolved = resolveScopedAuth(c, "mcp:read");
+    if (resolved.error) {
+      if (resolved.error.status === 401) {
+        resolved.error.headers.set(
+          "WWW-Authenticate",
+          'Bearer realm="GatherGate MCP", error="invalid_token"'
+        );
+      }
+      return resolved.error;
+    }
+    if (resolved.auth.kind !== "api_key") {
+      c.header("WWW-Authenticate", 'Bearer realm="GatherGate MCP"');
+      return c.json({ error: "Bearer API key required for MCP." }, 401);
+    }
+
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return c.json(
+        {
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32700, message: "Parse error: invalid JSON body." },
+        },
+        400
+      );
+    }
+
+    const res = await handleMcpJsonRpc(
+      rawBody,
+      {
+        workspace: resolved.auth.workspace,
+        apiKey: resolved.auth.apiKey,
+        scopes: resolved.auth.scopes,
+      },
+      {
+        config,
+        store,
+        sendEmail: sendEmailTracked,
+        nowFn,
+        manualReminderCooldownMs: deps.manualReminderCooldownMs,
+        inFlightReminders,
+      },
+      {
+        protocolVersionHeader: c.req.header("mcp-protocol-version") ?? null,
+        mcpMethodHeader: c.req.header("mcp-method") ?? null,
+        mcpNameHeader: c.req.header("mcp-name") ?? null,
+      }
+    );
+
+    c.header("Cache-Control", "no-store");
+    if (res.headers) {
+      for (const [k, v] of Object.entries(res.headers)) {
+        c.header(k, v);
+      }
+    }
+    if (res.status === 202 || !res.body) {
+      return c.body(null, 202);
+    }
+    return c.json(res.body, res.status as 200 | 400 | 404);
+  });
+
+  app.all("/mcp", (c) => {
+    c.header("Allow", "POST");
+    return c.json({ error: "Method Not Allowed. GatherGate MCP is stateless; send JSON-RPC via POST /mcp." }, 405);
+  });
+
   app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 
   // ---------------------------------------------------------------------------
@@ -3008,5 +3132,5 @@ export function createApp(deps: GatherGateAppDeps) {
     });
   });
 
-  return { app, store };
+  return { app, store, inFlightReminders };
 }

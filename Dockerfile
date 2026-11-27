@@ -28,6 +28,8 @@ COPY --from=server-build --chown=node:node /app/node_modules ./node_modules
 COPY --from=server-build --chown=node:node /app/dist ./dist
 COPY --from=client-build --chown=node:node /app/client/dist ./client/dist
 COPY --from=server-build --chown=node:node /app/package.json ./package.json
+COPY --chown=node:node skills ./skills
+COPY --chown=node:node server.json ./server.json
 
 USER node
 EXPOSE 3080
