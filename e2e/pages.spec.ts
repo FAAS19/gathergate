@@ -26,6 +26,11 @@ const MIME_TYPES: Record<string, string> = {
   ".webmanifest": "application/manifest+json; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".ico": "image/x-icon",
+  ".wasm": "application/wasm",
+  ".pf_meta": "application/octet-stream",
+  ".pf_index": "application/octet-stream",
+  ".pf_fragment": "application/octet-stream",
+  ".pagefind": "application/octet-stream",
 };
 
 let server: http.Server;
@@ -46,13 +51,24 @@ test.beforeAll(async () => {
       return;
     }
 
-    if (!pathname.startsWith(PREFIX)) {
+    if (pathname === "/docs") {
+      res.writeHead(302, { Location: `/docs/${reqUrl.search}` });
+      res.end();
+      return;
+    }
+
+    let rel: string | null = null;
+    if (pathname.startsWith(PREFIX)) {
+      rel = pathname.slice(PREFIX.length);
+    } else if (pathname.startsWith("/docs/") || pathname === "/favicon.svg") {
+      rel = pathname.slice(1);
+    }
+    if (rel === null) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Not found");
       return;
     }
 
-    const rel = pathname.slice(PREFIX.length);
     const candidate = path.resolve(SITE_DIST, rel);
     if (candidate !== SITE_DIST && !candidate.startsWith(SITE_DIST + path.sep)) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
@@ -360,4 +376,29 @@ test("interactive VITE_DEMO=1 browser demo works end to end under /gathergate/de
   expect(
     issues.filter((e) => !e.includes("frame is sandboxed and the 'allow-scripts' permission is not set"))
   ).toEqual([]);
+});
+
+test("Astro Starlight docs render cleanly under /docs/ with search, navigation, and WCAG 2.2 AA compliance", async ({
+  page,
+}, testInfo) => {
+  const issues = trackPageIssues(page);
+
+  await page.goto(`${baseUrl}/docs/`);
+  await expect(page.getByRole("heading", { name: "GatherGate Documentation", level: 1 })).toBeVisible();
+
+  await page.getByRole("link", { name: /Quickstart/i }).first().click();
+  await expect(page).toHaveURL(/\/docs\/getting-started\/quickstart\/$/);
+  await expect(page.getByRole("heading", { name: "Quickstart", level: 1 })).toBeVisible();
+  await expect(page.locator("pre").first()).toContainText(/npx gathergate/);
+
+  // Verify Pagefind offline search returns results with zero external calls.
+  await page.getByRole("button", { name: /Search/i }).first().click();
+  const searchInput = page.locator("dialog input[type='text'], .pagefind-ui__search-input").first();
+  await expect(searchInput).toBeVisible();
+  await searchInput.fill("HMAC");
+  await expect(page.locator(".pagefind-ui__result-link").first()).toContainText(/Webhook/i, { timeout: 10_000 });
+  await page.keyboard.press("Escape");
+
+  await expectAccessible(page, testInfo, "pages-docs");
+  expect(issues).toEqual([]);
 });

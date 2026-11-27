@@ -5,6 +5,8 @@ client/node_modules/
 client/dist/
 site/node_modules/
 site/dist/
+docs/node_modules/
+docs/.astro/
 .cloudflare/
 .env
 .env.*

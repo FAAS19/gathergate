@@ -1,0 +1,46 @@
+---
+title: GatherGate Documentation
+description: Self-hosted, MIT-licenced magic-link client document intake, deterministic validation, and encrypted review vault.
+template: doc
+---
+
+import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+GatherGate is a self-hosted, open-source alternative to Content Snare and FileInvite. Collect client documents and structured details through passwordless magic links with deterministic validation, AES-256-GCM encryption at rest, automated reminders, and keyboard-first review in a single Node.js or Docker runtime.
+
+- **Runtime**: Node.js `>= 22.13` (Node 24+ recommended for built-in `node:sqlite` and `node:crypto.argon2Sync`), 5 backend production dependencies, zero external database.
+- **Zero telemetry**: GatherGate never phones home. Outbound network traffic happens only when you configure SMTP/Resend, S3/R2 storage, or a completion webhook.
+
+<CardGrid>
+  <LinkCard
+    title="Quickstart (30 seconds)"
+    description="Run GatherGate locally via npx, Docker, or Docker Compose and verify /healthz."
+    href="/docs/getting-started/quickstart/"
+  />
+  <LinkCard
+    title="Reverse Proxy & TLS"
+    description="Put Caddy, Nginx, or Cloudflare Tunnel in front of 127.0.0.1:3080 with TRUST_PROXY."
+    href="/docs/deployment/reverse-proxy/"
+  />
+  <LinkCard
+    title="Storage & Email"
+    description="Use local encrypted disk or S3/Cloudflare R2 blobs, plus Local Outbox, SMTP, or Resend."
+    href="/docs/deployment/storage/"
+  />
+  <LinkCard
+    title="Webhooks & Validator Packs"
+    description="Verify HMAC-SHA256 completion payloads in n8n and add regional deterministic checksums."
+    href="/docs/guides/webhooks/"
+  />
+</CardGrid>
+
+## Architecture at a Glance
+
+| Layer | Implementation |
+| :--- | :--- |
+| **HTTP API & SPA** | Hono (`@hono/node-server`) serving the built React 19 + Tailwind CSS v4 frontend |
+| **Metadata Store** | Built-in `node:sqlite` in WAL mode (`DATA_DIR/gathergate.sqlite`) with versioned migrations |
+| **Blob Storage** | Encrypted local files (`DATA_DIR/blobs`) or any SigV4 S3/R2/MinIO/B2 bucket (`aws4fetch`) |
+| **Encryption at Rest** | Per-record HKDF-SHA256 + AES-256-GCM bound with authenticated additional data (AAD) |
+| **Outbound Email** | Built-in Local Outbox (`console`), SMTP (`nodemailer`), or Resend HTTP API |
+| **ZIP Export** | Streaming decrypted archive (`yazl`) with `summary.json` and canonicalised `files/` |

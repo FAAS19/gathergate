@@ -28,12 +28,14 @@ jobs:
             package-lock.json
             client/package-lock.json
             site/package-lock.json
+            docs/package-lock.json
 
       - name: Install dependencies
         run: |
           npm ci
           npm --prefix client ci
           npm --prefix site ci
+          npm --prefix docs ci
 
       - name: Typecheck
         run: npm run typecheck && npm --prefix site run typecheck
@@ -49,6 +51,7 @@ jobs:
           npm audit --omit=dev --audit-level=high
           npm --prefix client audit --omit=dev --audit-level=high
           npm --prefix site audit --omit=dev --audit-level=high
+          npm --prefix docs audit --omit=dev --audit-level=high
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium

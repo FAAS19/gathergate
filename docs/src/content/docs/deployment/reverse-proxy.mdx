@@ -1,0 +1,88 @@
+---
+title: Reverse Proxy & TLS
+description: Expose GatherGate securely over HTTPS using Caddy, Nginx, or Cloudflare Tunnel.
+---
+
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+
+Never expose port `3080` directly to the public internet over plain HTTP. Keep GatherGate bound to `127.0.0.1:3080` and terminate TLS at a reverse proxy.
+
+## Required GatherGate Settings
+
+Set these two variables in `.env` whenever GatherGate sits behind a reverse proxy:
+
+```dotenv
+BASE_URL=https://intake.yourfirm.com.au
+TRUST_PROXY=true
+```
+
+- `BASE_URL` starting with `https://` instructs GatherGate to mark `gg_session` and client OTP cookies `Secure` and generate HTTPS magic links.
+- `TRUST_PROXY=true` allows per-IP rate limiting on `/api/login`, OTP, and uploads to inspect the client IP forwarded by your proxy.
+
+:::caution[Never set `TRUST_PROXY=true` without a trusted proxy]
+If port `3080` is reachable directly by clients with `TRUST_PROXY=true`, callers can spoof `X-Forwarded-For` headers to bypass IP rate limits. Always bind GatherGate to `127.0.0.1:3080` or an isolated Docker network.
+:::
+
+## Proxy Configurations
+
+<Tabs>
+  <TabItem label="Caddy">
+Caddy provisions and renews Let's Encrypt TLS certificates automatically:
+
+```txt title="Caddyfile"
+intake.yourfirm.com.au {
+    request_body {
+        max_size 64MB
+    }
+    reverse_proxy 127.0.0.1:3080
+}
+```
+  </TabItem>
+  <TabItem label="Nginx">
+Ensure `client_max_body_size` is at least `60m` so GatherGate's 50 MB per-upload limit is not cut off by Nginx's default 1 MB cap:
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name intake.yourfirm.com.au;
+
+    ssl_certificate     /etc/letsencrypt/live/intake.yourfirm.com.au/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/intake.yourfirm.com.au/privkey.pem;
+
+    client_max_body_size 64m;
+
+    location / {
+        proxy_pass http://127.0.0.1:3080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+}
+```
+  </TabItem>
+  <TabItem label="Cloudflare Tunnel">
+Cloudflare Tunnel (`cloudflared`) exposes `127.0.0.1:3080` without opening inbound firewall ports:
+
+```yaml
+# /etc/cloudflared/config.yml
+tunnel: <your-tunnel-id>
+credentials-file: /etc/cloudflared/<your-tunnel-id>.json
+
+ingress:
+  - hostname: intake.yourfirm.com.au
+    service: http://127.0.0.1:3080
+  - service: http_status:404
+```
+
+Remember to set `BASE_URL=https://intake.yourfirm.com.au` and `TRUST_PROXY=true` in GatherGate's `.env`.
+  </TabItem>
+</Tabs>
+
+## Post-Proxy Checklist
+
+1. Verify `https://intake.yourfirm.com.au/healthz` returns `200 OK`.
+2. Open DevTools > Application > Cookies after signing in and confirm `gg_session` has `HttpOnly`, `Secure`, and `SameSite=Lax`.
+3. Upload a multi-megabyte PDF to confirm your proxy body size limit allows files up to 50 MB.
