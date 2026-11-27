@@ -161,19 +161,47 @@ test("showcase site renders cleanly under /gathergate/ subpath with 0 broken ass
       .toBe(true);
   }
 
-  const dockerRunTab = page
-    .getByRole("tab", { name: /docker run/i })
-    .or(page.getByRole("button", { name: /docker run/i }))
-    .first();
-  const dockerComposeTab = page
-    .getByRole("tab", { name: /docker compose/i })
-    .or(page.getByRole("button", { name: /docker compose/i }))
-    .first();
+  const selfHost = page.locator("#self-host");
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
 
-  await dockerRunTab.click();
-  await expect(page.locator("pre, code").filter({ hasText: /docker run/i }).first()).toBeVisible();
-  await dockerComposeTab.click();
-  await expect(page.locator("pre, code").filter({ hasText: /docker compose/i }).first()).toBeVisible();
+  const npxTab = selfHost.getByRole("tab", { name: /^npx$/i });
+  await expect(npxTab).toHaveAttribute("aria-selected", "true");
+
+  const deployTabs = [
+    {
+      name: /^npx$/i,
+      text: /npx gathergate/,
+      copied: /^npx gathergate$/,
+    },
+    {
+      name: /docker run/i,
+      text: /docker run -d/,
+      copied: /^docker run -d \\\n\s+--name gathergate \\\n\s+-p 127\.0\.0\.1:3080:3080 \\\n\s+-v gathergate_data:\/data \\\n\s+ghcr\.io\/faas19\/gathergate:latest$/,
+    },
+    {
+      name: /docker compose/i,
+      text: /docker compose up -d --build/,
+      copied: /^git clone https:\/\/github\.com\/FAAS19\/gathergate\.git \\\n\s+&& cd gathergate \\\n\s+&& docker compose up -d --build$/,
+    },
+  ];
+
+  for (const deployTab of deployTabs) {
+    await selfHost.getByRole("tab", { name: deployTab.name }).click();
+    const pre = selfHost.locator("pre");
+    await expect(pre).toBeVisible();
+    await expect(pre).toContainText(deployTab.text);
+
+    if (viewport && viewport.width >= 1024) {
+      const fitsWithoutScroll = await pre.evaluate((el) => el.scrollWidth <= el.clientWidth);
+      expect(fitsWithoutScroll).toBe(true);
+    }
+
+    await selfHost.getByRole("button", { name: /^Copy$/i }).click();
+    await expect(selfHost.getByRole("button", { name: /^Copied$/i })).toBeVisible();
+    const clipboardText = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n");
+    expect(clipboardText).toMatch(deployTab.copied);
+    expect(clipboardText.startsWith("$ ")).toBe(false);
+  }
 
   await expectAccessible(page, testInfo, "pages-showcase");
   expect(issues).toEqual([]);

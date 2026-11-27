@@ -7,18 +7,30 @@ import {
   ShieldCheck,
 } from "@phosphor-icons/react";
 
-type DeployTabId = "run" | "compose";
+type DeployTabId = "npx" | "run" | "compose";
 
 const COMMANDS: Record<DeployTabId, { label: string; command: string }> = {
+  npx: {
+    label: "npx",
+    command: "npx gathergate",
+  },
   run: {
     label: "docker run",
-    command:
-      "docker run -d --name gathergate -p 127.0.0.1:3080:3080 -v gathergate_data:/data ghcr.io/faas19/gathergate:latest",
+    command: [
+      "docker run -d \\",
+      "  --name gathergate \\",
+      "  -p 127.0.0.1:3080:3080 \\",
+      "  -v gathergate_data:/data \\",
+      "  ghcr.io/faas19/gathergate:latest",
+    ].join("\n"),
   },
   compose: {
     label: "docker compose",
-    command:
-      "git clone https://github.com/FAAS19/gathergate.git && cd gathergate && docker compose up -d --build",
+    command: [
+      "git clone https://github.com/FAAS19/gathergate.git \\",
+      "  && cd gathergate \\",
+      "  && docker compose up -d --build",
+    ].join("\n"),
   },
 };
 
@@ -43,10 +55,10 @@ const HIGHLIGHTS = [
   },
 ] as const;
 
-const DEPLOY_TAB_ORDER: readonly DeployTabId[] = ["run", "compose"];
+const DEPLOY_TAB_ORDER: readonly DeployTabId[] = ["npx", "run", "compose"];
 
 export function SelfHostSection() {
-  const [activeTab, setActiveTab] = useState<DeployTabId>("run");
+  const [activeTab, setActiveTab] = useState<DeployTabId>("npx");
   const [copied, setCopied] = useState(false);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const timeoutRef = useRef<number | null>(null);
@@ -105,8 +117,8 @@ export function SelfHostSection() {
             Self-host in one command
           </h2>
           <p className="mt-3 text-base leading-relaxed text-[var(--ink-muted)]">
-            Boot the hardened Node.js container on your own server or laptop
-            with zero external database dependencies.
+            Run directly with Node.js or boot the hardened container on your own
+            server or laptop with zero external database dependencies.
           </p>
         </div>
 
@@ -179,12 +191,12 @@ export function SelfHostSection() {
                 role="tabpanel"
                 id={`deploy-panel-${activeTab}`}
                 aria-labelledby={`deploy-tab-${activeTab}`}
-                className="bg-[#11181C] p-5 text-[#EDF2EF]"
+                className="bg-[#11181C] p-5 text-[#EDF2EF] [color-scheme:dark]"
               >
                 <pre
                   tabIndex={0}
                   aria-label={`${COMMANDS[activeTab].label} command`}
-                  className="overflow-x-auto rounded font-mono text-[13px] leading-relaxed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6EE7B7]"
+                  className="overflow-x-auto rounded font-mono text-[13px] leading-relaxed [scrollbar-color:#334155_transparent] [scrollbar-width:thin] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6EE7B7]"
                 >
                   <code>
                     <span className="select-none text-[#6EE7B7]">$ </span>

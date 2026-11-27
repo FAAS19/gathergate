@@ -21,8 +21,8 @@ Self-hosted, open-source alternative to Content Snare and FileInvite. Collect cl
 </p>
 
 <p>
-  <a href="https://faas19.github.io/gathergate/demo/#/"><strong>Live Demo</strong></a> &middot;
-  <a href="https://faas19.github.io/gathergate/">Showcase</a> &middot;
+  <a href="https://gathergate.tensorforge.dev/demo/#/"><strong>Live Demo</strong></a> &middot;
+  <a href="https://gathergate.tensorforge.dev/">Showcase</a> &middot;
   <a href="#why-gathergate">Why GatherGate</a> &middot;
   <a href="#validator-packs">Validator Packs</a> &middot;
   <a href="#compare">Compare</a> &middot;
@@ -44,16 +44,26 @@ Self-hosted, open-source alternative to Content Snare and FileInvite. Collect cl
 
 ## Quickstart
 
-Explore the interactive static demo in your browser at **[faas19.github.io/gathergate/demo/](https://faas19.github.io/gathergate/demo/#/)**, or boot locally from source with Docker Compose:
+Explore the interactive static demo in your browser at **[gathergate.tensorforge.dev/demo/](https://gathergate.tensorforge.dev/demo/#/)**, or run directly with Node.js (`>= 22.13`):
 
 ```bash
-docker compose up -d --build
+npx gathergate
 ```
 
 Or pull the multi-arch (`linux/amd64`, `linux/arm64`) image with zero `.env` setup on first boot:
 
 ```bash
-docker run -d --name gathergate -p 127.0.0.1:3080:3080 -v gathergate_data:/data ghcr.io/faas19/gathergate:latest
+docker run -d \
+  --name gathergate \
+  -p 127.0.0.1:3080:3080 \
+  -v gathergate_data:/data \
+  ghcr.io/faas19/gathergate:latest
+```
+
+Or boot locally from source with Docker Compose:
+
+```bash
+docker compose up -d --build
 ```
 
 When `MASTER_KEY` is unset, GatherGate generates a 32-byte key at `DATA_DIR/.master.key` and displays a banner until you move `MASTER_KEY` into your environment (see [`.env.example`](.env.example)). Open `http://127.0.0.1:3080` to initialise your workspace.
@@ -156,7 +166,13 @@ docker compose up -d
 <details>
 <summary>Run Without Docker (Node.js 24+)</summary>
 
-GatherGate runs natively on Node.js >= 22.13 (Node 24+ recommended for built-in `node:sqlite` and `node:crypto.argon2Sync`) with zero native compilation or external database:
+GatherGate runs natively on Node.js >= 22.13 (Node 24+ recommended for built-in `node:sqlite` and `node:crypto.argon2Sync`) with zero native compilation or external database. Run directly via `npx`:
+
+```bash
+npx gathergate
+```
+
+Or build and run from source:
 
 ```bash
 git clone https://github.com/FAAS19/gathergate.git && cd gathergate
