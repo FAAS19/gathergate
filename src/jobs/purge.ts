@@ -1,7 +1,11 @@
 import type { StorageAdapter } from "../adapters/storage.js";
 import type { Store } from "../db/queries.js";
 import type { LookupAllFn } from "../security/ssrf.js";
-import { dispatchWebhookEvent } from "./webhook.js";
+import {
+  attemptWebhookDelivery,
+  buildWebhookEventPayload,
+  MAX_WEBHOOK_ATTEMPTS,
+} from "./webhook.js";
 
 export async function runPurgeSweep(params: {
   store: Store;
@@ -29,26 +33,43 @@ export async function runPurgeSweep(params: {
         filesDeleted += 1;
         reqFilesDeleted += 1;
       }
-      params.store.markRequestPurged(req.id, nowIso);
+
+      const workspace = params.masterKey ? params.store.getWorkspaceById(req.workspace_id) : undefined;
+      const targetUrl = workspace?.webhook_url?.trim() || "";
+      const purgedWebhook =
+        params.masterKey && workspace && targetUrl
+          ? {
+              workspaceId: workspace.id,
+              targetUrl,
+              payloadJson: buildWebhookEventPayload({
+                store: params.store,
+                workspace,
+                request: req,
+                event: "request.purged",
+                filesDeleted: reqFilesDeleted,
+                masterKey: params.masterKey,
+                baseUrl: params.baseUrl ?? "",
+                nowIso,
+              }),
+              maxAttempts: MAX_WEBHOOK_ATTEMPTS,
+            }
+          : null;
+
+      // Atomically shred prior PII/deliveries, mark purged, and enqueue metadata-only request.purged.
+      const { delivery } = params.store.markRequestPurged(req.id, nowIso, purgedWebhook);
       requestsPurged += 1;
 
-      if (params.masterKey) {
-        const workspace = params.store.getWorkspaceById(req.workspace_id);
-        if (workspace?.webhook_url?.trim()) {
-          await dispatchWebhookEvent({
-            store: params.store,
-            workspace,
-            request: req,
-            event: "request.purged",
-            filesDeleted: reqFilesDeleted,
-            masterKey: params.masterKey,
-            baseUrl: params.baseUrl ?? "",
-            multiTenant: params.multiTenant,
-            fetchImpl: params.fetchImpl,
-            lookupImpl: params.lookupImpl,
-            nowMs,
-          });
-        }
+      if (delivery && params.masterKey && workspace) {
+        await attemptWebhookDelivery({
+          store: params.store,
+          delivery,
+          masterKey: params.masterKey,
+          multiTenant: params.multiTenant,
+          fetchImpl: params.fetchImpl,
+          lookupImpl: params.lookupImpl,
+          nowMs,
+          workspaceOverride: workspace,
+        });
       }
     } catch (err) {
       console.error(`[GatherGate Cron] purge failed for request ${req.id}:`, err);

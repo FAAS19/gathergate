@@ -1,3 +1,4 @@
+import https from "node:https";
 import type {
   RequestItemRow,
   RequestRow,
@@ -6,8 +7,8 @@ import type {
   WebhookDeliveryRow,
   WorkspaceRow,
 } from "../db/queries.js";
-import { decryptField, hmacSha256Hex } from "../security/crypto.js";
-import { validateWebhookEndpointRuntime, type LookupAllFn } from "../security/ssrf.js";
+import { decryptField, generateId, hmacSha256Hex } from "../security/crypto.js";
+import { resolveWebhookEndpointRuntime, type LookupAllFn } from "../security/ssrf.js";
 import { maskSensitiveValue, SENSITIVE_VALIDATORS } from "../validators/index.js";
 
 export const WEBHOOK_EVENTS = [
@@ -31,6 +32,7 @@ export const WEBHOOK_RETRY_DELAYS_MS = [
 ] as const;
 
 export const MAX_WEBHOOK_ATTEMPTS = WEBHOOK_RETRY_DELAYS_MS.length + 1;
+const IN_FLIGHT_LEASE_MS = 120_000;
 
 export function resolveWebhookSecret(
   workspace: Pick<WorkspaceRow, "id" | "webhook_secret">,
@@ -72,6 +74,113 @@ function buildSignedHeaders(
   return headers;
 }
 
+function safeLogAudit(
+  store: Store,
+  workspaceId: string,
+  requestId: string | null,
+  actor: "operator" | "client" | "system" | "api_key",
+  action: string,
+  meta: Record<string, unknown>
+): void {
+  try {
+    store.logAudit(workspaceId, requestId, actor, action, meta);
+  } catch (err) {
+    console.error(`[GatherGate Webhook] failed to write audit event ${action}:`, err);
+  }
+}
+
+/**
+ * Pins the HTTPS socket directly to the pre-validated public IP address while preserving
+ * the original hostname for TLS SNI, certificate validation, and the HTTP Host header.
+ * Raw node:https never follows redirects.
+ */
+function postPinnedHttps(params: {
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+  resolvedAddress: string;
+  family: 4 | 6;
+  timeoutMs: number;
+}): Promise<{ ok: boolean; status: number }> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(params.url);
+    const bodyBuf = Buffer.from(params.body, "utf8");
+    const req = https.request(
+      {
+        protocol: "https:",
+        hostname: parsed.hostname,
+        port: parsed.port ? Number(parsed.port) : 443,
+        path: `${parsed.pathname}${parsed.search}`,
+        method: "POST",
+        servername: parsed.hostname,
+        headers: {
+          ...params.headers,
+          host: parsed.host,
+          "content-length": String(bodyBuf.byteLength),
+        },
+        lookup: ((_host: string, opts: unknown, cb: (...args: unknown[]) => void) => {
+          if (opts && typeof opts === "object" && "all" in opts && (opts as { all?: boolean }).all) {
+            cb(null, [{ address: params.resolvedAddress, family: params.family }]);
+          } else {
+            cb(null, params.resolvedAddress, params.family);
+          }
+        }) as unknown as import("node:net").LookupFunction,
+        signal: AbortSignal.timeout(params.timeoutMs),
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        res.resume();
+        resolve({ ok: status >= 200 && status < 300, status });
+      }
+    );
+    req.on("error", reject);
+    req.end(bodyBuf);
+  });
+}
+
+async function postWebhookRequest(params: {
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+  multiTenant: boolean;
+  resolvedAddress?: string;
+  family?: 4 | 6;
+  fetchImpl?: typeof fetch;
+}): Promise<{ ok: boolean; status?: number; error?: string }> {
+  try {
+    if (!params.fetchImpl && params.multiTenant && params.resolvedAddress && params.family) {
+      const res = await postPinnedHttps({
+        url: params.url,
+        headers: params.headers,
+        body: params.body,
+        resolvedAddress: params.resolvedAddress,
+        family: params.family,
+        timeoutMs: 10_000,
+      });
+      return res.ok
+        ? { ok: true, status: res.status }
+        : { ok: false, status: res.status, error: `HTTP ${res.status}` };
+    }
+    const doFetch = params.fetchImpl ?? fetch;
+    const res = await doFetch(params.url, {
+      method: "POST",
+      headers: params.headers,
+      body: params.body,
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+    await res.body?.cancel().catch(() => {});
+    return res.ok
+      ? { ok: true, status: res.status }
+      : { ok: false, status: res.status, error: `HTTP ${res.status}` };
+  } catch (err) {
+    return {
+      ok: false,
+      error: (err instanceof Error ? err.message : String(err)).slice(0, 300),
+    };
+  }
+}
+
 /** Never emit raw sensitive national IDs over third-party webhooks; always mask sensitive validators. */
 function formatWebhookItem(
   item: RequestItemRow,
@@ -111,183 +220,21 @@ function formatWebhookItem(
   };
 }
 
-export async function attemptWebhookDelivery(params: {
-  store: Store;
-  delivery: WebhookDeliveryRow;
-  masterKey: Buffer;
-  multiTenant?: boolean;
-  fetchImpl?: typeof fetch;
-  lookupImpl?: LookupAllFn;
-  nowMs?: number;
-  isReplay?: boolean;
-  workspaceOverride?: WorkspaceRow;
-}): Promise<{ dispatched: boolean; status?: number; error?: string; delivery: WebhookDeliveryRow }> {
-  const nowMs = params.nowMs ?? Date.now();
-  const nowIso = new Date(nowMs).toISOString();
-  const delivery = params.delivery;
-  const workspace = params.workspaceOverride ?? params.store.getWorkspaceById(delivery.workspace_id);
-  const url = workspace?.webhook_url?.trim() || "";
-
-  if (!workspace || !url) {
-    const updated = params.store.updateWebhookDeliveryAttempt({
-      id: delivery.id,
-      targetUrl: delivery.target_url,
-      status: "dead_letter",
-      attempts: delivery.attempts + 1,
-      lastStatusCode: null,
-      lastError: "No webhook URL configured.",
-      nextAttemptAt: null,
-      deliveredAt: null,
-      nowIso,
-    });
-    return { dispatched: false, error: "No webhook URL configured.", delivery: updated };
-  }
-
-  const ssrfErr = await validateWebhookEndpointRuntime(url, Boolean(params.multiTenant), {
-    skipDns: Boolean(params.fetchImpl) && !params.lookupImpl,
-    lookupImpl: params.lookupImpl,
-  });
-  if (ssrfErr) {
-    const updated = params.store.updateWebhookDeliveryAttempt({
-      id: delivery.id,
-      targetUrl: url,
-      status: "dead_letter",
-      attempts: delivery.attempts + 1,
-      lastStatusCode: null,
-      lastError: ssrfErr,
-      nextAttemptAt: null,
-      deliveredAt: null,
-      nowIso,
-    });
-    params.store.logAudit(workspace.id, delivery.request_id, "system", "webhook.blocked", {
-      deliveryId: delivery.id,
-      event: delivery.event,
-      reason: ssrfErr,
-    });
-    return { dispatched: false, error: ssrfErr, delivery: updated };
-  }
-
-  const webhookSecret = resolveWebhookSecret(workspace, params.masterKey);
-  const headers = buildSignedHeaders(webhookSecret, delivery.event, delivery.payload_json, delivery.id, nowMs);
-  const doFetch = params.fetchImpl ?? fetch;
-  const nextAttemptNumber = delivery.attempts + 1;
-
-  try {
-    const res = await doFetch(url, {
-      method: "POST",
-      headers,
-      body: delivery.payload_json,
-      redirect: "error",
-      signal: AbortSignal.timeout(10_000),
-    });
-    await res.body?.cancel().catch(() => {});
-
-    if (res.ok) {
-      const updated = params.store.updateWebhookDeliveryAttempt({
-        id: delivery.id,
-        targetUrl: url,
-        status: "delivered",
-        attempts: nextAttemptNumber,
-        lastStatusCode: res.status,
-        lastError: null,
-        nextAttemptAt: null,
-        deliveredAt: nowIso,
-        nowIso,
-      });
-      params.store.logAudit(workspace.id, delivery.request_id, "system", "webhook.dispatched", {
-        deliveryId: delivery.id,
-        event: delivery.event,
-        status: res.status,
-        attempt: nextAttemptNumber,
-        ok: true,
-      });
-      return { dispatched: true, status: res.status, delivery: updated };
-    }
-
-    const errText = `HTTP ${res.status}`;
-    const keepScheduledRetry = Boolean(
-      params.isReplay && delivery.status === "retrying" && delivery.next_attempt_at
-    );
-    const shouldRetry = !params.isReplay && nextAttemptNumber < delivery.max_attempts;
-    const delayMs = WEBHOOK_RETRY_DELAYS_MS[Math.min(nextAttemptNumber - 1, WEBHOOK_RETRY_DELAYS_MS.length - 1)];
-    const updated = params.store.updateWebhookDeliveryAttempt({
-      id: delivery.id,
-      targetUrl: url,
-      status: shouldRetry || keepScheduledRetry ? "retrying" : "dead_letter",
-      attempts: nextAttemptNumber,
-      lastStatusCode: res.status,
-      lastError: errText,
-      nextAttemptAt: shouldRetry
-        ? new Date(nowMs + delayMs).toISOString()
-        : keepScheduledRetry
-          ? delivery.next_attempt_at
-          : null,
-      deliveredAt: null,
-      nowIso,
-    });
-    params.store.logAudit(workspace.id, delivery.request_id, "system", "webhook.failed", {
-      deliveryId: delivery.id,
-      event: delivery.event,
-      status: res.status,
-      attempt: nextAttemptNumber,
-      nextStatus: updated.status,
-    });
-    return { dispatched: false, status: res.status, error: errText, delivery: updated };
-  } catch (err) {
-    const errText = (err instanceof Error ? err.message : String(err)).slice(0, 300);
-    const keepScheduledRetry = Boolean(
-      params.isReplay && delivery.status === "retrying" && delivery.next_attempt_at
-    );
-    const shouldRetry = !params.isReplay && nextAttemptNumber < delivery.max_attempts;
-    const delayMs = WEBHOOK_RETRY_DELAYS_MS[Math.min(nextAttemptNumber - 1, WEBHOOK_RETRY_DELAYS_MS.length - 1)];
-    const updated = params.store.updateWebhookDeliveryAttempt({
-      id: delivery.id,
-      targetUrl: url,
-      status: shouldRetry || keepScheduledRetry ? "retrying" : "dead_letter",
-      attempts: nextAttemptNumber,
-      lastStatusCode: null,
-      lastError: errText,
-      nextAttemptAt: shouldRetry
-        ? new Date(nowMs + delayMs).toISOString()
-        : keepScheduledRetry
-          ? delivery.next_attempt_at
-          : null,
-      deliveredAt: null,
-      nowIso,
-    });
-    params.store.logAudit(workspace.id, delivery.request_id, "system", "webhook.failed", {
-      deliveryId: delivery.id,
-      event: delivery.event,
-      error: errText,
-      attempt: nextAttemptNumber,
-      nextStatus: updated.status,
-    });
-    return { dispatched: false, error: errText, delivery: updated };
-  }
-}
-
-export async function dispatchWebhookEvent(params: {
+export function buildWebhookEventPayload(params: {
   store: Store;
   workspace: WorkspaceRow;
   request: RequestRow;
   event: WebhookEventType;
   masterKey: Buffer;
   baseUrl: string;
+  nowIso: string;
+  openedAt?: string;
   item?: RequestItemRow;
   filesDeleted?: number;
-  multiTenant?: boolean;
-  fetchImpl?: typeof fetch;
-  lookupImpl?: LookupAllFn;
-  nowMs?: number;
-}): Promise<{ dispatched: boolean; status?: number; delivery?: WebhookDeliveryRow }> {
-  const url = params.workspace.webhook_url?.trim();
-  if (!url) return { dispatched: false };
-
-  const nowMs = params.nowMs ?? Date.now();
-  const nowIso = new Date(nowMs).toISOString();
+}): string {
   const basePayload = {
     event: params.event,
-    timestamp: nowIso,
+    timestamp: params.nowIso,
     workspace: { id: params.workspace.id, name: params.workspace.name },
   };
 
@@ -318,7 +265,7 @@ export async function dispatchWebhookEvent(params: {
         client_email: params.request.client_email,
         status: params.request.status,
         due_at: params.request.due_at,
-        opened_at: params.request.last_opened_at ?? nowIso,
+        opened_at: params.openedAt ?? params.request.last_opened_at ?? params.nowIso,
       },
     };
   } else if (params.event === "item.submitted" && params.item) {
@@ -367,25 +314,278 @@ export async function dispatchWebhookEvent(params: {
       },
     };
   } else {
-    // request.purged: emit metadata only; sensitive fields and files have been shredded.
+    // request.purged: metadata only; sensitive fields and files have been shredded.
     payload = {
       ...basePayload,
       request: {
         id: params.request.id,
         title: params.request.title,
         status: "purged",
-        purged_at: nowIso,
+        purged_at: params.nowIso,
         files_deleted: params.filesDeleted ?? 0,
       },
     };
   }
+
+  return JSON.stringify(payload);
+}
+
+function computeFailureSchedule(params: {
+  isReplay: boolean;
+  priorStatus: WebhookDeliveryRow["status"];
+  priorNextAttemptAt: string | null;
+  nextAttemptNumber: number;
+  maxAttempts: number;
+  nowMs: number;
+}): { status: "retrying" | "dead_letter"; nextAttemptAt: string | null } {
+  const keepScheduledRetry = Boolean(
+    params.isReplay && params.priorStatus === "retrying" && params.priorNextAttemptAt
+  );
+  const shouldRetry = !params.isReplay && params.nextAttemptNumber < params.maxAttempts;
+  if (shouldRetry) {
+    const delayMs =
+      WEBHOOK_RETRY_DELAYS_MS[
+        Math.min(params.nextAttemptNumber - 1, WEBHOOK_RETRY_DELAYS_MS.length - 1)
+      ];
+    return { status: "retrying", nextAttemptAt: new Date(params.nowMs + delayMs).toISOString() };
+  }
+  if (keepScheduledRetry) {
+    return { status: "retrying", nextAttemptAt: params.priorNextAttemptAt };
+  }
+  return { status: "dead_letter", nextAttemptAt: null };
+}
+
+export async function attemptWebhookDelivery(params: {
+  store: Store;
+  delivery: WebhookDeliveryRow;
+  masterKey: Buffer;
+  multiTenant?: boolean;
+  fetchImpl?: typeof fetch;
+  lookupImpl?: LookupAllFn;
+  nowMs?: number;
+  isReplay?: boolean;
+  workspaceOverride?: WorkspaceRow;
+}): Promise<{
+  dispatched: boolean;
+  skipped?: boolean;
+  status?: number;
+  error?: string;
+  delivery: WebhookDeliveryRow;
+}> {
+  const nowMs = params.nowMs ?? Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const priorDelivery = params.delivery;
+  const claimToken = `${nowIso}:${generateId("clm")}`;
+  const leaseUntilIso = new Date(nowMs + IN_FLIGHT_LEASE_MS).toISOString();
+
+  // Atomically claim the row before any await so immediate dispatch and cron sweeps cannot race.
+  const claimed = params.store.claimWebhookDelivery({
+    id: priorDelivery.id,
+    expectedUpdatedAt: priorDelivery.updated_at,
+    claimToken,
+    leaseUntilIso,
+    isReplay: Boolean(params.isReplay),
+  });
+  if (!claimed) {
+    return {
+      dispatched: false,
+      skipped: true,
+      delivery: params.store.getWebhookDeliveryById(priorDelivery.id) ?? priorDelivery,
+    };
+  }
+
+  const workspace = params.workspaceOverride ?? params.store.getWorkspaceById(priorDelivery.workspace_id);
+  const url = workspace?.webhook_url?.trim() || "";
+  const nextAttemptNumber = priorDelivery.attempts + 1;
+
+  if (!workspace || !url) {
+    const updated = params.store.completeWebhookDeliveryAttempt({
+      id: priorDelivery.id,
+      claimToken,
+      targetUrl: priorDelivery.target_url,
+      status: "dead_letter",
+      attempts: nextAttemptNumber,
+      lastStatusCode: null,
+      lastError: "No webhook URL configured.",
+      nextAttemptAt: null,
+      deliveredAt: null,
+      nowIso,
+    });
+    return { dispatched: false, error: "No webhook URL configured.", delivery: updated };
+  }
+
+  const resolved = await resolveWebhookEndpointRuntime(url, Boolean(params.multiTenant), {
+    skipDns: Boolean(params.fetchImpl) && !params.lookupImpl,
+    lookupImpl: params.lookupImpl,
+  });
+  if (!resolved.ok) {
+    if (resolved.kind === "transient_dns") {
+      const schedule = computeFailureSchedule({
+        isReplay: Boolean(params.isReplay),
+        priorStatus: priorDelivery.status,
+        priorNextAttemptAt: priorDelivery.next_attempt_at,
+        nextAttemptNumber,
+        maxAttempts: priorDelivery.max_attempts,
+        nowMs,
+      });
+      const updated = params.store.completeWebhookDeliveryAttempt({
+        id: priorDelivery.id,
+        claimToken,
+        targetUrl: url,
+        status: schedule.status,
+        attempts: nextAttemptNumber,
+        lastStatusCode: null,
+        lastError: resolved.error,
+        nextAttemptAt: schedule.nextAttemptAt,
+        deliveredAt: null,
+        nowIso,
+      });
+      safeLogAudit(params.store, workspace.id, priorDelivery.request_id, "system", "webhook.failed", {
+        deliveryId: priorDelivery.id,
+        event: priorDelivery.event,
+        error: resolved.error,
+        attempt: nextAttemptNumber,
+        nextStatus: updated.status,
+      });
+      return { dispatched: false, error: resolved.error, delivery: updated };
+    }
+
+    const updated = params.store.completeWebhookDeliveryAttempt({
+      id: priorDelivery.id,
+      claimToken,
+      targetUrl: url,
+      status: "dead_letter",
+      attempts: nextAttemptNumber,
+      lastStatusCode: null,
+      lastError: resolved.error,
+      nextAttemptAt: null,
+      deliveredAt: null,
+      nowIso,
+    });
+    safeLogAudit(params.store, workspace.id, priorDelivery.request_id, "system", "webhook.blocked", {
+      deliveryId: priorDelivery.id,
+      event: priorDelivery.event,
+      reason: resolved.error,
+    });
+    return { dispatched: false, error: resolved.error, delivery: updated };
+  }
+
+  const webhookSecret = resolveWebhookSecret(workspace, params.masterKey);
+  const headers = buildSignedHeaders(
+    webhookSecret,
+    priorDelivery.event,
+    priorDelivery.payload_json,
+    priorDelivery.id,
+    nowMs
+  );
+
+  // Isolate network I/O errors so downstream audit/DB logging can never reschedule an accepted 2xx POST.
+  const sendRes = await postWebhookRequest({
+    url,
+    headers,
+    body: priorDelivery.payload_json,
+    multiTenant: Boolean(params.multiTenant),
+    resolvedAddress: resolved.resolvedAddress,
+    family: resolved.family,
+    fetchImpl: params.fetchImpl,
+  });
+
+  if (sendRes.ok) {
+    const updated = params.store.completeWebhookDeliveryAttempt({
+      id: priorDelivery.id,
+      claimToken,
+      targetUrl: url,
+      status: "delivered",
+      attempts: nextAttemptNumber,
+      lastStatusCode: sendRes.status ?? 200,
+      lastError: null,
+      nextAttemptAt: null,
+      deliveredAt: nowIso,
+      nowIso,
+    });
+    safeLogAudit(params.store, workspace.id, priorDelivery.request_id, "system", "webhook.dispatched", {
+      deliveryId: priorDelivery.id,
+      event: priorDelivery.event,
+      status: sendRes.status ?? 200,
+      attempt: nextAttemptNumber,
+      ok: true,
+    });
+    return { dispatched: true, status: sendRes.status, delivery: updated };
+  }
+
+  const schedule = computeFailureSchedule({
+    isReplay: Boolean(params.isReplay),
+    priorStatus: priorDelivery.status,
+    priorNextAttemptAt: priorDelivery.next_attempt_at,
+    nextAttemptNumber,
+    maxAttempts: priorDelivery.max_attempts,
+    nowMs,
+  });
+  const updated = params.store.completeWebhookDeliveryAttempt({
+    id: priorDelivery.id,
+    claimToken,
+    targetUrl: url,
+    status: schedule.status,
+    attempts: nextAttemptNumber,
+    lastStatusCode: sendRes.status ?? null,
+    lastError: sendRes.error ?? "Delivery failed",
+    nextAttemptAt: schedule.nextAttemptAt,
+    deliveredAt: null,
+    nowIso,
+  });
+  safeLogAudit(params.store, workspace.id, priorDelivery.request_id, "system", "webhook.failed", {
+    deliveryId: priorDelivery.id,
+    event: priorDelivery.event,
+    status: sendRes.status ?? null,
+    error: sendRes.error ?? "Delivery failed",
+    attempt: nextAttemptNumber,
+    nextStatus: updated.status,
+  });
+  return {
+    dispatched: false,
+    status: sendRes.status,
+    error: sendRes.error,
+    delivery: updated,
+  };
+}
+
+export async function dispatchWebhookEvent(params: {
+  store: Store;
+  workspace: WorkspaceRow;
+  request: RequestRow;
+  event: WebhookEventType;
+  masterKey: Buffer;
+  baseUrl: string;
+  item?: RequestItemRow;
+  filesDeleted?: number;
+  multiTenant?: boolean;
+  fetchImpl?: typeof fetch;
+  lookupImpl?: LookupAllFn;
+  nowMs?: number;
+}): Promise<{ dispatched: boolean; status?: number; delivery?: WebhookDeliveryRow }> {
+  const url = params.workspace.webhook_url?.trim();
+  if (!url) return { dispatched: false };
+
+  const nowMs = params.nowMs ?? Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const payloadJson = buildWebhookEventPayload({
+    store: params.store,
+    workspace: params.workspace,
+    request: params.request,
+    event: params.event,
+    masterKey: params.masterKey,
+    baseUrl: params.baseUrl,
+    nowIso,
+    item: params.item,
+    filesDeleted: params.filesDeleted,
+  });
 
   const delivery = params.store.createWebhookDelivery({
     workspaceId: params.workspace.id,
     requestId: params.request.id,
     event: params.event,
     targetUrl: url,
-    payloadJson: JSON.stringify(payload),
+    payloadJson,
     maxAttempts: MAX_WEBHOOK_ATTEMPTS,
     nowIso,
   });
@@ -428,6 +628,7 @@ export async function runWebhookRetrySweep(params: {
   const nowIso = params.nowIso ?? new Date().toISOString();
   const nowMs = Date.parse(nowIso);
   const due = params.store.listDueWebhookDeliveries(nowIso, params.limit ?? 50);
+  let processed = 0;
   let delivered = 0;
   let retrying = 0;
   let deadLetter = 0;
@@ -442,12 +643,14 @@ export async function runWebhookRetrySweep(params: {
       lookupImpl: params.lookupImpl,
       nowMs,
     });
+    if (res.skipped) continue;
+    processed += 1;
     if (res.delivery.status === "delivered") delivered += 1;
     else if (res.delivery.status === "retrying") retrying += 1;
     else if (res.delivery.status === "dead_letter") deadLetter += 1;
   }
 
-  return { processed: due.length, delivered, retrying, deadLetter };
+  return { processed, delivered, retrying, deadLetter };
 }
 
 export async function runOverdueSweep(params: {
@@ -465,23 +668,46 @@ export async function runOverdueSweep(params: {
   let notified = 0;
 
   for (const req of overdue) {
-    if (!params.store.markRequestOverdueNotified(req.id, nowIso)) continue;
-    params.store.logAudit(req.workspace_id, req.id, "system", "request.overdue", {
-      dueAt: req.due_at,
-    });
+    if (!req.due_at) continue;
     const workspace = params.store.getWorkspaceById(req.workspace_id);
-    if (workspace?.webhook_url?.trim()) {
-      await dispatchWebhookEvent({
+    const targetUrl = workspace?.webhook_url?.trim() || "";
+    const webhookDelivery =
+      workspace && targetUrl
+        ? {
+            targetUrl,
+            payloadJson: buildWebhookEventPayload({
+              store: params.store,
+              workspace,
+              request: req,
+              event: "request.overdue",
+              masterKey: params.masterKey,
+              baseUrl: params.baseUrl,
+              nowIso,
+            }),
+            maxAttempts: MAX_WEBHOOK_ATTEMPTS,
+          }
+        : null;
+
+    // Atomically verify due_at still matches, set overdue_notified_at, log audit, and queue delivery.
+    const claimed = params.store.claimOverdueNotification({
+      requestId: req.id,
+      workspaceId: req.workspace_id,
+      expectedDueAt: req.due_at,
+      nowIso,
+      webhookDelivery,
+    });
+    if (!claimed.claimed) continue;
+
+    if (claimed.delivery && workspace) {
+      await attemptWebhookDelivery({
         store: params.store,
-        workspace,
-        request: req,
-        event: "request.overdue",
+        delivery: claimed.delivery,
         masterKey: params.masterKey,
-        baseUrl: params.baseUrl,
         multiTenant: params.multiTenant,
         fetchImpl: params.fetchImpl,
         lookupImpl: params.lookupImpl,
         nowMs,
+        workspaceOverride: workspace,
       });
     }
     notified += 1;
@@ -512,7 +738,14 @@ export async function replayWebhookDelivery(params: {
     isReplay: true,
     workspaceOverride: params.workspace,
   });
-  params.store.logAudit(params.workspace.id, params.delivery.request_id, "operator", "webhook.replayed", {
+  if (res.skipped) {
+    return {
+      ok: false,
+      error: "Delivery is already in progress. Try again shortly.",
+      delivery: res.delivery,
+    };
+  }
+  safeLogAudit(params.store, params.workspace.id, params.delivery.request_id, "operator", "webhook.replayed", {
     deliveryId: params.delivery.id,
     event: params.delivery.event,
     by: params.actorEmail,
@@ -532,11 +765,11 @@ export async function dispatchTestWebhook(params: {
   const url = params.workspace.webhook_url?.trim();
   if (!url) return { ok: false, error: "No webhook URL configured" };
 
-  const ssrfErr = await validateWebhookEndpointRuntime(url, Boolean(params.multiTenant), {
+  const resolved = await resolveWebhookEndpointRuntime(url, Boolean(params.multiTenant), {
     skipDns: Boolean(params.fetchImpl) && !params.lookupImpl,
     lookupImpl: params.lookupImpl,
   });
-  if (ssrfErr) return { ok: false, error: ssrfErr };
+  if (!resolved.ok) return { ok: false, error: resolved.error };
 
   const body = JSON.stringify({
     event: "webhook.test",
@@ -546,18 +779,13 @@ export async function dispatchTestWebhook(params: {
   });
   const webhookSecret = resolveWebhookSecret(params.workspace, params.masterKey);
   const headers = buildSignedHeaders(webhookSecret, "webhook.test", body);
-  const doFetch = params.fetchImpl ?? fetch;
-  try {
-    const res = await doFetch(url, {
-      method: "POST",
-      headers,
-      body,
-      redirect: "error",
-      signal: AbortSignal.timeout(10_000),
-    });
-    await res.body?.cancel().catch(() => {});
-    return { ok: res.ok, status: res.status };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
+  return postWebhookRequest({
+    url,
+    headers,
+    body,
+    multiTenant: Boolean(params.multiTenant),
+    resolvedAddress: resolved.resolvedAddress,
+    family: resolved.family,
+    fetchImpl: params.fetchImpl,
+  });
 }

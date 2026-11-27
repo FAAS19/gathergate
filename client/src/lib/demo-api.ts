@@ -2625,7 +2625,22 @@ async function handleDemoApiJson<T>(url: string, init?: RequestInit): Promise<T>
   }
 
   if (method === "GET" && pathname === "/api/settings/webhook/deliveries") {
-    return { deliveries: state.webhookDeliveries.map((d) => ({ ...d })) } as T;
+    const queryStr = url.includes("?") ? url.slice(url.indexOf("?") + 1) : "";
+    const params = new URLSearchParams(queryStr);
+    const statusFilter = params.get("status");
+    const limit = Math.min(100, Math.max(1, Number(params.get("limit") || 50) || 50));
+    const offset = Math.max(0, Number(params.get("offset") || 0) || 0);
+    const filtered =
+      statusFilter && statusFilter !== "all"
+        ? state.webhookDeliveries.filter((d) => d.status === statusFilter)
+        : state.webhookDeliveries;
+    const page = filtered.slice(offset, offset + limit).map((d) => ({ ...d }));
+    return {
+      deliveries: page,
+      total: filtered.length,
+      deadLetterCount: state.webhookDeliveries.filter((d) => d.status === "dead_letter").length,
+      hasMore: offset + page.length < filtered.length,
+    } as T;
   }
 
   const whReplayMatch = pathname.match(/^\/api\/settings\/webhook\/deliveries\/([^/]+)\/replay$/);

@@ -33,6 +33,7 @@ import {
   IS_DEMO,
   type SessionResponse,
   type SettingsResponse,
+  type WebhookDeliveriesResponse,
   type WebhookDeliveryDto,
 } from "@/lib/api";
 import { cn, copyText } from "@/lib/utils";
@@ -76,22 +77,34 @@ export function SettingsPage({
   const [savingWebhook, setSavingWebhook] = useState(false);
   const [testingWebhook, setTestingWebhook] = useState(false);
   const [deliveries, setDeliveries] = useState<WebhookDeliveryDto[]>([]);
+  const [deliveryFilter, setDeliveryFilter] = useState<"all" | "dead_letter" | "retrying" | "delivered">("all");
+  const [deadLetterCount, setDeadLetterCount] = useState(0);
+  const [hasMoreDeliveries, setHasMoreDeliveries] = useState(false);
   const [loadingDeliveries, setLoadingDeliveries] = useState(false);
   const [replayingId, setReplayingId] = useState<string | null>(null);
 
-  const loadDeliveries = useCallback(async () => {
-    setLoadingDeliveries(true);
-    try {
-      const res = await apiJson<{ deliveries: WebhookDeliveryDto[] }>(
-        "/api/settings/webhook/deliveries"
-      );
-      setDeliveries(res.deliveries);
-    } catch {
-      // Keep existing list if delivery log fails transiently.
-    } finally {
-      setLoadingDeliveries(false);
-    }
-  }, []);
+  const loadDeliveries = useCallback(
+    async (options?: { status?: "all" | "dead_letter" | "retrying" | "delivered"; offset?: number; append?: boolean }) => {
+      const targetStatus = options?.status ?? deliveryFilter;
+      const offset = options?.offset ?? 0;
+      setLoadingDeliveries(true);
+      try {
+        const qs = new URLSearchParams({ limit: "50", offset: String(offset) });
+        if (targetStatus !== "all") qs.set("status", targetStatus);
+        const res = await apiJson<WebhookDeliveriesResponse>(
+          `/api/settings/webhook/deliveries?${qs.toString()}`
+        );
+        setDeliveries((prev) => (options?.append ? [...prev, ...res.deliveries] : res.deliveries));
+        setDeadLetterCount(res.deadLetterCount ?? 0);
+        setHasMoreDeliveries(Boolean(res.hasMore));
+      } catch {
+        // Keep existing list if delivery log fails transiently.
+      } finally {
+        setLoadingDeliveries(false);
+      }
+    },
+    [deliveryFilter]
+  );
 
   const loadAll = useCallback(async () => {
     try {
@@ -110,9 +123,9 @@ export function SettingsPage({
 
   useEffect(() => {
     if (activeSection === "webhooks") {
-      loadDeliveries();
+      loadDeliveries({ status: deliveryFilter, offset: 0, append: false });
     }
-  }, [activeSection, loadDeliveries]);
+  }, [activeSection, deliveryFilter, loadDeliveries]);
 
   function selectSection(section: SettingsSection) {
     setSearchParams({ section }, { replace: true });
@@ -349,87 +362,133 @@ export function SettingsPage({
                       variant="outline"
                       size="sm"
                       disabled={loadingDeliveries}
-                      onClick={loadDeliveries}
+                      onClick={() => loadDeliveries({ status: deliveryFilter, offset: 0, append: false })}
                     >
                       <ArrowClockwise className={cn("mr-1.5 size-3.5", loadingDeliveries && "animate-spin")} />
                       Refresh
                     </Button>
                   </CardHeader>
-                  <CardContent>
+                  <CardContent className="space-y-4">
+                    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter webhook deliveries">
+                      {(
+                        [
+                          { id: "all", label: "All" },
+                          {
+                            id: "dead_letter",
+                            label: deadLetterCount > 0 ? `Dead letter (${deadLetterCount})` : "Dead letter",
+                          },
+                          { id: "retrying", label: "Retrying" },
+                          { id: "delivered", label: "Delivered" },
+                        ] as const
+                      ).map((tab) => (
+                        <Button
+                          key={tab.id}
+                          type="button"
+                          size="sm"
+                          variant={deliveryFilter === tab.id ? "secondary" : "outline"}
+                          onClick={() => setDeliveryFilter(tab.id)}
+                        >
+                          {tab.label}
+                        </Button>
+                      ))}
+                    </div>
                     {loadingDeliveries && deliveries.length === 0 ? (
                       <p className="text-sm text-muted-foreground">Loading deliveries...</p>
                     ) : deliveries.length === 0 ? (
                       <p className="text-sm text-muted-foreground">
-                        No webhook deliveries recorded yet. Lifecycle events will appear here once a webhook URL is configured.
+                        {deliveryFilter === "all"
+                          ? "No webhook deliveries recorded yet. Lifecycle events will appear here once a webhook URL is configured."
+                          : "No deliveries match this status filter."}
                       </p>
                     ) : (
-                      <div className="divide-y divide-border rounded-lg border border-border">
-                        {deliveries.map((d) => {
-                          const statusLabel =
-                            d.status === "delivered"
-                              ? "Delivered"
-                              : d.status === "retrying"
-                                ? "Retrying"
-                                : d.status === "dead_letter"
-                                  ? "Dead letter"
-                                  : "Pending";
-                          return (
-                            <div
-                              key={d.id}
-                              className="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between"
-                            >
-                              <div className="min-w-0 space-y-1">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <code className="font-mono text-xs font-medium text-foreground">
-                                    {d.event}
-                                  </code>
-                                  <Badge
-                                    variant={d.status === "delivered" ? "secondary" : "outline"}
-                                    className={
-                                      d.status === "dead_letter"
-                                        ? "border-destructive/30 text-destructive"
-                                        : d.status === "retrying"
-                                          ? "border-amber-600/30 text-amber-800 dark:border-amber-400/40 dark:text-amber-300"
-                                          : undefined
-                                    }
-                                  >
-                                    {statusLabel}
-                                  </Badge>
-                                  {d.last_status_code !== null && (
-                                    <span className="font-mono text-xs text-muted-foreground">
-                                      HTTP {d.last_status_code}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                                  <span className="tabular-nums">
-                                    Attempts: {d.attempts}/{d.max_attempts}
-                                  </span>
-                                  <span>{formatRelativeTime(d.updated_at)}</span>
-                                  {d.next_attempt_at && d.status === "retrying" && (
-                                    <span>Next retry: {formatRelativeTime(d.next_attempt_at)}</span>
-                                  )}
-                                </div>
-                                {d.last_error && (
-                                  <p className="truncate text-xs text-destructive">{d.last_error}</p>
-                                )}
-                              </div>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                disabled={replayingId === d.id || !webhookUrl}
-                                onClick={() => replayDelivery(d.id)}
-                                className="shrink-0"
+                      <div className="space-y-3">
+                        <div className="divide-y divide-border rounded-lg border border-border">
+                          {deliveries.map((d) => {
+                            const statusLabel =
+                              d.status === "delivered"
+                                ? "Delivered"
+                                : d.status === "retrying"
+                                  ? "Retrying"
+                                  : d.status === "in_flight"
+                                    ? "Sending"
+                                    : d.status === "dead_letter"
+                                      ? "Dead letter"
+                                      : "Pending";
+                            return (
+                              <div
+                                key={d.id}
+                                className="flex flex-col gap-3 p-3.5 sm:flex-row sm:items-center sm:justify-between"
                               >
-                                <ArrowClockwise
-                                  className={cn("mr-1.5 size-3.5", replayingId === d.id && "animate-spin")}
-                                />
-                                Replay
-                              </Button>
-                            </div>
-                          );
-                        })}
+                                <div className="min-w-0 space-y-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <code className="font-mono text-xs font-medium text-foreground">
+                                      {d.event}
+                                    </code>
+                                    <Badge
+                                      variant={d.status === "delivered" ? "secondary" : "outline"}
+                                      className={
+                                        d.status === "dead_letter"
+                                          ? "border-destructive/30 text-destructive"
+                                          : d.status === "retrying" || d.status === "in_flight"
+                                            ? "border-amber-600/30 text-amber-800 dark:border-amber-400/40 dark:text-amber-300"
+                                            : undefined
+                                      }
+                                    >
+                                      {statusLabel}
+                                    </Badge>
+                                    {d.last_status_code !== null && (
+                                      <span className="font-mono text-xs text-muted-foreground">
+                                        HTTP {d.last_status_code}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                    <span className="tabular-nums">
+                                      Attempts: {d.attempts}/{d.max_attempts}
+                                    </span>
+                                    <span>{formatRelativeTime(d.updated_at)}</span>
+                                    {d.next_attempt_at && d.status === "retrying" && (
+                                      <span>Next retry: {formatRelativeTime(d.next_attempt_at)}</span>
+                                    )}
+                                  </div>
+                                  {d.last_error && (
+                                    <p className="truncate text-xs text-destructive">{d.last_error}</p>
+                                  )}
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={replayingId === d.id || !webhookUrl}
+                                  onClick={() => replayDelivery(d.id)}
+                                  className="shrink-0"
+                                >
+                                  <ArrowClockwise
+                                    className={cn("mr-1.5 size-3.5", replayingId === d.id && "animate-spin")}
+                                  />
+                                  Replay
+                                </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {hasMoreDeliveries && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={loadingDeliveries}
+                            onClick={() =>
+                              loadDeliveries({
+                                status: deliveryFilter,
+                                offset: deliveries.length,
+                                append: true,
+                              })
+                            }
+                          >
+                            Load older deliveries
+                          </Button>
+                        )}
                       </div>
                     )}
                   </CardContent>

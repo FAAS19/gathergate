@@ -102,12 +102,14 @@ test("API keys: hashed at rest, granular scope enforcement, session-only boundar
   });
 
   try {
-    // 1. Rejects unknown scopes and empty scope lists (fail closed)
+    // 1. Rejects unknown scopes, empty scope lists, and non-numeric expiry types (fail closed)
     for (const badBody of [
       { name: "Empty", scopes: [] },
       { name: "Unknown", scopes: ["requests:read", "admin:all"] },
       { name: "Bad\r\nHeader", scopes: ["requests:read"] },
       { name: "BadExpiry", scopes: ["requests:read"], expiresInDays: 0 },
+      { name: "ArrayExpiry", scopes: ["requests:read"], expiresInDays: [] },
+      { name: "BoolExpiry", scopes: ["requests:read"], expiresInDays: true },
     ]) {
       const res = await ctx.app.request("/api/api-keys", {
         method: "POST",
@@ -609,7 +611,7 @@ test("Webhooks: all 6 lifecycle events, 5 exponential retries, dead-lettering, m
       `t=${ts},v1=${hmacSha256Hex(whSecret, `${ts}.${lastCall.body}`)}`
     );
 
-    // 8. Purge sweep emits metadata-only request.purged webhook (zero PII)
+    // 8. Purge sweep shreds pre-purge webhook payloads (no lingering client email/name) and emits metadata-only request.purged
     ctx.advanceTime(20 * 86400_000);
     const purged = await runPurgeSweep({
       store: ctx.store,
@@ -625,6 +627,15 @@ test("Webhooks: all 6 lifecycle events, 5 exponential retries, dead-lettering, m
     assert.ok(purgedEv);
     assert.equal(purgedEv.body.includes("morgan@example.com"), false);
     assert.equal(purgedEv.body.includes("876 543 210"), false);
+
+    // Pre-purge webhook_deliveries containing client_email/client_name must be shredded in SQLite
+    const remainingForReq = ctx.db
+      .prepare("SELECT event, payload_json FROM webhook_deliveries WHERE request_id = ?")
+      .all(reqId) as Array<{ event: string; payload_json: string }>;
+    assert.equal(remainingForReq.length, 1);
+    assert.equal(remainingForReq[0].event, "request.purged");
+    assert.equal(remainingForReq[0].payload_json.includes("morgan@example.com"), false);
+    assert.equal(remainingForReq[0].payload_json.includes("Morgan Lee"), false);
 
     // All 6 lifecycle event types verified with valid HMAC signatures
     for (const expectedEvent of [
@@ -706,6 +717,108 @@ test("Webhooks: DNS rebinding on retry/replay is blocked and marked dead_letter 
     );
     assert.equal(replay.status, 400);
     assert.equal(fetchCalled, false);
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("Webhooks: transient DNS stays retryable, concurrent claim prevents double POST, and status filter/pagination work", async () => {
+  let dnsMode: "transient" | "public" = "transient";
+  let slowRelease: (() => void) | null = null;
+  let postCount = 0;
+
+  const mockFetch = (async () => {
+    postCount += 1;
+    if (slowRelease) {
+      await new Promise<void>((resolve) => {
+        const done = slowRelease!;
+        slowRelease = null;
+        setTimeout(() => {
+          done();
+          resolve();
+        }, 30);
+      });
+    }
+    return new Response("ok", { status: 200 });
+  }) as typeof fetch;
+
+  const ctx = await bootApp({
+    multiTenant: true,
+    fetchImpl: mockFetch,
+    lookupImpl: async () => {
+      if (dnsMode === "transient") {
+        const err = new Error("temporary failure in name resolution") as NodeJS.ErrnoException;
+        err.code = "EAI_AGAIN";
+        throw err;
+      }
+      return [{ address: "93.184.216.34", family: 4 }];
+    },
+  });
+
+  try {
+    assert.equal(
+      (
+        await ctx.app.request("/api/settings/webhook", {
+          method: "PUT",
+          headers: { cookie: ctx.cookie, "content-type": "application/json" },
+          body: JSON.stringify({
+            webhookUrl: "https://hooks.example.com/in",
+            webhookSecret: "whsec_dns_retry",
+          }),
+        })
+      ).status,
+      200
+    );
+
+    const createRes = await ctx.app.request("/api/requests", {
+      method: "POST",
+      headers: { cookie: ctx.cookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Transient DNS Pack",
+        clientName: "Dana",
+        clientEmail: "dana@example.com",
+        sendInvite: false,
+        items: [{ label: "Email", kind: "text", required: true, validator: "email" }],
+      }),
+    });
+    const { portalUrl } = (await createRes.json()) as { id: string; portalUrl: string };
+    const token = portalUrl.split("/c/")[1];
+
+    // Transient DNS EAI_AGAIN schedules retry instead of immediately dead-lettering
+    assert.equal((await ctx.app.request(`/api/client/${token}`)).status, 200);
+    const retryingRes = (await (
+      await ctx.app.request("/api/settings/webhook/deliveries?status=retrying", {
+        headers: { cookie: ctx.cookie },
+      })
+    ).json()) as { deliveries: Array<{ id: string; status: string }>; total: number; deadLetterCount: number };
+    assert.equal(retryingRes.deliveries.length, 1);
+    assert.equal(retryingRes.total, 1);
+    assert.equal(retryingRes.deadLetterCount, 0);
+
+    // DNS recovers -> overlapping retry sweeps claim atomically and send exactly 1 POST
+    dnsMode = "public";
+    ctx.advanceTime(WEBHOOK_RETRY_DELAYS_MS[0] + 5_000);
+    slowRelease = () => {};
+    const [s1, s2] = await Promise.all([
+      runWebhookRetrySweep({
+        store: ctx.store,
+        masterKey: ctx.config.masterKey,
+        multiTenant: true,
+        fetchImpl: mockFetch,
+        lookupImpl: async () => [{ address: "93.184.216.34", family: 4 }],
+        nowIso: ctx.nowIso(),
+      }),
+      runWebhookRetrySweep({
+        store: ctx.store,
+        masterKey: ctx.config.masterKey,
+        multiTenant: true,
+        fetchImpl: mockFetch,
+        lookupImpl: async () => [{ address: "93.184.216.34", family: 4 }],
+        nowIso: ctx.nowIso(),
+      }),
+    ]);
+    assert.equal(s1.processed + s2.processed, 1);
+    assert.equal(postCount, 1);
   } finally {
     ctx.cleanup();
   }

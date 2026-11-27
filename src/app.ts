@@ -32,6 +32,7 @@ import {
   type UploadRow,
   type UserRow,
   type WebhookDeliveryRow,
+  type WebhookDeliveryStatus,
   type WorkspaceRow,
 } from "./db/queries.js";
 import {
@@ -46,9 +47,12 @@ import {
 } from "./emails/templates.js";
 import { seedDemoWorkspace } from "./jobs/demo.js";
 import {
+  attemptWebhookDelivery,
+  buildWebhookEventPayload,
   dispatchCompletionWebhook,
   dispatchTestWebhook,
   dispatchWebhookEvent,
+  MAX_WEBHOOK_ATTEMPTS,
   replayWebhookDelivery,
   resolveWebhookSecret,
   type WebhookEventType,
@@ -1740,44 +1744,44 @@ export function createApp(deps: GatherGateAppDeps) {
 
     const nowIso = new Date(nowFn()).toISOString();
     let expiresAt: string | null = null;
-    if (
-      body.expiresInDays !== undefined &&
-      body.expiresInDays !== null &&
-      String(body.expiresInDays).trim() !== ""
-    ) {
-      const days = Number(body.expiresInDays);
+    const isBlankExpiry =
+      body.expiresInDays === undefined ||
+      body.expiresInDays === null ||
+      (typeof body.expiresInDays === "string" && body.expiresInDays.trim() === "");
+    if (!isBlankExpiry) {
+      let days = NaN;
+      if (typeof body.expiresInDays === "number") {
+        days = body.expiresInDays;
+      } else if (typeof body.expiresInDays === "string" && /^\d+$/.test(body.expiresInDays.trim())) {
+        days = Number(body.expiresInDays.trim());
+      }
       if (!Number.isInteger(days) || days < 1 || days > 3650) {
-        return c.json({ error: "Expiry must be between 1 and 3650 days." }, 400);
+        return c.json({ error: "Expiry must be a whole number of days between 1 and 3650." }, 400);
       }
       expiresAt = addDaysIso(nowIso, days);
     }
 
-    if (store.countActiveApiKeys(auth.workspace.id, nowIso) >= MAX_ACTIVE_API_KEYS) {
-      return c.json(
-        { error: `Active API key limit (${MAX_ACTIVE_API_KEYS}) reached. Revoke unused keys first.` },
-        409
-      );
-    }
-
     const { rawKey, keyPrefix, keyHash } = generateApiKey();
-    const created = store.createApiKey({
-      workspaceId: auth.workspace.id,
-      name,
-      keyPrefix,
-      keyHash,
-      scopes,
-      createdByUserId: auth.user.id,
-      expiresAt,
-      nowIso,
-    });
-    store.logAudit(auth.workspace.id, null, "operator", "api_key.created", {
-      apiKeyId: created.id,
-      name: created.name,
-      keyPrefix: created.key_prefix,
-      scopes,
-      expiresAt,
-      by: auth.user.email,
-    });
+    let created: ApiKeyRow;
+    try {
+      created = store.createApiKey({
+        workspaceId: auth.workspace.id,
+        name,
+        keyPrefix,
+        keyHash,
+        scopes,
+        createdByUserId: auth.user.id,
+        actorEmail: auth.user.email,
+        expiresAt,
+        maxActiveKeys: MAX_ACTIVE_API_KEYS,
+        nowIso,
+      });
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("Active API key limit")) {
+        return c.json({ error: err.message }, 409);
+      }
+      throw err;
+    }
     return c.json({ apiKey: formatApiKey(created), secret: rawKey }, 201);
   });
 
@@ -1948,8 +1952,33 @@ export function createApp(deps: GatherGateAppDeps) {
   app.get("/api/settings/webhook/deliveries", (c) => {
     const auth = requireSessionOnly(c);
     if (auth.error) return auth.error;
+    const rawStatus = c.req.query("status")?.trim();
+    const validStatuses = new Set<WebhookDeliveryStatus>([
+      "pending",
+      "in_flight",
+      "retrying",
+      "delivered",
+      "dead_letter",
+    ]);
+    const status =
+      rawStatus && rawStatus !== "all" && validStatuses.has(rawStatus as WebhookDeliveryStatus)
+        ? (rawStatus as WebhookDeliveryStatus)
+        : undefined;
+    const rawLimit = Number(c.req.query("limit") ?? 50);
+    const limit = Number.isInteger(rawLimit) ? Math.min(100, Math.max(1, rawLimit)) : 50;
+    const rawOffset = Number(c.req.query("offset") ?? 0);
+    const offset = Number.isInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+
+    const deliveries = store
+      .listWebhookDeliveries(auth.workspace.id, { status, limit, offset })
+      .map(formatWebhookDelivery);
+    const total = store.countWebhookDeliveries(auth.workspace.id, status);
+    const deadLetterCount = store.countWebhookDeliveries(auth.workspace.id, "dead_letter");
     return c.json({
-      deliveries: store.listWebhookDeliveries(auth.workspace.id, 50).map(formatWebhookDelivery),
+      deliveries,
+      total,
+      deadLetterCount,
+      hasMore: offset + deliveries.length < total,
     });
   });
 
@@ -2348,10 +2377,45 @@ export function createApp(deps: GatherGateAppDeps) {
       });
     }
 
-    const firstOpen = store.touchRequestOpened(request.id);
-    if (firstOpen) {
-      const openedReq = store.getRequestById(request.workspace_id, request.id) ?? request;
-      await emitWebhookSafe({ workspace, request: openedReq, event: "request.opened" });
+    const openNowMs = nowFn();
+    const openNowIso = new Date(openNowMs).toISOString();
+    const targetUrl = workspace.webhook_url?.trim() || "";
+    const { delivery: openDelivery } = store.touchRequestOpenedAndQueueWebhook(
+      request.id,
+      openNowIso,
+      targetUrl
+        ? (openedAt) => ({
+            workspaceId: workspace.id,
+            targetUrl,
+            payloadJson: buildWebhookEventPayload({
+              store,
+              workspace,
+              request,
+              event: "request.opened",
+              masterKey: config.masterKey,
+              baseUrl: config.baseUrl,
+              nowIso: openNowIso,
+              openedAt,
+            }),
+            maxAttempts: MAX_WEBHOOK_ATTEMPTS,
+          })
+        : undefined
+    );
+    if (openDelivery) {
+      try {
+        await attemptWebhookDelivery({
+          store,
+          delivery: openDelivery,
+          masterKey: config.masterKey,
+          multiTenant: config.multiTenant,
+          fetchImpl: deps.fetchImpl,
+          lookupImpl: deps.lookupImpl,
+          nowMs: openNowMs,
+          workspaceOverride: workspace,
+        });
+      } catch {
+        // Row stays durable in webhook_deliveries for background retry.
+      }
     }
 
     const rawItems = store.listRequestItems(request.id);

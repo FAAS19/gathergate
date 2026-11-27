@@ -274,7 +274,7 @@ export interface WebhookDeliveryDto {
   request_id: string | null;
   event: string;
   target_url: string;
-  status: "pending" | "retrying" | "delivered" | "dead_letter";
+  status: "pending" | "in_flight" | "retrying" | "delivered" | "dead_letter";
   attempts: number;
   max_attempts: number;
   last_status_code: number | null;
@@ -283,6 +283,13 @@ export interface WebhookDeliveryDto {
   delivered_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface WebhookDeliveriesResponse {
+  deliveries: WebhookDeliveryDto[];
+  total: number;
+  deadLetterCount: number;
+  hasMore: boolean;
 }
 
 export interface SettingsResponse {
