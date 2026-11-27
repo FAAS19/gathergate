@@ -60,7 +60,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   publish-npm:
-    name: Publish to npm
+    name: Stage package on npm (2FA approval required)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -86,11 +86,11 @@ jobs:
           npm --prefix client ci
           npm run build
 
-      - name: Publish package to npm
+      - name: Stage package on npm
         run: |
           TAG="latest"
           if [[ "${GITHUB_REF_NAME}" == *-* ]]; then TAG="next"; fi
-          npm publish --provenance --access public --tag "$TAG"
+          npm stage publish --provenance --access public --tag "$TAG"
 
   github-release:
     name: Create GitHub Release
