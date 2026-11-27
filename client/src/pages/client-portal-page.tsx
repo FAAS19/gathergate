@@ -290,7 +290,12 @@ export function ClientPortalPage() {
   }, [load]);
 
   useEffect(() => {
-    if (data) document.title = `${data.request.title} · ${data.branding.name}`;
+    if (!data) return;
+    const prevTitle = document.title;
+    document.title = `${data.request.title} · ${data.branding.name}`;
+    return () => {
+      document.title = prevTitle;
+    };
   }, [data]);
 
   const items = data?.items ?? [];

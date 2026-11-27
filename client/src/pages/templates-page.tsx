@@ -494,7 +494,7 @@ export function TemplatesPage({
                 Checklist Templates
               </h1>
               <p className="mt-0.5 text-sm text-muted-foreground">
-                Reusable document packs with Australian statutory validators and drag-and-drop ordering.
+                Reusable document packs with built-in statutory validators and drag-and-drop ordering.
               </p>
             </div>
             <Button onClick={openNewBuilder}>
@@ -660,7 +660,7 @@ export function TemplatesPage({
                   {editing.id ? "Edit checklist template" : "New checklist template"}
                 </h1>
                 <p className="text-xs text-muted-foreground">
-                  Drag items to reorder, configure Australian statutory validators, and preview the client portal before saving.
+                  Drag items to reorder, configure statutory validators, and preview the client portal before saving.
                 </p>
               </div>
             </div>

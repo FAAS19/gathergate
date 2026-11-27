@@ -1193,3 +1193,174 @@ test("Security: trustProxy IP extraction, optional-item state gating, corrupt bl
     proxied.cleanup();
   }
 });
+
+test("Security: pre-launch hardening (SMTP DNS SSRF, atomic batch upload rollback, encrypted webhook secret, non-OTP guard, sanitized detail)", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gathergate-harden-"));
+  try {
+    const config = loadConfig({
+      NODE_ENV: "test",
+      DATA_DIR: tmpDir,
+      MASTER_KEY: crypto.randomBytes(32).toString("hex"),
+      BASE_URL: "http://localhost:3080",
+      EMAIL_BACKEND: "console",
+      STORAGE_BACKEND: "local",
+      MULTI_TENANT: "true",
+    });
+    const db = openDatabase(path.join(tmpDir, "test.sqlite"));
+    const baseStorage = createStorageAdapter(config);
+    let failOnPutNumber = 0;
+    let putCount = 0;
+    const flakyStorage = {
+      async put(key: string, data: Buffer) {
+        putCount += 1;
+        if (failOnPutNumber > 0 && putCount === failOnPutNumber) {
+          throw new Error("Simulated storage write failure");
+        }
+        return baseStorage.put(key, data);
+      },
+      getStream: (key: string) => baseStorage.getStream(key),
+      delete: (key: string) => baseStorage.delete(key),
+    };
+    const email = new MemoryEmailAdapter();
+    const privateLookup = async () => [{ address: "127.0.0.1", family: 4 }];
+    const { app, store } = createApp({
+      config,
+      db,
+      storage: flakyStorage,
+      email,
+      lookupImpl: privateLookup,
+    });
+
+    try {
+      const setup = await app.request("/api/setup", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          workspaceName: "Hardened Practice",
+          email: "ops@harden.test",
+          password: "correct-horse-battery",
+          loadDemo: false,
+        }),
+      });
+      assert.equal(setup.status, 200);
+      const cookie = extractCookie(setup.headers.get("set-cookie"), "gg_session");
+      const wsId = (db.prepare("SELECT id FROM workspaces LIMIT 1").get() as { id: string }).id;
+
+      // 1. Webhook secret is encrypted at rest in SQLite, decrypted on GET /api/settings
+      const whSave = await app.request("/api/settings/webhook", {
+        method: "PUT",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({
+          webhookUrl: "https://hooks.example.com/in",
+          webhookSecret: "whsec_encrypted_at_rest_123",
+        }),
+      });
+      assert.equal(whSave.status, 200);
+      const rawWhRow = db.prepare("SELECT webhook_secret FROM workspaces WHERE id = ?").get(wsId) as {
+        webhook_secret: string;
+      };
+      assert.ok(rawWhRow.webhook_secret.startsWith("v1:"), "webhook_secret must be AES-GCM encrypted in SQLite");
+      assert.equal(rawWhRow.webhook_secret.includes("whsec_encrypted_at_rest_123"), false);
+      const getSettings = (await (
+        await app.request("/api/settings", { headers: { cookie } })
+      ).json()) as { webhookSecret: string };
+      assert.equal(getSettings.webhookSecret, "whsec_encrypted_at_rest_123");
+
+      // 2. Multi-tenant SMTP DNS rebinding SSRF blocked on request invite AND cron reminder sweep
+      const smtpSave = await app.request("/api/settings/email", {
+        method: "PUT",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({
+          backend: "smtp",
+          from: "Practice <mail@harden.example.com>",
+          smtp: { host: "rebind.example.com", port: 587, secure: false, user: "u", pass: "p" },
+        }),
+      });
+      assert.equal(smtpSave.status, 200);
+
+      const reqCreate = await app.request("/api/requests", {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({
+          title: "SSRF Email Check",
+          clientName: "Client One",
+          clientEmail: "client@harden.test",
+          requireOtp: false,
+          sendInvite: true,
+          items: [{ label: "Docs", kind: "file", required: true, multiple: true, allowedGroups: ["pdf"] }],
+        }),
+      });
+      assert.equal(reqCreate.status, 201);
+      const createdJson = (await reqCreate.json()) as { id: string; portalUrl: string; inviteError?: string };
+      assert.ok(createdJson.inviteError, "Blocked SMTP SSRF should report inviteError without 500 crash");
+      assert.ok(
+        store.listAuditEvents(createdJson.id).some((e) => e.action === "invite.failed"),
+        "Blocked invite email must be recorded in audit_events"
+      );
+
+      db.prepare("UPDATE requests SET next_reminder_at = ? WHERE id = ?").run(
+        new Date(Date.now() - 60_000).toISOString(),
+        createdJson.id
+      );
+      const cronSent = await runReminderSweep({
+        store,
+        email,
+        baseUrl: config.baseUrl,
+        masterKey: config.masterKey,
+        config,
+        lookupImpl: privateLookup,
+      });
+      assert.equal(cronSent, 0);
+      assert.ok(
+        store.listAuditEvents(createdJson.id).some((e) => e.action === "reminder.failed"),
+        "Cron SMTP SSRF block must log reminder.failed"
+      );
+
+      // 3. GET /api/requests/:id omits internal token_hash and token_encrypted
+      const detailRes = await app.request(`/api/requests/${createdJson.id}`, { headers: { cookie } });
+      assert.equal(detailRes.status, 200);
+      const detailJson = (await detailRes.json()) as {
+        request: Record<string, unknown>;
+        items: Array<{ id: string }>;
+      };
+      assert.equal("token_hash" in detailJson.request, false);
+      assert.equal("token_encrypted" in detailJson.request, false);
+
+      // 4. Non-OTP checklist rejects /otp/send and /otp/verify with 400
+      const token = createdJson.portalUrl.split("/c/")[1];
+      assert.equal((await app.request(`/api/client/${token}/otp/send`, { method: "POST" })).status, 400);
+      assert.equal(
+        (
+          await app.request(`/api/client/${token}/otp/verify`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ code: "123456" }),
+          })
+        ).status,
+        400
+      );
+
+      // 5. Partial multi-file upload failure leaves zero dangling SQLite rows and zero blobs
+      const fileItemId = detailJson.items[0].id;
+      failOnPutNumber = 2;
+      putCount = 0;
+      const fd = new FormData();
+      fd.append("file", new File([Buffer.from("%PDF-1.4\n%1\n%%EOF\n")], "one.pdf", { type: "application/pdf" }));
+      fd.append("file", new File([Buffer.from("%PDF-1.4\n%2\n%%EOF\n")], "two.pdf", { type: "application/pdf" }));
+      const failedBatch = await app.request(`/api/client/${token}/items/${fileItemId}`, {
+        method: "POST",
+        body: fd,
+      });
+      assert.equal(failedBatch.status, 500);
+      assert.equal(store.listUploadsForRequest(createdJson.id).length, 0);
+      assert.equal(store.getRequestItem(createdJson.id, fileItemId)!.status, "pending");
+      const blobRoot = path.join(tmpDir, "blobs", wsId, createdJson.id, fileItemId);
+      const remainingFiles = fs.existsSync(blobRoot) ? fs.readdirSync(blobRoot) : [];
+      assert.equal(remainingFiles.length, 0, "First blob must be cleaned up when second file put fails");
+    } finally {
+      db.close();
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

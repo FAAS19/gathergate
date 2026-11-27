@@ -417,22 +417,22 @@ function AppShellInner({
           <div className="flex min-w-0 items-center gap-2.5">
             <SidebarTrigger className="-ml-1 md:hidden" />
             <div className="h-4 w-px bg-border md:hidden" />
-            <Breadcrumb>
-              <BreadcrumbList>
+            <Breadcrumb className="min-w-0">
+              <BreadcrumbList className="flex-nowrap overflow-hidden">
                 {breadcrumbs.map((crumb, idx) => {
                   const isLast = idx === breadcrumbs.length - 1;
                   return (
                     <Fragment key={crumb.label}>
-                      <BreadcrumbItem>
+                      <BreadcrumbItem className={isLast ? "min-w-0" : "shrink-0"}>
                         {crumb.to && !isLast ? (
                           <BreadcrumbLink asChild>
                             <Link to={crumb.to}>{crumb.label}</Link>
                           </BreadcrumbLink>
                         ) : (
-                          <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
+                          <BreadcrumbPage className="truncate">{crumb.label}</BreadcrumbPage>
                         )}
                       </BreadcrumbItem>
-                      {!isLast && <BreadcrumbSeparator />}
+                      {!isLast && <BreadcrumbSeparator className="shrink-0" />}
                     </Fragment>
                   );
                 })}

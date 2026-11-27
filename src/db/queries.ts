@@ -818,6 +818,69 @@ export class Store {
     });
   }
 
+  addUploads(
+    entries: Array<{
+      id?: string;
+      itemId: string;
+      requestId: string;
+      originalName: string;
+      canonicalName: string;
+      detectedMime: string;
+      sizeBytes: number;
+      storageKey: string;
+      encVersion?: string;
+      ivHex: string;
+      tagHex: string;
+      saltHex: string;
+      sha256Hex: string;
+    }>
+  ): UploadRow[] {
+    if (entries.length === 0) return [];
+    return this.inTransaction(() => {
+      const { requestId, itemId } = entries[0];
+      this.assertClientWriteOpenAndUnlocked(requestId, itemId);
+      const now = new Date().toISOString();
+      const insertStmt = this.db.prepare(
+        `INSERT INTO uploads (
+           id, request_item_id, original_name, canonical_name, detected_mime,
+           size_bytes, storage_key, enc_version, enc_iv, enc_tag, enc_salt, sha256, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      const selectStmt = this.db.prepare("SELECT * FROM uploads WHERE id = ?");
+      const rows: UploadRow[] = [];
+      for (const params of entries) {
+        const id = params.id ?? generateId("upl");
+        insertStmt.run(
+          id,
+          params.itemId,
+          params.originalName,
+          params.canonicalName,
+          params.detectedMime,
+          params.sizeBytes,
+          params.storageKey,
+          params.encVersion ?? "v1",
+          params.ivHex,
+          params.tagHex,
+          params.saltHex,
+          params.sha256Hex,
+          now
+        );
+        rows.push(selectStmt.get(id) as unknown as UploadRow);
+      }
+
+      this.db
+        .prepare(
+          `UPDATE request_items
+           SET status = 'submitted', review_note = NULL, client_na = 0, updated_at = ?
+           WHERE id = ? AND request_id = ?`
+        )
+        .run(now, itemId, requestId);
+
+      this.recomputeRequestStatus(requestId);
+      return rows;
+    });
+  }
+
   addUpload(params: {
     id?: string;
     itemId: string;
@@ -833,44 +896,7 @@ export class Store {
     saltHex: string;
     sha256Hex: string;
   }): UploadRow {
-    return this.inTransaction(() => {
-      this.assertClientWriteOpenAndUnlocked(params.requestId, params.itemId);
-      const id = params.id ?? generateId("upl");
-      const now = new Date().toISOString();
-      this.db
-        .prepare(
-          `INSERT INTO uploads (
-             id, request_item_id, original_name, canonical_name, detected_mime,
-             size_bytes, storage_key, enc_version, enc_iv, enc_tag, enc_salt, sha256, created_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          id,
-          params.itemId,
-          params.originalName,
-          params.canonicalName,
-          params.detectedMime,
-          params.sizeBytes,
-          params.storageKey,
-          params.encVersion ?? "v1",
-          params.ivHex,
-          params.tagHex,
-          params.saltHex,
-          params.sha256Hex,
-          now
-        );
-
-      this.db
-        .prepare(
-          `UPDATE request_items
-           SET status = 'submitted', review_note = NULL, client_na = 0, updated_at = ?
-           WHERE id = ? AND request_id = ?`
-        )
-        .run(now, params.itemId, params.requestId);
-
-      this.recomputeRequestStatus(params.requestId);
-      return this.db.prepare("SELECT * FROM uploads WHERE id = ?").get(id) as unknown as UploadRow;
-    });
+    return this.addUploads([params])[0];
   }
 
   reviewItem(params: {

@@ -199,6 +199,11 @@ test("showcase site renders cleanly under /gathergate/ subpath with 0 broken ass
     await expect(pre).toBeVisible();
     await expect(pre).toContainText(deployTab.text);
 
+    const noTabClip = await selfHost
+      .locator('[role="tablist"]')
+      .evaluate((el) => el.scrollWidth <= el.clientWidth + 1 && el.closest(".overflow-hidden")!.scrollLeft === 0);
+    expect(noTabClip).toBe(true);
+
     if (deployTab.alwaysFit || (viewport && viewport.width >= 1024)) {
       const fitsWithoutScroll = await pre.evaluate((el) => el.scrollWidth <= el.clientWidth);
       expect(fitsWithoutScroll).toBe(true);

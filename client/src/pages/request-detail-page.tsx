@@ -316,7 +316,7 @@ export function RequestDetailPage({
 
       inFlightReviewsRef.current += 1;
       try {
-        const res = await apiJson<{ ok: boolean; justCompleted: boolean }>(
+        const res = await apiJson<{ ok: boolean; justCompleted: boolean; emailError?: string }>(
           `/api/requests/${id}/items/${item.id}/review`,
           {
             method: "POST",
@@ -327,6 +327,8 @@ export function RequestDetailPage({
           toast.success(
             res.justCompleted ? "Pack completed and webhook notified." : `Approved "${item.label}".`
           );
+        } else if (res.emailError) {
+          toast.warning("Revision saved, but the notification email failed to send.");
         } else {
           toast.success("Revision requested and client emailed.");
         }
@@ -940,7 +942,7 @@ export function RequestDetailPage({
 
         {/* Compact Magic Link Bar */}
         <Card className="paper-shadow">
-          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-3">
+          <CardContent className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1">
               <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                 Passwordless client magic link
@@ -949,7 +951,7 @@ export function RequestDetailPage({
                 {data.portalUrl}
               </code>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
               <Button
                 size="sm"
                 variant="outline"

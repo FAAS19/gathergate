@@ -60,6 +60,8 @@ class S3StorageAdapter implements StorageAdapter {
       secretAccessKey: cfg.secretAccessKey,
       region: cfg.region,
       service: "s3",
+      retries: 3,
+      initRetryMs: 100,
     });
     this.endpoint = cfg.endpoint;
     this.bucket = cfg.bucket;
@@ -82,22 +84,32 @@ class S3StorageAdapter implements StorageAdapter {
         "content-length": String(data.byteLength),
       },
       body: new Uint8Array(data),
+      signal: AbortSignal.timeout(60_000),
     });
     if (!res.ok) {
       throw new Error(`S3 PUT failed (${res.status}): ${await res.text()}`);
     }
+    await res.body?.cancel();
   }
 
   async getStream(key: string): Promise<Readable> {
-    const res = await this.aws.fetch(this.objectUrl(key), { method: "GET" });
+    const res = await this.aws.fetch(this.objectUrl(key), {
+      method: "GET",
+      signal: AbortSignal.timeout(60_000),
+    });
     if (!res.ok || !res.body) {
+      await res.body?.cancel();
       throw new Error(`S3 GET failed (${res.status})`);
     }
     return Readable.fromWeb(res.body as unknown as import("node:stream/web").ReadableStream);
   }
 
   async delete(key: string): Promise<void> {
-    const res = await this.aws.fetch(this.objectUrl(key), { method: "DELETE" });
+    const res = await this.aws.fetch(this.objectUrl(key), {
+      method: "DELETE",
+      signal: AbortSignal.timeout(15_000),
+    });
+    await res.body?.cancel();
     if (!res.ok && res.status !== 404) {
       throw new Error(`S3 DELETE failed (${res.status})`);
     }

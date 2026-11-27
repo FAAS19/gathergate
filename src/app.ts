@@ -40,7 +40,7 @@ import {
   type RenderedEmail,
 } from "./emails/templates.js";
 import { seedDemoWorkspace } from "./jobs/demo.js";
-import { dispatchCompletionWebhook, dispatchTestWebhook } from "./jobs/webhook.js";
+import { dispatchCompletionWebhook, dispatchTestWebhook, resolveWebhookSecret } from "./jobs/webhook.js";
 import { generateOtpCode, hashPassword, verifyOtpCode, verifyPassword } from "./security/auth.js";
 import {
   decryptBuffer,
@@ -371,6 +371,12 @@ export function createApp(deps: GatherGateAppDeps) {
     const resolved = ws ? resolveWorkspaceEmail(ws, config, config.masterKey) : null;
     const { subject, text, html } = params.message;
     if (resolved && resolved.source === "workspace") {
+      if (config.multiTenant && resolved.backend === "smtp" && resolved.smtp?.host) {
+        const dnsErr = await assertPublicHostname(resolved.smtp.host, deps.lookupImpl);
+        if (dnsErr) {
+          throw new Error("SMTP host must resolve to a public address in multi-tenant mode.");
+        }
+      }
       const adapter = createEmailAdapterFromOptions({
         backend: resolved.backend,
         from: resolved.from,
@@ -800,27 +806,40 @@ export function createApp(deps: GatherGateAppDeps) {
     });
 
     const portalUrl = `${config.baseUrl}/c/${magicToken}`;
+    let inviteError: string | undefined;
     if (sendInvite) {
-      await sendEmailTracked({
-        workspaceId: auth.workspace.id,
-        requestId: request.id,
-        to: clientEmail,
-        message: inviteEmail({
-          brand: emailBrand(auth.workspace, config.baseUrl),
-          clientName,
-          title,
-          portalUrl,
-          itemCount: items.length,
-          welcomeNote,
-          dueAt,
-          subject: clientSubject,
-        }),
-        kind: "invite",
-      });
-      store.logAudit(auth.workspace.id, request.id, "system", "invite.sent", { to: clientEmail });
+      try {
+        await sendEmailTracked({
+          workspaceId: auth.workspace.id,
+          requestId: request.id,
+          to: clientEmail,
+          message: inviteEmail({
+            brand: emailBrand(auth.workspace, config.baseUrl),
+            clientName,
+            title,
+            portalUrl,
+            itemCount: items.length,
+            welcomeNote,
+            dueAt,
+            subject: clientSubject,
+          }),
+          kind: "invite",
+        });
+        store.logAudit(auth.workspace.id, request.id, "system", "invite.sent", { to: clientEmail });
+      } catch (err) {
+        inviteError = config.multiTenant
+          ? "Invite email failed to send. Check your outbound email settings."
+          : err instanceof Error
+            ? err.message
+            : "Invite email failed to send.";
+        store.logAudit(auth.workspace.id, request.id, "system", "invite.failed", {
+          to: clientEmail,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
-    return c.json({ id: request.id, portalUrl }, 201);
+    return c.json({ id: request.id, portalUrl, ...(inviteError ? { inviteError } : {}) }, 201);
   });
 
   app.get("/api/requests/:id", (c) => {
@@ -882,9 +901,10 @@ export function createApp(deps: GatherGateAppDeps) {
       };
     });
 
+    const { token_hash: _tokenHash, token_encrypted: _tokenEncrypted, ...safeRequest } = request;
     return c.json({
       request: {
-        ...request,
+        ...safeRequest,
         require_otp: request.require_otp === 1,
         reminders_paused: request.reminders_paused === 1,
         is_demo: request.is_demo === 1,
@@ -967,7 +987,7 @@ export function createApp(deps: GatherGateAppDeps) {
 
     const cooldownMs = deps.manualReminderCooldownMs ?? DEFAULT_MANUAL_REMINDER_COOLDOWN_MS;
     if (req.last_manual_reminder_at && cooldownMs > 0) {
-      const elapsed = Date.now() - Date.parse(req.last_manual_reminder_at);
+      const elapsed = nowFn() - Date.parse(req.last_manual_reminder_at);
       if (elapsed >= 0 && elapsed < cooldownMs) {
         const retryAfterSeconds = Math.max(1, Math.ceil((cooldownMs - elapsed) / 1000));
         c.header("Retry-After", String(retryAfterSeconds));
@@ -994,14 +1014,23 @@ export function createApp(deps: GatherGateAppDeps) {
       })),
     });
 
-    await sendEmailTracked({
-      workspaceId: auth.workspace.id,
-      requestId: req.id,
-      to: req.client_email,
-      message,
-      kind: "reminder",
-      isDemo: req.is_demo === 1,
-    });
+    try {
+      await sendEmailTracked({
+        workspaceId: auth.workspace.id,
+        requestId: req.id,
+        to: req.client_email,
+        message,
+        kind: "reminder",
+        isDemo: req.is_demo === 1,
+      });
+    } catch (err) {
+      const detail = config.multiTenant
+        ? "Reminder email failed to send. Check your outbound email settings."
+        : err instanceof Error
+          ? err.message
+          : "Reminder email failed to send.";
+      return c.json({ error: detail }, 502);
+    }
 
     const updated = store.recordManualReminderSent(
       auth.workspace.id,
@@ -1124,24 +1153,37 @@ export function createApp(deps: GatherGateAppDeps) {
       note,
     });
 
+    let emailError: string | undefined;
     if (decision === "rejected") {
       const magicToken = decryptField(config.masterKey, request.token_encrypted, request.id);
       const portalUrl = `${config.baseUrl}/c/${magicToken}`;
-      await sendEmailTracked({
-        workspaceId: auth.workspace.id,
-        requestId: request.id,
-        to: request.client_email,
-        message: revisionEmail({
-          brand: emailBrand(auth.workspace, config.baseUrl),
-          clientName: request.client_name,
-          title: request.title,
-          itemLabel: item.label,
-          note: note || "Please review and re-upload.",
-          portalUrl,
-        }),
-        kind: "revision",
-        isDemo: request.is_demo === 1,
-      });
+      try {
+        await sendEmailTracked({
+          workspaceId: auth.workspace.id,
+          requestId: request.id,
+          to: request.client_email,
+          message: revisionEmail({
+            brand: emailBrand(auth.workspace, config.baseUrl),
+            clientName: request.client_name,
+            title: request.title,
+            itemLabel: item.label,
+            note: note || "Please review and re-upload.",
+            portalUrl,
+          }),
+          kind: "revision",
+          isDemo: request.is_demo === 1,
+        });
+      } catch (err) {
+        emailError = config.multiTenant
+          ? "Revision saved, but notification email failed to send."
+          : err instanceof Error
+            ? err.message
+            : "Revision notification email failed to send.";
+        store.logAudit(auth.workspace.id, request.id, "system", "revision.email_failed", {
+          itemId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     if (justCompleted) {
@@ -1157,7 +1199,12 @@ export function createApp(deps: GatherGateAppDeps) {
       });
     }
 
-    return c.json({ ok: true, status: request.status, justCompleted });
+    return c.json({
+      ok: true,
+      status: request.status,
+      justCompleted,
+      ...(emailError ? { emailError } : {}),
+    });
   });
 
   app.post("/api/requests/:id/approve-all-submitted", async (c) => {
@@ -1434,7 +1481,7 @@ export function createApp(deps: GatherGateAppDeps) {
     const emailSummary = summarizeWorkspaceEmail(auth.workspace);
     return c.json({
       webhookUrl: auth.workspace.webhook_url || "",
-      webhookSecret: auth.workspace.webhook_secret || "",
+      webhookSecret: resolveWebhookSecret(auth.workspace, config.masterKey) || "",
       branding: publicBranding(auth.workspace),
       account: {
         id: auth.user.id,
@@ -1535,7 +1582,10 @@ export function createApp(deps: GatherGateAppDeps) {
       if (urlErr) return c.json({ error: urlErr }, 400);
     }
 
-    store.updateWorkspaceWebhook(auth.workspace.id, webhookUrl || null, webhookSecret || null);
+    const encryptedSecret = webhookSecret
+      ? encryptField(config.masterKey, webhookSecret, `${auth.workspace.id}:webhook`)
+      : null;
+    store.updateWorkspaceWebhook(auth.workspace.id, webhookUrl || null, encryptedSecret);
     return c.json({ ok: true });
   });
 
@@ -1556,6 +1606,7 @@ export function createApp(deps: GatherGateAppDeps) {
     }
     const result = await dispatchTestWebhook({
       workspace: auth.workspace,
+      masterKey: config.masterKey,
       multiTenant: config.multiTenant,
       fetchImpl: deps.fetchImpl,
       lookupImpl: deps.lookupImpl,
@@ -2009,24 +2060,34 @@ export function createApp(deps: GatherGateAppDeps) {
     if (!request || request.status === "purged" || request.status === "expired") {
       return c.json({ error: "Not found" }, 404);
     }
+    if (request.require_otp !== 1) {
+      return c.json({ error: "Verification code is not required for this checklist." }, 400);
+    }
     const workspace = store.getWorkspaceById(request.workspace_id);
     if (!workspace) return c.json({ error: "Not found" }, 404);
     const { code, hash } = generateOtpCode();
     store.createOtpCode(request.id, hash, 15, nowFn());
 
-    await sendEmailTracked({
-      workspaceId: request.workspace_id,
-      requestId: request.id,
-      to: request.client_email,
-      message: otpEmail({
-        brand: emailBrand(workspace, config.baseUrl),
-        clientName: request.client_name,
-        title: request.title,
-        code,
-      }),
-      kind: "otp",
-      isDemo: request.is_demo === 1,
-    });
+    try {
+      await sendEmailTracked({
+        workspaceId: request.workspace_id,
+        requestId: request.id,
+        to: request.client_email,
+        message: otpEmail({
+          brand: emailBrand(workspace, config.baseUrl),
+          clientName: request.client_name,
+          title: request.title,
+          code,
+        }),
+        kind: "otp",
+        isDemo: request.is_demo === 1,
+      });
+    } catch (err) {
+      store.logAudit(request.workspace_id, request.id, "system", "otp.send_failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return c.json({ error: "Could not send verification code. Please try again shortly." }, 502);
+    }
     store.logAudit(request.workspace_id, request.id, "client", "otp.sent", {});
     return c.json({ ok: true, maskedEmail: maskEmail(request.client_email) });
   });
@@ -2048,6 +2109,9 @@ export function createApp(deps: GatherGateAppDeps) {
     const request = store.getRequestByMagicToken(token);
     if (!request || request.status === "purged" || request.status === "expired") {
       return c.json({ error: "Not found" }, 404);
+    }
+    if (request.require_otp !== 1) {
+      return c.json({ error: "Verification code is not required for this checklist." }, 400);
     }
     const body = (await c.req.json().catch(() => ({}))) as { code?: string };
     const submitted = String(body.code || "");
@@ -2265,12 +2329,20 @@ export function createApp(deps: GatherGateAppDeps) {
       preparedFiles.push({ name: file.name, buf, detected });
     }
 
-    // Pass 2: encrypt and persist; roll back written blobs if a concurrent request lock occurs.
-    const savedUploads = [];
+    // Pass 2: encrypt and write all blobs first, then commit all DB rows in one atomic transaction.
     const writtenStorageKeys: string[] = [];
+    const stagedUploads: Array<Parameters<Store["addUpload"]>[0]> = [];
     const clientSlug = slugify(request.client_name, "client");
     const itemSlug = slugify(cfg.slug || item.label, "doc");
     let seq = store.nextUploadSeqForItem(item.id);
+    let savedUploads: Array<{
+      id: string;
+      original_name: string;
+      canonical_name: string;
+      detected_mime: string;
+      size_bytes: number;
+      created_at: string;
+    }>;
 
     try {
       for (const pf of preparedFiles) {
@@ -2283,7 +2355,7 @@ export function createApp(deps: GatherGateAppDeps) {
         await storage.put(storageKey, ciphertext);
         writtenStorageKeys.push(storageKey);
 
-        const uploadRow = store.addUpload({
+        stagedUploads.push({
           id: uploadId,
           itemId: item.id,
           requestId: request.id,
@@ -2298,15 +2370,17 @@ export function createApp(deps: GatherGateAppDeps) {
           saltHex: meta.saltHex,
           sha256Hex: meta.sha256Hex,
         });
-        savedUploads.push({
-          id: uploadRow.id,
-          original_name: uploadRow.original_name,
-          canonical_name: uploadRow.canonical_name,
-          detected_mime: uploadRow.detected_mime,
-          size_bytes: uploadRow.size_bytes,
-          created_at: uploadRow.created_at,
-        });
       }
+
+      const uploadRows = store.addUploads(stagedUploads);
+      savedUploads = uploadRows.map((uploadRow) => ({
+        id: uploadRow.id,
+        original_name: uploadRow.original_name,
+        canonical_name: uploadRow.canonical_name,
+        detected_mime: uploadRow.detected_mime,
+        size_bytes: uploadRow.size_bytes,
+        created_at: uploadRow.created_at,
+      }));
     } catch (err) {
       for (const k of writtenStorageKeys) {
         await storage.delete(k).catch(() => {});

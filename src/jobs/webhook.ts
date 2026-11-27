@@ -3,6 +3,22 @@ import { decryptField, hmacSha256Hex } from "../security/crypto.js";
 import { validateWebhookEndpointRuntime, type LookupAllFn } from "../security/ssrf.js";
 import { maskSensitiveValue, SENSITIVE_VALIDATORS } from "../validators/index.js";
 
+export function resolveWebhookSecret(
+  workspace: Pick<WorkspaceRow, "id" | "webhook_secret">,
+  masterKey?: Buffer
+): string | null {
+  const raw = workspace.webhook_secret?.trim();
+  if (!raw) return null;
+  if (raw.startsWith("v1:") && masterKey) {
+    try {
+      return decryptField(masterKey, raw, `${workspace.id}:webhook`);
+    } catch {
+      return null;
+    }
+  }
+  return raw;
+}
+
 function buildSignedHeaders(secret: string | null, event: string, body: string): Record<string, string> {
   const ts = Math.floor(Date.now() / 1000).toString();
   const headers: Record<string, string> = {
@@ -95,7 +111,8 @@ export async function dispatchCompletionWebhook(params: {
   };
 
   const body = JSON.stringify(payload);
-  const headers = buildSignedHeaders(params.workspace.webhook_secret, "request.completed", body);
+  const webhookSecret = resolveWebhookSecret(params.workspace, params.masterKey);
+  const headers = buildSignedHeaders(webhookSecret, "request.completed", body);
 
   const doFetch = params.fetchImpl ?? fetch;
   try {
@@ -121,6 +138,7 @@ export async function dispatchCompletionWebhook(params: {
 
 export async function dispatchTestWebhook(params: {
   workspace: WorkspaceRow;
+  masterKey?: Buffer;
   multiTenant?: boolean;
   fetchImpl?: typeof fetch;
   lookupImpl?: LookupAllFn;
@@ -140,7 +158,8 @@ export async function dispatchTestWebhook(params: {
     workspace: { id: params.workspace.id, name: params.workspace.name },
     message: "GatherGate HMAC-SHA256 webhook verification test.",
   });
-  const headers = buildSignedHeaders(params.workspace.webhook_secret, "webhook.test", body);
+  const webhookSecret = resolveWebhookSecret(params.workspace, params.masterKey);
+  const headers = buildSignedHeaders(webhookSecret, "webhook.test", body);
   const doFetch = params.fetchImpl ?? fetch;
   try {
     const res = await doFetch(url, {

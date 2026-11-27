@@ -134,7 +134,7 @@ export function NewRequestPage({
     setSubmitting(true);
     try {
       const intervalDays = Number(cadence);
-      const res = await apiJson<{ id: string }>("/api/requests", {
+      const res = await apiJson<{ id: string; inviteError?: string }>("/api/requests", {
         method: "POST",
         body: JSON.stringify({
           templateId: activeTemplate.id,
@@ -153,7 +153,11 @@ export function NewRequestPage({
         }),
       });
       void onSessionRefresh();
-      toast.success(sendInvite ? "Checklist dispatched to client." : "Checklist created.");
+      if (res.inviteError) {
+        toast.warning("Checklist created, but the invite email failed to send. Copy the magic link from the request.");
+      } else {
+        toast.success(sendInvite ? "Checklist dispatched to client." : "Checklist created.");
+      }
       navigate(`/requests/${res.id}`);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not create request.");

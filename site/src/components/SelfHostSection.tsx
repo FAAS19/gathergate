@@ -145,7 +145,7 @@ export function SelfHostSection() {
                 <div
                   role="tablist"
                   aria-label="Self-hosting command options"
-                  className="inline-flex gap-1"
+                  className="flex flex-wrap gap-1"
                 >
                   {DEPLOY_TAB_ORDER.map((tabId, index) => {
                     const selected = activeTab === tabId;

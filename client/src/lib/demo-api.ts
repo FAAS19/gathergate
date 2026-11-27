@@ -1746,6 +1746,9 @@ async function handleDemoApiJson<T>(url: string, init?: RequestInit): Promise<T>
     if (!req || req.status === "purged" || req.status === "expired") {
       throw new ApiError("Not found", 404);
     }
+    if (!req.require_otp) {
+      throw new ApiError("Verification code is not required for this checklist.", 400);
+    }
     addOutboxEmail({
       requestId: req.id,
       recipient: req.client_email,
@@ -1777,6 +1780,9 @@ async function handleDemoApiJson<T>(url: string, init?: RequestInit): Promise<T>
     const req = findRequestByToken(decodeURIComponent(otpVerifyMatch[1]));
     if (!req || req.status === "purged" || req.status === "expired") {
       throw new ApiError("Not found", 404);
+    }
+    if (!req.require_otp) {
+      throw new ApiError("Verification code is not required for this checklist.", 400);
     }
     const body = parseJsonBody<{ code?: string }>(init);
     if (String(body.code || "").trim() !== DEMO_OTP_CODE) {

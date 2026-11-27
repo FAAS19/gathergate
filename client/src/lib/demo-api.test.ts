@@ -397,5 +397,16 @@ describe("demo-validators & demo-api", () => {
     const outbox = await demoApiJson<{ emails: OutboxEmailDto[] }>("/api/outbox");
     expect(outbox.emails[0].kind).toBe("test");
     expect(outbox.emails[0].recipient).toBe("verify@example.com.au");
+
+    // Non-OTP checklists reject OTP send and verify with 400
+    await expect(
+      demoApiJson("/api/client/demo-bas/otp/send", { method: "POST" })
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      demoApiJson("/api/client/demo-bas/otp/verify", {
+        method: "POST",
+        body: JSON.stringify({ code: "482910" }),
+      })
+    ).rejects.toMatchObject({ status: 400 });
   });
 });

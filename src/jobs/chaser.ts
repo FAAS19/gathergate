@@ -3,6 +3,7 @@ import type { AppConfig } from "../config.js";
 import type { Store } from "../db/queries.js";
 import { emailBrand, reminderEmail } from "../emails/templates.js";
 import { decryptField } from "../security/crypto.js";
+import { assertPublicHostname, type LookupAllFn } from "../security/ssrf.js";
 
 export async function runReminderSweep(params: {
   store: Store;
@@ -12,6 +13,7 @@ export async function runReminderSweep(params: {
   config?: AppConfig;
   nowIso?: string;
   saveToOutbox?: boolean;
+  lookupImpl?: LookupAllFn;
 }): Promise<number> {
   const nowIso = params.nowIso ?? new Date().toISOString();
   const due = params.store.listDueReminders(nowIso);
@@ -48,6 +50,18 @@ export async function runReminderSweep(params: {
       const resolved = params.config
         ? resolveWorkspaceEmail(workspace, params.config, params.masterKey)
         : null;
+      if (
+        params.config?.multiTenant &&
+        resolved &&
+        resolved.source === "workspace" &&
+        resolved.backend === "smtp" &&
+        resolved.smtp?.host
+      ) {
+        const dnsErr = await assertPublicHostname(resolved.smtp.host, params.lookupImpl);
+        if (dnsErr) {
+          throw new Error("SMTP host must resolve to a public address in multi-tenant mode.");
+        }
+      }
       const adapter =
         resolved && resolved.source === "workspace"
           ? createEmailAdapterFromOptions(resolved)
