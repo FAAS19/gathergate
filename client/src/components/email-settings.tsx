@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { apiJson, ApiError, type EmailSettingsDto } from "@/lib/api";
+import { apiJson, ApiError, IS_DEMO, type EmailSettingsDto } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type BackendOption = "console" | "smtp" | "resend";
@@ -193,8 +193,9 @@ export function EmailSettings({
         method: "POST",
         body: JSON.stringify({ to: testTo.trim() }),
       });
-      const msg =
-        res.backend === "console"
+      const msg = IS_DEMO
+        ? `Test email captured in Local Outbox for ${res.to} (browser demo, no real email sent).`
+        : res.backend === "console"
           ? `Test email captured in Local Outbox for ${res.to}.`
           : `Test email sent to ${res.to} via ${res.backend.toUpperCase()}.`;
       setTestResult({ ok: true, text: msg });

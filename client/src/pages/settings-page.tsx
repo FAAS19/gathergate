@@ -27,6 +27,7 @@ import {
   apiJson,
   ApiError,
   formatBytes,
+  IS_DEMO,
   type SessionResponse,
   type SettingsResponse,
 } from "@/lib/api";
@@ -119,7 +120,11 @@ export function SettingsPage({
       const res = await apiJson<{ status?: number }>("/api/settings/webhook/test", {
         method: "POST",
       });
-      toast.success(`Test event delivered (HTTP ${res.status ?? 200}).`);
+      toast.success(
+        IS_DEMO
+          ? "Demo mode: webhook test simulated locally (no outbound request sent)."
+          : `Test event delivered (HTTP ${res.status ?? 200}).`
+      );
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Webhook test failed.");
     } finally {

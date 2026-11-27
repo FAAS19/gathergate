@@ -32,6 +32,12 @@ const DEMO_OTP_CODE = "482910";
 const MANUAL_COOLDOWN_MS = 15 * 60_000;
 const MAX_LOGO_BYTES = 200 * 1024;
 const MAX_CLIENT_NOTE_CHARS = 1000;
+const MAX_TEXT_ITEM_CHARS = 2000;
+const MAX_TEXTAREA_ITEM_CHARS = 20_000;
+const MAX_FILES_PER_UPLOAD = 10;
+const MAX_ITEM_FILE_MB = 50;
+const MAX_DEMO_STORAGE_BYTES = 50 * 1024 * 1024;
+const SAFE_LOGO_DATA_URL_RE = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/;
 
 interface DemoItemRecord {
   id: string;
@@ -614,7 +620,7 @@ function isMostlyPrintableUtf8(bytes: Uint8Array): boolean {
   }
   try {
     const decoded = new TextDecoder("utf-8", { fatal: true }).decode(sample);
-    if (/<\s*(script|html|svg|iframe)\b/i.test(decoded)) return false;
+    if (/<\s*(script|html|svg|iframe|object|embed)\b|<!doctype\s+html/i.test(decoded)) return false;
     return true;
   } catch {
     return false;
@@ -650,14 +656,18 @@ function detectFileBytes(bytes: Uint8Array, originalName: string): { mime: strin
     return { mime: "image/webp", ext: "webp" };
   }
   if (startsWithBytes(bytes, [0x50, 0x4b, 0x03, 0x04])) {
-    const ascii = new TextDecoder("latin1").decode(bytes);
-    if (ascii.includes("word/document.xml")) {
+    const dec = new TextDecoder("latin1");
+    const head = dec.decode(bytes.subarray(0, Math.min(bytes.length, 65536)));
+    const tail =
+      bytes.length > 65536 ? dec.decode(bytes.subarray(bytes.length - 65536)) : "";
+    const sample = head + tail;
+    if (sample.includes("word/document.xml")) {
       return {
         mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         ext: "docx",
       };
     }
-    if (ascii.includes("xl/workbook.xml")) {
+    if (sample.includes("xl/workbook.xml")) {
       return {
         mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ext: "xlsx",
@@ -1260,13 +1270,17 @@ function loadDemoState(): DemoState {
       blobs.set(id, new Blob([bytes.buffer as ArrayBuffer], { type: entry.type }));
       uploadedBlobData.set(id, entry);
     }
+    const restoredLogo =
+      typeof saved.logoDataUrl === "string" && SAFE_LOGO_DATA_URL_RE.test(saved.logoDataUrl)
+        ? saved.logoDataUrl
+        : null;
     return {
       ...fresh,
       seq: typeof saved.seq === "number" ? saved.seq : fresh.seq,
       loggedIn: typeof saved.loggedIn === "boolean" ? saved.loggedIn : fresh.loggedIn,
       user: saved.user ?? fresh.user,
       workspace: saved.workspace ?? fresh.workspace,
-      logoDataUrl: saved.logoDataUrl !== undefined ? saved.logoDataUrl : fresh.logoDataUrl,
+      logoDataUrl: saved.logoDataUrl !== undefined ? restoredLogo : fresh.logoDataUrl,
       webhookSecret: typeof saved.webhookSecret === "string" ? saved.webhookSecret : fresh.webhookSecret,
       email: saved.email ?? fresh.email,
       templates: saved.templates,
@@ -1512,7 +1526,10 @@ function normalizeTemplateItems(raw: unknown): TemplateItemSpec[] {
       required: Boolean(item.required),
       validator,
       allowedGroups: Array.isArray(item.allowedGroups) ? [...item.allowedGroups] : undefined,
-      maxFileMb: typeof item.maxFileMb === "number" && item.maxFileMb > 0 ? item.maxFileMb : 20,
+      maxFileMb:
+        typeof item.maxFileMb === "number" && Number.isFinite(item.maxFileMb) && item.maxFileMb > 0
+          ? Math.min(MAX_ITEM_FILE_MB, Math.max(1, Math.floor(item.maxFileMb)))
+          : 20,
       multiple: Boolean(item.multiple),
       slug: item.slug ? slugify(item.slug) : slugify(label, `item-${idx + 1}`),
     };
@@ -1807,7 +1824,12 @@ async function handleDemoApiJson<T>(url: string, init?: RequestInit): Promise<T>
 
     if (item.kind === "text" || item.kind === "textarea") {
       const body = parseJsonBody<{ value?: string }>(init);
-      const check = validateTextValue(item.validator, String(body.value || ""));
+      const rawValue = String(body.value || "");
+      const maxChars = item.kind === "textarea" ? MAX_TEXTAREA_ITEM_CHARS : MAX_TEXT_ITEM_CHARS;
+      if (rawValue.length > maxChars) {
+        throw new ApiError(`Value exceeds maximum length of ${maxChars} characters.`, 400);
+      }
+      const check = validateTextValue(item.validator, rawValue);
       if (!check.valid || !check.normalised) {
         throw new ApiError(check.error || "Invalid value", 400);
       }
@@ -1904,6 +1926,7 @@ async function handleDemoApiJson<T>(url: string, init?: RequestInit): Promise<T>
     const removed = targetItem.uploads.find((u) => u.id === uploadId)!;
     targetItem.uploads = targetItem.uploads.filter((u) => u.id !== uploadId);
     state.blobs.delete(uploadId);
+    uploadedBlobData.delete(uploadId);
     const nowIso = new Date().toISOString();
     if (targetItem.status === "submitted" && !targetItem.client_na && targetItem.uploads.length === 0) {
       targetItem.status = "pending";
@@ -2520,7 +2543,7 @@ async function handleDemoApiJson<T>(url: string, init?: RequestInit): Promise<T>
       state.logoDataUrl = null;
       state.workspace.has_logo = false;
     } else if (typeof body.logoDataUrl === "string") {
-      const m = body.logoDataUrl.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/);
+      const m = body.logoDataUrl.match(SAFE_LOGO_DATA_URL_RE);
       if (!m) throw new ApiError("Logo must be a PNG, JPEG or WebP data URL.", 400);
       const bytes = base64ToBytes(m[2]);
       if (bytes.byteLength > MAX_LOGO_BYTES) {
@@ -2635,22 +2658,20 @@ async function handleDemoApiJson<T>(url: string, init?: RequestInit): Promise<T>
     if (!to || !validateTextValue("email", to).valid) {
       throw new ApiError("Enter a valid recipient email.", 400);
     }
-    if (state.email.backend === "console") {
-      addOutboxEmail({
-        requestId: null,
-        recipient: to,
-        subject: `${state.workspace.name} test email`,
-        textBody: `This is a test email from ${state.workspace.name} via GatherGate (Local Outbox).`,
-        htmlBody: renderEmailHtml({
-          brandName: state.workspace.name,
-          accentColor: state.workspace.brand_color || "#0F5243",
-          heading: "Outbound email is connected",
-          bodyHtml: `<p>This is a test message sent from <strong>${escapeHtml(state.workspace.name)}</strong> using <strong>Local Outbox</strong>.</p>`,
-        }),
-        kind: "test",
-        isDemo: false,
-      });
-    }
+    addOutboxEmail({
+      requestId: null,
+      recipient: to,
+      subject: `${state.workspace.name} test email`,
+      textBody: `This is a test email from ${state.workspace.name} via GatherGate (Local Outbox).`,
+      htmlBody: renderEmailHtml({
+        brandName: state.workspace.name,
+        accentColor: state.workspace.brand_color || "#0F5243",
+        heading: "Outbound email is connected",
+        bodyHtml: `<p>This is a test message sent from <strong>${escapeHtml(state.workspace.name)}</strong> using <strong>Local Outbox</strong>.</p>`,
+      }),
+      kind: "test",
+      isDemo: false,
+    });
     return { ok: true, backend: state.email.backend, to } as T;
   }
 
@@ -2720,6 +2741,7 @@ async function handleDemoApiJson<T>(url: string, init?: RequestInit): Promise<T>
       for (const item of r.items) {
         for (const u of item.uploads) {
           state.blobs.delete(u.id);
+          uploadedBlobData.delete(u.id);
           deletedFiles += 1;
         }
       }
@@ -2757,18 +2779,34 @@ export async function demoApiUpload<T>(url: string, formData: FormData): Promise
   if (rawFiles.length === 0) {
     throw new ApiError("Please choose at least one file to upload.", 400);
   }
+  if (!item.config.multiple && rawFiles.length > 1) {
+    throw new ApiError("This item only accepts one file at a time.", 400);
+  }
+  if (rawFiles.length > MAX_FILES_PER_UPLOAD) {
+    throw new ApiError(`Upload up to ${MAX_FILES_PER_UPLOAD} files at a time.`, 400);
+  }
 
-  const maxMb = item.config.maxFileMb ?? 20;
+  const maxMb = Math.min(MAX_ITEM_FILE_MB, Math.max(1, item.config.maxFileMb ?? 20));
   const maxBytes = maxMb * 1024 * 1024;
   const allowedMimes = resolveAllowedMimes(item.config.allowedGroups);
-  const nowIso = new Date().toISOString();
-  const savedUploads: UploadDto[] = [];
+  const currentStorage = getStorageBytes();
+  let pendingBytes = 0;
+  const prepared: Array<{ name: string; bytes: Uint8Array; detected: { mime: string; ext: string } }> = [];
 
   for (const file of rawFiles) {
     if (file.size > maxBytes) {
       throw new ApiError(`"${file.name}" exceeds max size of ${maxMb} MB.`, 400);
     }
+    if (currentStorage + pendingBytes + file.size > MAX_DEMO_STORAGE_BYTES) {
+      throw new ApiError("Demo browser storage limit (50 MB) reached. Remove files or reset the demo.", 400);
+    }
     const bytes = new Uint8Array(await file.arrayBuffer());
+    if (bytes.byteLength > maxBytes) {
+      throw new ApiError(`"${file.name}" exceeds max size of ${maxMb} MB.`, 400);
+    }
+    if (currentStorage + pendingBytes + bytes.byteLength > MAX_DEMO_STORAGE_BYTES) {
+      throw new ApiError("Demo browser storage limit (50 MB) reached. Remove files or reset the demo.", 400);
+    }
     const detected = detectFileBytes(bytes, file.name);
     if (!detected || !allowedMimes.includes(detected.mime)) {
       throw new ApiError(
@@ -2776,24 +2814,31 @@ export async function demoApiUpload<T>(url: string, formData: FormData): Promise
         400
       );
     }
+    pendingBytes += bytes.byteLength;
+    prepared.push({ name: file.name, bytes, detected });
+  }
 
+  const nowIso = new Date().toISOString();
+  const savedUploads: UploadDto[] = [];
+
+  for (const pf of prepared) {
     const seq = item.uploads.length + 1;
     const canonicalName = `${slugify(req.client_name, "client")}_${slugify(
       item.config.slug || item.label,
       "doc"
-    )}_${String(seq).padStart(2, "0")}.${detected.ext}`;
+    )}_${String(seq).padStart(2, "0")}.${pf.detected.ext}`;
     const uploadId = nextId("upl");
-    const blob = new Blob([bytes], { type: detected.mime });
+    const blob = new Blob([pf.bytes.buffer as ArrayBuffer], { type: pf.detected.mime });
     state.blobs.set(uploadId, blob);
-    if (bytes.byteLength <= 256 * 1024) {
-      uploadedBlobData.set(uploadId, { type: detected.mime, b64: bytesToBase64(bytes) });
+    if (pf.bytes.byteLength <= 256 * 1024) {
+      uploadedBlobData.set(uploadId, { type: pf.detected.mime, b64: bytesToBase64(pf.bytes) });
     }
 
     const uploadRow: UploadDto = {
       id: uploadId,
-      original_name: file.name.slice(0, 200),
+      original_name: pf.name.slice(0, 200),
       canonical_name: canonicalName,
-      detected_mime: detected.mime,
+      detected_mime: pf.detected.mime,
       size_bytes: blob.size,
       sha256: syntheticSha256(uploadId),
       created_at: nowIso,

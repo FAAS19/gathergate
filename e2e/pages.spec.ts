@@ -97,6 +97,12 @@ test.afterAll(async () => {
 
 function trackPageIssues(page: Page) {
   const issues = trackErrors(page);
+  page.on("request", (req) => {
+    const url = req.url();
+    if (!url.startsWith(`${baseUrl}/`) && !url.startsWith("blob:") && !url.startsWith("data:")) {
+      issues.push(`external request: ${url}`);
+    }
+  });
   page.on("response", (res) => {
     if (res.status() >= 400) {
       issues.push(`http ${res.status()}: ${res.url()}`);
@@ -188,6 +194,12 @@ test("interactive VITE_DEMO=1 browser demo works end to end under /gathergate/de
       issues.push(`console: ${msg.text()}`);
     }
   });
+  page.on("request", (req) => {
+    const url = req.url();
+    if (!url.startsWith(`${baseUrl}/`) && !url.startsWith("blob:") && !url.startsWith("data:")) {
+      issues.push(`external request: ${url}`);
+    }
+  });
   page.on("pageerror", (err) => issues.push(`pageerror: ${err.message}`));
   page.on("response", (res) => {
     if (res.status() >= 400) {
@@ -259,6 +271,16 @@ test("interactive VITE_DEMO=1 browser demo works end to end under /gathergate/de
   });
   await expect(invoicesCard.getByText("supplier-receipt.png")).toBeVisible();
 
+  await invoicesCard.locator('input[type="file"]').first().setInputFiles({
+    name: "evil.png",
+    mimeType: "image/png",
+    buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>'),
+  });
+  await expect(invoicesCard.getByRole("alert")).toContainText(/failed file-type verification/i);
+  await expect(
+    invoicesCard.getByRole("list", { name: "Uploaded files" }).getByText("evil.png")
+  ).toHaveCount(0);
+
   // 4. Client portal OTP gate + accessibility audit on demo-tax
   await page.goto(`${baseUrl}/gathergate/demo/#/c/demo-tax`);
   await expect(page.getByRole("heading", { name: "Confirm it's you" })).toBeVisible();
@@ -269,5 +291,25 @@ test("interactive VITE_DEMO=1 browser demo works end to end under /gathergate/de
   await expect(page.getByRole("heading", { name: "FY26 Individual Tax Return Pack" })).toBeVisible();
 
   await expectAccessible(page, testInfo, "pages-demo-portal");
-  expect(issues).toEqual([]);
+
+  // 5. Local outbox sandboxed iframe, webhook simulation (0 outbound calls), and Reset demo
+  await page.getByRole("navigation", { name: "Demo navigation" }).getByRole("link", { name: "Local outbox" }).click();
+  await expect(page.getByRole("heading", { name: "Local Email Outbox" })).toBeVisible();
+  await expect(page.getByText("482910 is your verification code").first()).toBeVisible();
+  await expect(page.locator('iframe[sandbox=""]')).toHaveAttribute("sandbox", "");
+
+  await page.goto(`${baseUrl}/gathergate/demo/#/settings?section=webhooks`);
+  await page.getByLabel("Webhook Endpoint URL").fill("https://example.invalid/hook");
+  await page.getByRole("button", { name: "Save webhook settings" }).click();
+  await page.getByRole("button", { name: "Send test event" }).click();
+  await expect(page.getByText(/Demo mode: webhook test simulated locally/i)).toBeVisible();
+
+  await page.getByRole("navigation", { name: "Demo navigation" }).getByRole("button", { name: "Reset demo" }).click();
+  await page.goto(`${baseUrl}/gathergate/demo/#/c/demo-tax`);
+  await expect(page.getByRole("heading", { name: "Confirm it's you" })).toBeVisible();
+
+  // The outbox preview sandbox refusing script execution confirms sandbox="" protection is active.
+  expect(
+    issues.filter((e) => !e.includes("frame is sandboxed and the 'allow-scripts' permission is not set"))
+  ).toEqual([]);
 });

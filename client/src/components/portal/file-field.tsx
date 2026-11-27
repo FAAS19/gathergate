@@ -19,6 +19,7 @@ const GROUP_ACCEPT: Record<string, Record<string, string[]>> = {
     "text/plain": [".txt"],
   },
 };
+const SAFE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 function acceptFor(groups?: string[]) {
   if (!groups?.length) return undefined;
@@ -77,14 +78,18 @@ export function FileField({
       try {
         const fd = new FormData();
         files.forEach((f) => fd.append("file", f));
-        const res = await apiUploadWithProgress<{ uploads: Array<{ id: string }> }>(
+        const res = await apiUploadWithProgress<{ uploads: Array<{ id: string; detected_mime?: string }> }>(
           `/api/client/${token}/items/${item.id}`,
           fd,
           (loaded, total) => setProgress({ pct: Math.round((loaded / total) * 100), label })
         );
         const next: Record<string, string> = {};
         res.uploads.forEach((u, i) => {
-          if (files[i]?.type.startsWith("image/")) next[u.id] = URL.createObjectURL(files[i]);
+          const file = files[i];
+          const mime = u.detected_mime ?? file?.type;
+          if (file && mime && SAFE_IMAGE_MIMES.has(mime)) {
+            next[u.id] = URL.createObjectURL(new Blob([file], { type: mime }));
+          }
         });
         setThumbs((t) => ({ ...t, ...next }));
         // Replace = upload first, then remove the old file, so the item never drops back to pending.
@@ -255,7 +260,7 @@ export function FileField({
           <input
             ref={cameraInput}
             type="file"
-            accept="image/*"
+            accept="image/png,image/jpeg,image/webp"
             capture="environment"
             className="sr-only"
             tabIndex={-1}

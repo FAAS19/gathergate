@@ -59,9 +59,42 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  publish-npm:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Verify release tag matches package.json
+        run: |
+          node -e "const v = require('./package.json').version; const tag = process.env.GITHUB_REF_NAME; if (tag !== 'v' + v) { console.error('Tag', tag, 'does not match package.json v' + v); process.exit(1); }"
+
+      - name: Ensure npm supports OIDC Trusted Publishing
+        run: npm install -g npm@latest
+
+      - name: Install dependencies and build
+        run: |
+          npm ci
+          npm --prefix client ci
+          npm run build
+
+      - name: Publish package to npm
+        run: |
+          TAG="latest"
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then TAG="next"; fi
+          npm publish --provenance --access public --tag "$TAG"
+
   github-release:
     name: Create GitHub Release
-    needs: publish-container
+    needs: [publish-container, publish-npm]
     runs-on: ubuntu-latest
     permissions:
       contents: write

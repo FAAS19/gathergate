@@ -30,6 +30,7 @@ const DEMO_STATIC_PATHS = new Set([
   "/requests/req_demo_health",
   "/requests/new",
 ]);
+const DEMO_STATIC_PORTALS = new Set(["/c/demo-tax", "/c/demo-bas", "/c/demo-health"]);
 
 function DemoBar({ onReset }: { onReset: () => void }) {
   const location = useLocation();
@@ -42,7 +43,10 @@ function DemoBar({ onReset }: { onReset: () => void }) {
     try {
       const { resetDemoState } = await import("@/lib/demo-api");
       resetDemoState();
-      if (location.pathname.startsWith("/requests/") && !DEMO_STATIC_PATHS.has(location.pathname)) {
+      if (
+        (location.pathname.startsWith("/requests/") && !DEMO_STATIC_PATHS.has(location.pathname)) ||
+        (location.pathname.startsWith("/c/") && !DEMO_STATIC_PORTALS.has(location.pathname))
+      ) {
         navigate("/", { replace: true });
       }
       onReset();
@@ -51,7 +55,8 @@ function DemoBar({ onReset }: { onReset: () => void }) {
     }
   }
 
-  const isOperator = !location.pathname.startsWith("/c/");
+  const isOutbox = location.pathname === "/outbox";
+  const isOperator = !location.pathname.startsWith("/c/") && !isOutbox;
   const isClientBas = location.pathname === "/c/demo-bas";
   const isClientTax = location.pathname === "/c/demo-tax";
 
@@ -66,7 +71,10 @@ function DemoBar({ onReset }: { onReset: () => void }) {
       className="relative z-40 border-b border-primary-foreground/15 bg-primary text-primary-foreground md:sticky md:top-0"
     >
       <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-4 py-2 text-xs md:h-10 md:flex-nowrap md:py-0">
-        <span className="font-medium tracking-tight">Interactive browser demo (no server)</span>
+        <span className="font-medium tracking-tight">
+          Interactive browser demo (no server)
+          <span className="hidden font-normal lg:inline"> · Local browser only, no emails sent</span>
+        </span>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1 md:flex-nowrap">
           <Link to="/" className={linkClass(isOperator)}>
             Operator console
@@ -77,13 +85,16 @@ function DemoBar({ onReset }: { onReset: () => void }) {
           <Link to="/c/demo-tax" className={linkClass(isClientTax)}>
             OTP portal
           </Link>
+          <Link to="/outbox" className={linkClass(isOutbox)}>
+            Local outbox
+          </Link>
           <button
             type="button"
             disabled={resetting}
             onClick={() => void handleReset()}
             className="cursor-pointer whitespace-nowrap rounded px-1.5 py-0.5 transition-colors hover:bg-primary-foreground/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-foreground/80 disabled:opacity-60"
           >
-            Reset
+            Reset demo
           </button>
           <a
             href="../"

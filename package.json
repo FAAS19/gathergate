@@ -4,6 +4,22 @@
   "description": "Self-hosted magic-link client document checklist, deterministic validator, and auto-chaser.",
   "type": "module",
   "license": "MIT",
+  "bin": {
+    "gathergate": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "client/dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FAAS19/gathergate.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=22.13.0"
   },
@@ -14,6 +30,7 @@
     "build:demo": "npm --prefix client run build:demo",
     "build:site": "npm --prefix site run build",
     "build:pages": "npm run build:site && npm run build:demo",
+    "build:cf": "npm run build:pages && node site/scripts/prepare-cf-output.mjs",
     "build:server": "tsc",
     "build": "npm run build:client && npm run build:server",
     "typecheck": "tsc --noEmit && npm --prefix client run typecheck",

@@ -286,4 +286,116 @@ describe("demo-validators & demo-api", () => {
     expect(manifest.items.some((i) => i.client_note === "Confirmed after AGM")).toBe(true);
     expect(manifest.items.every((i) => typeof i.client_na === "boolean")).toBe(true);
   });
+
+  it("blocks SVG/HTML uploads, batch/size/length abuse, unsafe URLs, and captures email tests locally", async () => {
+    const basPortal = await demoApiJson<ClientPortalResponse>("/api/client/demo-bas");
+    const invoiceItem = basPortal.items!.find((i) => i.config.slug === "supplier-invoices")!;
+    const bankStmtItem = basPortal.items!.find((i) => i.config.slug === "bank-statements")!;
+    const bsbItem = basPortal.items!.find((i) => i.validator === "au_bsb")!;
+
+    const svgPayload = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>';
+    for (const [name, mime] of [
+      ["bad.svg", "image/svg+xml"],
+      ["spoofed.png", "image/png"],
+      ["evil.csv", "text/csv"],
+      ["evil.txt", "text/plain"],
+    ]) {
+      const fd = new FormData();
+      fd.append("file", new File([svgPayload], name, { type: mime }));
+      await expect(
+        demoApiUpload(`/api/client/demo-bas/items/${invoiceItem.id}`, fd)
+      ).rejects.toMatchObject({ status: 400 });
+    }
+
+    const htmlPayload = "<!DOCTYPE html><script>alert(1)</script>";
+    for (const [name, mime] of [
+      ["page.html", "text/html"],
+      ["table.csv", "text/csv"],
+    ]) {
+      const fd = new FormData();
+      fd.append("file", new File([htmlPayload], name, { type: mime }));
+      await expect(
+        demoApiUpload(`/api/client/demo-bas/items/${bankStmtItem.id}`, fd)
+      ).rejects.toMatchObject({ status: 400 });
+    }
+
+    const oversizedFd = new FormData();
+    oversizedFd.append(
+      "file",
+      new File([new Uint8Array(21 * 1024 * 1024)], "huge.pdf", { type: "application/pdf" })
+    );
+    await expect(
+      demoApiUpload(`/api/client/demo-bas/items/${invoiceItem.id}`, oversizedFd)
+    ).rejects.toMatchObject({ status: 400 });
+
+    const batchFd = new FormData();
+    const validPdf = "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF";
+    for (let i = 0; i < 11; i++) {
+      batchFd.append("file", new File([validPdf], `doc-${i}.pdf`, { type: "application/pdf" }));
+    }
+    await expect(
+      demoApiUpload(`/api/client/demo-bas/items/${invoiceItem.id}`, batchFd)
+    ).rejects.toMatchObject({ status: 400 });
+
+    await demoApiJson("/api/client/demo-tax/otp/verify", {
+      method: "POST",
+      body: JSON.stringify({ code: "482910" }),
+    });
+    const taxPortal = await demoApiJson<ClientPortalResponse>("/api/client/demo-tax");
+    const singleFileItem = taxPortal.items!.find((i) => i.config.slug === "private-health-statement")!;
+    const multiOnSingleFd = new FormData();
+    multiOnSingleFd.append("file", new File([validPdf], "a.pdf", { type: "application/pdf" }));
+    multiOnSingleFd.append("file", new File([validPdf], "b.pdf", { type: "application/pdf" }));
+    await expect(
+      demoApiUpload(`/api/client/demo-tax/items/${singleFileItem.id}`, multiOnSingleFd)
+    ).rejects.toMatchObject({ status: 400 });
+
+    const atomicFd = new FormData();
+    atomicFd.append("file", new File([validPdf], "good.pdf", { type: "application/pdf" }));
+    atomicFd.append("file", new File([svgPayload], "bad.png", { type: "image/png" }));
+    await expect(
+      demoApiUpload(`/api/client/demo-bas/items/${invoiceItem.id}`, atomicFd)
+    ).rejects.toMatchObject({ status: 400 });
+    const afterAtomic = await demoApiJson<ClientPortalResponse>("/api/client/demo-bas");
+    expect(afterAtomic.items!.find((i) => i.id === invoiceItem.id)!.uploads).toHaveLength(0);
+
+    await expect(
+      demoApiJson(`/api/client/demo-bas/items/${bsbItem.id}`, {
+        method: "POST",
+        body: JSON.stringify({ value: "0".repeat(2001) }),
+      })
+    ).rejects.toMatchObject({ status: 400 });
+
+    await expect(
+      demoApiJson("/api/settings/branding", {
+        method: "PUT",
+        body: JSON.stringify({
+          logoDataUrl: `data:image/svg+xml;base64,${btoa(svgPayload)}`,
+        }),
+      })
+    ).rejects.toMatchObject({ status: 400 });
+
+    await expect(
+      demoApiJson("/api/settings/webhook", {
+        method: "PUT",
+        body: JSON.stringify({ webhookUrl: "javascript:alert(1)" }),
+      })
+    ).rejects.toMatchObject({ status: 400 });
+
+    await demoApiJson("/api/settings/email", {
+      method: "PUT",
+      body: JSON.stringify({
+        backend: "resend",
+        from: "Harbour Advisory <noreply@harbouradvisory.example.com.au>",
+        resend: { apiKey: "re_demo_test_key" },
+      }),
+    });
+    await demoApiJson("/api/settings/email/test", {
+      method: "POST",
+      body: JSON.stringify({ to: "verify@example.com.au" }),
+    });
+    const outbox = await demoApiJson<{ emails: OutboxEmailDto[] }>("/api/outbox");
+    expect(outbox.emails[0].kind).toBe("test");
+    expect(outbox.emails[0].recipient).toBe("verify@example.com.au");
+  });
 });

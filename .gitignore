@@ -5,6 +5,7 @@ client/node_modules/
 client/dist/
 site/node_modules/
 site/dist/
+.cloudflare/
 .env
 .env.*
 !.env.example

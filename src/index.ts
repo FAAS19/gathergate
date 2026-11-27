@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { serve } from "@hono/node-server";
 import { createEmailAdapter } from "./adapters/email.js";
 import { createStorageAdapter } from "./adapters/storage.js";
