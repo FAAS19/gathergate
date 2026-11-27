@@ -222,12 +222,13 @@ test("CLI doctor: read-only diagnostics, live health + MCP probe, error states, 
         GATHERGATE_API_KEY: mcpKey.secret,
       },
     });
-    assert.equal(okCode, 0);
     const jsonText = out.text();
     assert.equal(jsonText.includes(live.masterKeyHex), false, "doctor must never echo MASTER_KEY");
     assert.equal(jsonText.includes(mcpKey.secret), false, "doctor must never echo GATHERGATE_API_KEY");
     const parsed = JSON.parse(jsonText) as { ok: boolean; checks: Array<{ name: string; status: string; detail: string }> };
-    assert.equal(parsed.ok, true);
+    const bundleOk = parsed.checks.find((c) => c.name === "bundle")?.status === "ok";
+    assert.equal(okCode, bundleOk ? 0 : 1);
+    assert.equal(parsed.ok, bundleOk);
     assert.equal(parsed.checks.find((c) => c.name === "remote_health")?.status, "ok");
     const mcpCheck = parsed.checks.find((c) => c.name === "remote_mcp");
     assert.equal(mcpCheck?.status, "ok");
@@ -293,6 +294,17 @@ test("CLI doctor: read-only diagnostics, live health + MCP probe, error states, 
       assert.match(dbCheck?.detail || "", /journal=wal/);
       assert.equal(fs.existsSync(`${closedDbPath}-wal`), false, "doctor must not create -wal sidecar");
       assert.equal(fs.existsSync(`${closedDbPath}-shm`), false, "doctor must not create -shm sidecar");
+
+      // Header-only truncated SQLite file (< 1 complete page) must fail closed
+      const truncatedHeader = Buffer.alloc(100);
+      const origFd = fs.openSync(closedDbPath, "r");
+      fs.readSync(origFd, truncatedHeader, 0, 100, 0);
+      fs.closeSync(origFd);
+      fs.writeFileSync(closedDbPath, truncatedHeader);
+      const truncReport = await runDoctor({
+        env: { DATA_DIR: closedDbDir, MASTER_KEY: live.masterKeyHex, BASE_URL: "http://127.0.0.1:1" },
+      });
+      assert.equal(truncReport.checks.find((c) => c.name === "database")?.status, "fail");
     } finally {
       fs.rmSync(closedDbDir, { recursive: true, force: true });
     }
@@ -319,7 +331,7 @@ test("CLI doctor: read-only diagnostics, live health + MCP probe, error states, 
     assert.equal(cleartextReport.checks.find((c) => c.name === "remote_mcp")?.status, "fail");
     assert.match(cleartextReport.checks.find((c) => c.name === "remote_mcp")?.detail || "", /https:\/\//);
 
-    // 9. Upstream JSON-RPC error text echoing a secret is omitted from doctor diagnostics
+    // 9. Upstream JSON-RPC error text OR supportedVersions echoing a secret is omitted from doctor diagnostics
     const echoReport = await runDoctor({
       url: "https://intake.example.com",
       env: { DATA_DIR: live.tmpDir, MASTER_KEY: live.masterKeyHex, GATHERGATE_API_KEY: mcpKey.secret },
@@ -340,6 +352,33 @@ test("CLI doctor: read-only diagnostics, live health + MCP probe, error states, 
     assert.equal(echoReport.ok, false);
     assert.equal(JSON.stringify(echoReport).includes(mcpKey.secret), false);
     assert.match(echoReport.checks.find((c) => c.name === "remote_mcp")?.detail || "", /-32020/);
+
+    const versionEchoReport = await runDoctor({
+      url: "https://intake.example.com",
+      env: { DATA_DIR: live.tmpDir, MASTER_KEY: live.masterKeyHex, GATHERGATE_API_KEY: mcpKey.secret },
+      fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
+        const reqUrl = String(input);
+        if (reqUrl.endsWith("/healthz")) {
+          return new Response(JSON.stringify({ ok: true, service: "gathergate" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        const body = JSON.parse(String(init?.body || "{}")) as { method?: string };
+        if (body.method === "server/discover") {
+          return new Response(
+            JSON.stringify({ jsonrpc: "2.0", id: 1, result: { supportedVersions: [mcpKey.secret, "2026-07-28"] } }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        }
+        return new Response(
+          JSON.stringify({ jsonrpc: "2.0", id: 2, result: { tools: [] } }),
+          { status: 200, headers: { "content-type": "application/json" } }
+        );
+      }) as typeof fetch,
+    });
+    assert.equal(JSON.stringify(versionEchoReport).includes(mcpKey.secret), false);
+    assert.match(versionEchoReport.checks.find((c) => c.name === "remote_mcp")?.detail || "", /2026-07-28/);
 
     // 10. Inherited GATHERGATE_API_KEY is NOT sent to a destination selected by CWD .env
     let dotenvTrapAuthSent = false;
@@ -502,7 +541,7 @@ test("CLI setup: generates configs for all 9 clients, supports mcp setup alias, 
     };
     assert.equal(switched.mcpServers.gathergate.env.GATHERGATE_API_KEY, "gg_live_replace_me");
 
-    // Same preservation check for Zed HTTP Authorization header
+    // Same preservation check for Zed HTTP lowercase authorization header, and case-sensitive path safety
     const zedHttpPath = path.join(tmpDir, "zed-settings.json");
     const zedHttpA = generateClientSetup({
       client: "zed",
@@ -511,15 +550,39 @@ test("CLI setup: generates configs for all 9 clients, supports mcp setup alias, 
     });
     writeClientConfig(zedHttpA, zedHttpPath);
     const zedFilled = JSON.parse(fs.readFileSync(zedHttpPath, "utf8")) as {
-      context_servers: { gathergate: { headers: { Authorization: string } } };
+      context_servers: { gathergate: { url: string; headers: Record<string, string> } };
     };
-    zedFilled.context_servers.gathergate.headers.Authorization = "Bearer gg_live_zed_real_456";
+    zedFilled.context_servers.gathergate.headers = { authorization: "Bearer gg_live_zed_real_456" };
     fs.writeFileSync(zedHttpPath, JSON.stringify(zedFilled, null, 2));
     writeClientConfig(zedHttpA, zedHttpPath);
     const zedPreserved = JSON.parse(fs.readFileSync(zedHttpPath, "utf8")) as {
-      context_servers: { gathergate: { headers: { Authorization: string } } };
+      context_servers: { gathergate: { headers: Record<string, string> } };
     };
     assert.equal(zedPreserved.context_servers.gathergate.headers.Authorization, "Bearer gg_live_zed_real_456");
+
+    // Case-different /MCP path must NOT inherit credentials for /mcp
+    const zedUpperPath = path.join(tmpDir, "zed-upper.json");
+    fs.writeFileSync(
+      zedUpperPath,
+      JSON.stringify({
+        context_servers: {
+          gathergate: {
+            url: "https://intake-a.harbour.com.au/tenant/MCP",
+            headers: { Authorization: "Bearer gg_live_upper_secret" },
+          },
+        },
+      })
+    );
+    const zedLower = generateClientSetup({
+      client: "zed",
+      url: "https://intake-a.harbour.com.au/tenant/mcp",
+      transport: "http",
+    });
+    writeClientConfig(zedLower, zedUpperPath);
+    const zedLowerAfter = JSON.parse(fs.readFileSync(zedUpperPath, "utf8")) as {
+      context_servers: { gathergate: { headers: Record<string, string> } };
+    };
+    assert.equal(zedLowerAfter.context_servers.gathergate.headers.Authorization, "Bearer gg_live_replace_me");
 
     // 7. Dangling symlinks are refused without being replaced (skip if OS disallows unprivileged symlinks)
     const danglingLink = path.join(tmpDir, "dangling-mcp.json");
@@ -676,6 +739,9 @@ test("CLI mcp stdio bridge: real child-process modern 2026-07-28 + legacy initia
       });
       assert.equal(noUrlProc.code, 0);
       assert.equal(trapHits, 0, "gathergate mcp must never load CWD .env GATHERGATE_URL");
+      const noUrlFrame = JSON.parse(noUrlProc.stdout.trim()) as { id: number; result?: { trap?: boolean } };
+      assert.equal(noUrlFrame.id, 7);
+      assert.notEqual(noUrlFrame.result?.trap, true);
 
       // Separate malformed-key assertion: rejected before network I/O without echoing key
       const badKeyProc = await spawnCliProcess(["mcp"], {

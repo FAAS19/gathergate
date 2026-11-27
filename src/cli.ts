@@ -97,10 +97,17 @@ export function isSecureCredentialUrl(rawUrl: string): boolean {
 function inspectSqliteHeaderReadOnly(dbPath: string): { journalMode: "wal" | "rollback"; userVersion: number } {
   const fd = fs.openSync(dbPath, "r");
   try {
+    const stat = fs.fstatSync(fd);
     const header = Buffer.alloc(100);
     const bytesRead = fs.readSync(fd, header, 0, 100, 0);
     if (bytesRead < 100 || header.subarray(0, 16).toString("utf8") !== "SQLite format 3\0") {
       throw new Error("file is not a valid SQLite 3 database");
+    }
+    const rawPageSize = header.readUInt16BE(16);
+    const pageSize = rawPageSize === 1 ? 65536 : rawPageSize;
+    const isPowerOfTwo = pageSize >= 512 && pageSize <= 65536 && (pageSize & (pageSize - 1)) === 0;
+    if (!isPowerOfTwo || stat.size < pageSize) {
+      throw new Error("SQLite database file is truncated or has an invalid page size");
     }
     const journalMode = header[18] === 2 || header[19] === 2 ? "wal" : "rollback";
     const userVersion = header.readUInt32BE(60);
@@ -284,7 +291,7 @@ export async function runDoctor(options?: {
       checks.push({
         name: "database",
         status: "ok",
-        detail: `${cfg.dbPath} readable (journal=${dbInfo.journalMode}, schema_v=${dbInfo.userVersion}).`,
+        detail: `${cfg.dbPath} SQLite header valid (journal=${dbInfo.journalMode}, schema_v=${dbInfo.userVersion}).`,
       });
     } catch (err) {
       checks.push({
@@ -505,12 +512,15 @@ export async function runDoctor(options?: {
                     : "POST /mcp tools/list returned an unexpected JSON-RPC payload.",
               });
             } else {
-              const versions = discoverJson.result.supportedVersions.map(String).join(", ");
+              // Allow only standard YYYY-MM-DD protocol dates so untrusted upstream strings cannot leak secrets.
+              const safeVersions = discoverJson.result.supportedVersions
+                .filter((v): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v));
+              const versionsLabel = safeVersions.length > 0 ? safeVersions.join(", ") : `${discoverJson.result.supportedVersions.length} version(s)`;
               const toolCount = toolsJson.result.tools.length;
               checks.push({
                 name: "remote_mcp",
                 status: "ok",
-                detail: `POST /mcp authenticated (${toolCount} tools, protocol versions: ${versions}).`,
+                detail: `POST /mcp authenticated (${toolCount} tools, protocol versions: ${versionsLabel}).`,
               });
             }
           }
@@ -1030,6 +1040,14 @@ function isPlaceholderCredential(value: string): boolean {
   );
 }
 
+function canonicalExactUrl(raw: string): string {
+  const parsed = new URL(raw.trim());
+  if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error("Invalid endpoint URL");
+  }
+  return parsed.toString().replace(/\/+$/, "");
+}
+
 function preserveExistingCredential(
   existingEntry: unknown,
   nextEntry: Record<string, unknown>
@@ -1040,7 +1058,7 @@ function preserveExistingCredential(
   const prev = existingEntry as Record<string, unknown>;
   const cloned: Record<string, unknown> = { ...nextEntry };
 
-  // Preserve stdio GATHERGATE_API_KEY only for the same base URL.
+  // Preserve stdio GATHERGATE_API_KEY only for the exact same endpoint URL.
   const nextEnv =
     cloned.env && typeof cloned.env === "object" && !Array.isArray(cloned.env)
       ? ({ ...(cloned.env as Record<string, unknown>) } as Record<string, unknown>)
@@ -1061,7 +1079,7 @@ function preserveExistingCredential(
     !isPlaceholderCredential(prevEnv.GATHERGATE_API_KEY)
   ) {
     try {
-      if (normalizeBaseUrl(prevEnv.GATHERGATE_URL) === normalizeBaseUrl(nextEnv.GATHERGATE_URL)) {
+      if (canonicalExactUrl(prevEnv.GATHERGATE_URL) === canonicalExactUrl(nextEnv.GATHERGATE_URL)) {
         nextEnv.GATHERGATE_API_KEY = prevEnv.GATHERGATE_API_KEY;
         cloned.env = nextEnv;
       }
@@ -1070,7 +1088,7 @@ function preserveExistingCredential(
     }
   }
 
-  // Preserve HTTP Authorization header only for the same MCP endpoint URL.
+  // Preserve HTTP Authorization header (case-insensitive lookup) only for the exact same endpoint URL.
   const nextHeaders =
     cloned.headers && typeof cloned.headers === "object" && !Array.isArray(cloned.headers)
       ? ({ ...(cloned.headers as Record<string, unknown>) } as Record<string, unknown>)
@@ -1079,18 +1097,20 @@ function preserveExistingCredential(
     prev.headers && typeof prev.headers === "object" && !Array.isArray(prev.headers)
       ? (prev.headers as Record<string, unknown>)
       : null;
+  const prevAuthEntry = prevHeaders
+    ? Object.entries(prevHeaders).find(([k]) => k.toLowerCase() === "authorization")?.[1]
+    : undefined;
   if (
     typeof cloned.url === "string" &&
     typeof prev.url === "string" &&
     nextHeaders &&
-    prevHeaders &&
     nextHeaders.Authorization === "Bearer gg_live_replace_me" &&
-    typeof prevHeaders.Authorization === "string" &&
-    !isPlaceholderCredential(prevHeaders.Authorization)
+    typeof prevAuthEntry === "string" &&
+    !isPlaceholderCredential(prevAuthEntry)
   ) {
     try {
-      if (normalizeMcpEndpointUrl(prev.url) === normalizeMcpEndpointUrl(cloned.url)) {
-        nextHeaders.Authorization = prevHeaders.Authorization;
+      if (canonicalExactUrl(prev.url) === canonicalExactUrl(cloned.url)) {
+        nextHeaders.Authorization = prevAuthEntry;
         cloned.headers = nextHeaders;
       }
     } catch {
