@@ -125,6 +125,111 @@ function resolveDefaultBaseUrl(env: NodeJS.ProcessEnv, host: string, port: numbe
   return `http://${formattedHost}:${port}`;
 }
 
+export interface ConfigInspection {
+  dataDir: string;
+  dbPath: string;
+  host: string;
+  port: number | null;
+  baseUrl: string;
+  storageBackend: StorageBackend | null;
+  emailBackend: EmailBackend | null;
+  masterKeyState: "env" | "file" | "missing" | "invalid";
+  masterKeyFilePath?: string;
+  errors: string[];
+}
+
+/** Read-only config inspection for CLI diagnostics (never creates directories or key files). */
+export function inspectConfig(env: NodeJS.ProcessEnv = process.env): ConfigInspection {
+  const errors: string[] = [];
+  const dataDir = path.resolve(env.DATA_DIR || "./data");
+  const dbPath = env.DB_PATH || path.join(dataDir, "gathergate.sqlite");
+  const host = (env.HOST || "127.0.0.1").trim();
+
+  let port: number | null = 3080;
+  try {
+    port = parsePort(env.PORT, 3080);
+  } catch (err) {
+    port = null;
+    errors.push(err instanceof Error ? err.message : String(err));
+  }
+
+  const rawStorage = (env.STORAGE_BACKEND || "local").trim().toLowerCase();
+  let storageBackend: StorageBackend | null = null;
+  if (rawStorage === "local" || rawStorage === "s3") {
+    storageBackend = rawStorage;
+  } else {
+    errors.push(`Invalid STORAGE_BACKEND "${env.STORAGE_BACKEND}"; expected "local" or "s3".`);
+  }
+
+  const rawEmail = (env.EMAIL_BACKEND || "console").trim().toLowerCase();
+  let emailBackend: EmailBackend | null = null;
+  if (rawEmail === "console" || rawEmail === "smtp" || rawEmail === "resend") {
+    emailBackend = rawEmail;
+  } else {
+    errors.push(`Invalid EMAIL_BACKEND "${env.EMAIL_BACKEND}"; expected "console", "smtp", or "resend".`);
+  }
+
+  let masterKeyState: ConfigInspection["masterKeyState"] = "missing";
+  let masterKeyFilePath: string | undefined;
+  const rawKey = env.MASTER_KEY?.trim();
+  if (rawKey) {
+    if (/^[0-9a-fA-F]{64}$/.test(rawKey)) {
+      masterKeyState = "env";
+    } else {
+      masterKeyState = "invalid";
+      errors.push("MASTER_KEY must be a 64-character hex string (32 bytes)");
+    }
+  } else {
+    const keyFile = path.join(dataDir, ".master.key");
+    const legacyKeyFile = path.join(dataDir, ".dev-master.key");
+    const candidate = fs.existsSync(keyFile)
+      ? keyFile
+      : fs.existsSync(legacyKeyFile)
+        ? legacyKeyFile
+        : undefined;
+    if (candidate) {
+      masterKeyFilePath = candidate;
+      try {
+        readValidatedKeyFile(candidate);
+        masterKeyState = "file";
+      } catch (err) {
+        masterKeyState = "invalid";
+        errors.push(err instanceof Error ? err.message : String(err));
+      }
+    }
+  }
+
+  if (storageBackend === "s3") {
+    if (
+      !env.S3_ENDPOINT?.trim() ||
+      !env.S3_BUCKET?.trim() ||
+      !env.S3_ACCESS_KEY_ID?.trim() ||
+      !env.S3_SECRET_ACCESS_KEY?.trim()
+    ) {
+      errors.push("S3 storage requires S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY");
+    }
+  }
+  if (emailBackend === "resend" && !env.RESEND_API_KEY?.trim()) {
+    errors.push("RESEND_API_KEY is required when EMAIL_BACKEND=resend");
+  }
+  if (emailBackend === "smtp" && !env.SMTP_HOST?.trim()) {
+    errors.push("SMTP_HOST is required when EMAIL_BACKEND=smtp");
+  }
+
+  return {
+    dataDir,
+    dbPath,
+    host,
+    port,
+    baseUrl: resolveDefaultBaseUrl(env, host, port ?? 3080),
+    storageBackend,
+    emailBackend,
+    masterKeyState,
+    masterKeyFilePath,
+    errors,
+  };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const dataDir = path.resolve(env.DATA_DIR || "./data");
   const dbPath = env.DB_PATH || path.join(dataDir, "gathergate.sqlite");

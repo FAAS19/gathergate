@@ -8,6 +8,42 @@
     "source": "github"
   },
   "version": "1.0.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "gathergate",
+      "version": "1.0.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "isRequired": true,
+          "description": "Start GatherGate's zero-dependency stdio-to-HTTP MCP bridge"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "GATHERGATE_URL",
+          "description": "Base URL of your self-hosted GatherGate instance (e.g. https://intake.yourfirm.com.au or http://127.0.0.1:3080)",
+          "isRequired": false,
+          "format": "string",
+          "default": "http://127.0.0.1:3080"
+        },
+        {
+          "name": "GATHERGATE_API_KEY",
+          "description": "Scoped workspace API key (gg_live_...) with mcp:read (plus requests:write for creating packs or sending reminders)",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ],
   "remotes": [
     {
       "type": "streamable-http",
@@ -22,9 +58,18 @@
       "headers": [
         {
           "name": "Authorization",
-          "description": "Bearer workspace API key (Bearer gg_live_...) with mcp:read scope (plus requests:write for creating packs or sending reminders)",
+          "description": "Bearer workspace API key header",
           "isRequired": true,
-          "isSecret": true
+          "isSecret": true,
+          "value": "Bearer {api_key}",
+          "variables": {
+            "api_key": {
+              "description": "Scoped workspace API key (gg_live_...) with mcp:read (plus requests:write for creating packs or sending reminders)",
+              "isRequired": true,
+              "isSecret": true,
+              "format": "string"
+            }
+          }
         }
       ]
     }
