@@ -3,16 +3,17 @@ title: Configuration (.env) Reference
 description: Every environment variable supported by GatherGate, with defaults and production rules.
 ---
 
-GatherGate reads configuration from environment variables (or `.env` via `docker compose`). Copy `.env.example` from the repository root to get started.
+GatherGate reads configuration from environment variables (or `.env` automatically when started with `npx gathergate` / `gathergate serve`, `gathergate doctor`, or `docker compose`). The stdio bridge (`gathergate mcp`) intentionally ignores `.env` files in the working directory. Copy `.env.example` from the repository root to get started.
 
 ## Core Server & Security
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
 | `HOST` | `127.0.0.1` | Bind address. Keep `127.0.0.1` on hosts and let your reverse proxy terminate TLS. In Docker, `docker-compose.yml` sets `0.0.0.0` inside the container while publishing only `127.0.0.1:3080`. |
-| `PORT` | `3080` | Listening HTTP port. |
-| `BASE_URL` | `http://localhost:3080` | Public external origin used in magic links, emails, and webhook `export_url` values. Must be `https://...` in production so cookies receive the `Secure` attribute. |
+| `PORT` | `3080` | Listening HTTP port (`0` selects an ephemeral port). |
+| `BASE_URL` | `http://127.0.0.1:3080` | Public external origin used in magic links, emails, and webhook `export_url` values. When unset, falls back automatically to `RENDER_EXTERNAL_URL`, `https://<RAILWAY_PUBLIC_DOMAIN>`, `https://<FLY_APP_NAME>.fly.dev`, or `http://<HOST>:<PORT>` (`http://localhost:<PORT>` for wildcard binds). Must be `https://...` in production so cookies receive the `Secure` attribute. |
 | `DATA_DIR` | `./data` | Directory holding `gathergate.sqlite` (WAL), encrypted `blobs/` (when `STORAGE_BACKEND=local`), and auto-generated `.master.key` fallback. |
+| `DB_PATH` | `DATA_DIR/gathergate.sqlite` | Optional explicit path to the SQLite WAL database file. |
 | `MASTER_KEY` | *(auto-generated)* | 64-character hex string (32 bytes) used for HKDF-SHA256 + AES-256-GCM encryption. Generate with `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"`. |
 | `TRUST_PROXY` | `false` | Set `true` **only** behind a trusted TLS reverse proxy so per-IP rate limiting reads forwarded client IPs instead of `127.0.0.1`. |
 | `NODE_ENV` | `development` | Set `production` for hardened production runs. |
@@ -21,7 +22,7 @@ GatherGate reads configuration from environment variables (or `.env` via `docker
 
 | Variable | Default | Description |
 | :--- | :--- | :--- |
-| `CRON_INTERVAL_MINUTES` | `15` | Cadence for automated reminder chases and expired/completed blob purges. Set `0` to disable the in-process timer. |
+| `CRON_INTERVAL_MINUTES` | `15` | Cadence for automated reminder chases, overdue pack checks, exponential webhook retries, and expired/completed blob purges. Set `0` to disable the in-process timer. |
 | `DEFAULT_PURGE_DAYS` | `30` | Days after request completion before encrypted blobs and sensitive fields are purged. Packs using sensitive national ID validators (`au_tfn_mod11`, `au_medicare_mod10`, `uk_nino`, `us_ssn`) automatically default to `14` days. |
 
 ## Storage Backend

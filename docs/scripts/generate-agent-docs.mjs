@@ -8,7 +8,10 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DOCS_ROOT = path.resolve(HERE, "..");
 const CONTENT_DIR = path.join(DOCS_ROOT, "src", "content", "docs");
 const OUT_DIR = path.resolve(DOCS_ROOT, "..", "site", "dist", "docs");
-const SITE_ORIGIN = "https://gathergate.tensorforge.dev";
+const SITE_ORIGIN = (process.env.DOCS_SITE || "https://gathergate.tensorforge.dev").replace(/\/+$/, "");
+const RAW_DOCS_BASE = process.env.DOCS_BASE || "/docs";
+const DOCS_BASE = RAW_DOCS_BASE.endsWith("/") ? RAW_DOCS_BASE : `${RAW_DOCS_BASE}/`;
+const SITE_ROOT = DOCS_BASE.replace(/docs\/$/, "") || "/";
 
 // Keep compiled llms-full.txt in the exact reading order of the Starlight sidebar.
 const ORDERED_SLUGS = [
@@ -63,7 +66,16 @@ function parseFrontmatter(raw) {
   return { title, description, body: match[2] };
 }
 
-function stripMdxToMarkdown(body) {
+function resolveCanonicalHref(rawHref, pageUrl) {
+  if (/^(https?:|mailto:|#)/i.test(rawHref)) return rawHref;
+  try {
+    return new URL(rawHref, pageUrl).toString();
+  } catch {
+    return rawHref;
+  }
+}
+
+function stripMdxToMarkdown(body, pageUrl) {
   const lines = body.split("\n");
   const out = [];
   let inCodeFence = false;
@@ -100,7 +112,8 @@ function stripMdxToMarkdown(body) {
       continue;
     }
     if (inCallout) {
-      out.push(line.trim() ? `> ${line}` : ">");
+      const rewrittenCallout = line.replace(/\]\(([^)\s]+)\)/g, (_m, href) => `](${resolveCanonicalHref(href, pageUrl)})`);
+      out.push(rewrittenCallout.trim() ? `> ${rewrittenCallout}` : ">");
       continue;
     }
 
@@ -119,21 +132,19 @@ function stripMdxToMarkdown(body) {
       continue;
     }
 
-    out.push(line);
+    // Resolve relative Markdown links outside code fences to canonical URLs
+    const rewritten = line.replace(/\]\(([^)\s]+)\)/g, (_m, href) => `](${resolveCanonicalHref(href, pageUrl)})`);
+    out.push(rewritten);
   }
 
-  // Convert multiline <LinkCard ... /> elements into clean Markdown bullet items
-  let text = out.join("\n").replace(/<LinkCard\b([\s\S]*?)\/>/g, (_m, attrs) => {
+  // Convert multiline <LinkCard ... /> elements into column-0 Markdown bullet items
+  let text = out.join("\n").replace(/^[ \t]*<LinkCard\b([\s\S]*?)\/>/gm, (_m, attrs) => {
     const titleMatch = attrs.match(/\btitle=["']([^"']+)["']/);
     const descMatch = attrs.match(/\bdescription=["']([^"']+)["']/);
     const hrefMatch = attrs.match(/\bhref=["']([^"']+)["']/);
     const title = titleMatch ? titleMatch[1] : "Guide";
     const desc = descMatch ? `: ${descMatch[1]}` : "";
-    const href = hrefMatch
-      ? hrefMatch[1].startsWith("/")
-        ? `${SITE_ORIGIN}${hrefMatch[1]}`
-        : hrefMatch[1]
-      : `${SITE_ORIGIN}/docs/`;
+    const href = hrefMatch ? resolveCanonicalHref(hrefMatch[1], pageUrl) : `${SITE_ORIGIN}${DOCS_BASE}`;
     return `- [${title}](${href})${desc}`;
   });
 
@@ -162,9 +173,9 @@ for (const doc of discovered) {
     throw new Error(`Disallowed em-dash (U+2014) found in ${doc.absPath}`);
   }
   const { title, description, body } = parseFrontmatter(raw);
-  const cleanBody = stripMdxToMarkdown(body);
-  const pageUrl = doc.slug === "index" ? `${SITE_ORIGIN}/docs/` : `${SITE_ORIGIN}/docs/${doc.slug}/`;
-  const mdUrl = `${SITE_ORIGIN}/docs/${doc.slug}.md`;
+  const pageUrl = doc.slug === "index" ? `${SITE_ORIGIN}${DOCS_BASE}` : `${SITE_ORIGIN}${DOCS_BASE}${doc.slug}/`;
+  const mdUrl = `${SITE_ORIGIN}${DOCS_BASE}${doc.slug}.md`;
+  const cleanBody = stripMdxToMarkdown(body, pageUrl);
 
   const markdown = [
     `# ${title || doc.slug}`,
@@ -200,9 +211,9 @@ const fullTxt = [
   "",
   "> Self-hosted, MIT-licenced magic-link client document intake portal, deterministic validator engine, AES-256-GCM encrypted review vault, signed webhook queue, and built-in stateless MCP 2.0 server.",
   "",
-  `- Quick index: ${SITE_ORIGIN}/llms.txt`,
-  `- Full documentation: ${SITE_ORIGIN}/docs/llms-full.txt`,
-  `- Per-page Markdown: append .md to any documentation page slug (for example, ${SITE_ORIGIN}/docs/guides/ai-agents.md)`,
+  `- Quick index: ${SITE_ORIGIN}${SITE_ROOT}llms.txt`,
+  `- Full documentation: ${SITE_ORIGIN}${DOCS_BASE}llms-full.txt`,
+  `- Per-page Markdown: append .md to any documentation page slug (for example, ${SITE_ORIGIN}${DOCS_BASE}guides/ai-agents.md)`,
   `- Source repository: https://github.com/FAAS19/gathergate`,
   `- Contact: contact@tensorforge.dev`,
   "",

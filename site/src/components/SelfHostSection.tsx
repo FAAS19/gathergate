@@ -60,9 +60,9 @@ const HIGHLIGHTS = [
   },
   {
     icon: ShieldCheck,
-    title: "Zero telemetry under MIT licence",
+    title: "Built-in MCP 2.0 & zero telemetry",
     description:
-      "Zero analytics, zero crash reports, and zero outbound requests unless you configure SMTP, Resend, S3, or webhooks.",
+      "Connect AI agents via POST /mcp or npx gathergate mcp with zero raw IDs, notes, files, or tokens exposed, zero analytics, and MIT source.",
   },
 ] as const;
 
@@ -250,7 +250,21 @@ export function SelfHostSection() {
                   DATA_DIR/.master.key
                 </code>{" "}
                 and reminds operators to move it into environment variables for
-                production.
+                production. Need Render, Coolify, Railway, Umbrel, or Fly.io? See{" "}
+                <a
+                  href="./docs/deployment/one-click-templates/"
+                  className="text-[var(--ink)] underline underline-offset-2 hover:text-[var(--accent)]"
+                >
+                  1-click deploy templates
+                </a>{" "}
+                and{" "}
+                <a
+                  href="./docs/guides/ai-agents/"
+                  className="text-[var(--ink)] underline underline-offset-2 hover:text-[var(--accent)]"
+                >
+                  MCP CLI setup
+                </a>
+                .
               </p>
             )}
           </div>

@@ -28,9 +28,26 @@ GatherGate's MCP endpoint is **metadata-only by design**, strictly separating wo
 Reference `GATHERGATE_API_KEY` via environment variables or editor secret inputs instead of hardcoding `gg_live_...` tokens in shared repositories.
 :::
 
+## Zero-Docker CLI Setup (`npx gathergate`)
+
+GatherGate ships three built-in CLI helpers (zero extra dependencies, works without Docker):
+
+```bash
+# 1. Verify Node runtime, DATA_DIR, SQLite header, /healthz, and authenticated POST /mcp
+npx gathergate doctor --url https://intake.yourfirm.com.au
+
+# 2. Print MCP client config for any supported tool (add --write for JSON configs; claude-code prints a CLI command and codex prints TOML)
+npx gathergate setup --client claude-desktop --url https://intake.yourfirm.com.au --write
+
+# 3. Run the built-in stdio-to-HTTP MCP bridge (zero mcp-remote needed)
+GATHERGATE_URL=https://intake.yourfirm.com.au GATHERGATE_API_KEY=gg_live_... npx gathergate mcp
+```
+
+Both `doctor` and `mcp` require `https://` before transmitting `GATHERGATE_API_KEY` to non-loopback hosts (`http://` is permitted only on `localhost`, `127.0.0.1`, and `[::1]`), disable HTTP redirects (`redirect: "error"`), and never echo secrets into reports or `stderr`.
+
 ## Step 2: Connect Your AI Agent
 
-Replace `https://intake.yourfirm.com.au/mcp` with your GatherGate base URL (`http://127.0.0.1:3080/mcp` for local setups).
+Replace `https://intake.yourfirm.com.au/mcp` with your GatherGate base URL (`http://127.0.0.1:3080/mcp` for local setups). You can generate any tab below automatically with `npx gathergate setup --client <name> --url <url>`.
 
 <Tabs>
   <TabItem label="Antigravity">
@@ -69,22 +86,17 @@ npx skills add FAAS19/gathergate
   <TabItem label="Claude Desktop">
 For native remote connectors (Settings > Connectors), add `https://intake.yourfirm.com.au/mcp` with header `Authorization: Bearer <GATHERGATE_API_KEY>`.
 
-Or bridge via `mcp-remote` inside `claude_desktop_config.json`:
+Or use GatherGate's built-in stdio bridge directly inside `claude_desktop_config.json` (zero `mcp-remote` required; run `npx gathergate setup --client claude-desktop --url https://intake.yourfirm.com.au --write` to merge it safely):
 
 ```json
 {
   "mcpServers": {
     "gathergate": {
       "command": "npx",
-      "args": [
-        "-y",
-        "mcp-remote",
-        "https://intake.yourfirm.com.au/mcp",
-        "--header",
-        "Authorization:${AUTH_HEADER}"
-      ],
+      "args": ["-y", "gathergate", "mcp"],
       "env": {
-        "AUTH_HEADER": "Bearer gg_live_replace_me"
+        "GATHERGATE_URL": "https://intake.yourfirm.com.au",
+        "GATHERGATE_API_KEY": "gg_live_replace_me"
       }
     }
   }
@@ -175,7 +187,7 @@ Add to `cline_mcp_settings.json`:
 ```
   </TabItem>
   <TabItem label="Zed">
-Add to Zed `settings.json`:
+Add to Zed `settings.json` (or run `npx gathergate setup --client zed --url https://intake.yourfirm.com.au --write`; pass `--transport stdio` for the local `npx -y gathergate mcp` stdio entry):
 
 ```json
 {
@@ -220,9 +232,11 @@ For agents that read skills from disk, the exact same files live at `skills/gath
 
 GatherGate supports both **MCP `2026-07-28`** (stateless `server/discover`, `resultType: "complete"`, `Mcp-Method`/`Mcp-Name` header validation, `ttlMs`/`cacheScope`) and legacy revisions (`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`).
 
-Verify your live endpoint with `curl`:
+Verify your live endpoint with `npx gathergate doctor` or `curl`:
 
 ```bash
+GATHERGATE_API_KEY=gg_live_... npx gathergate doctor --url https://intake.yourfirm.com.au
+
 curl -sS -X POST https://intake.yourfirm.com.au/mcp \
   -H "Authorization: Bearer $GATHERGATE_API_KEY" \
   -H "Content-Type: application/json" \
@@ -233,7 +247,7 @@ curl -sS -X POST https://intake.yourfirm.com.au/mcp \
 
 ## Reading GatherGate Docs from Agents
 
-Every page on `gathergate.tensorforge.dev/docs/` is also served as clean raw Markdown by appending `.md` to its slug, and the complete documentation is compiled into a single file:
+Every page on `gathergate.tensorforge.dev/docs/` is also served as clean raw Markdown by replacing its trailing `/` with `.md` (or fetching `/docs/index.md` for the overview), and the complete documentation is compiled into a single file:
 
 - Concise install index: `https://gathergate.tensorforge.dev/llms.txt`
 - Full agent documentation: `https://gathergate.tensorforge.dev/docs/llms-full.txt`

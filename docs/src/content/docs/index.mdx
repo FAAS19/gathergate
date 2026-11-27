@@ -4,42 +4,42 @@ description: Self-hosted, MIT-licenced magic-link client document intake, determ
 template: doc
 ---
 
-import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
+import { CardGrid, LinkCard } from "@astrojs/starlight/components";
 
 GatherGate is a self-hosted, open-source alternative to Content Snare and FileInvite. Collect client documents and structured details through passwordless magic links with deterministic validation, AES-256-GCM encryption at rest, automated reminders, and keyboard-first review in a single Node.js or Docker runtime.
 
 - **Runtime**: Node.js `>= 22.13` (Node 24+ recommended for built-in `node:sqlite` and `node:crypto.argon2Sync`), 5 backend production dependencies, zero external database.
-- **Zero telemetry**: GatherGate never phones home. Outbound network traffic happens only when you configure SMTP/Resend, S3/R2 storage, or a completion webhook.
+- **Zero telemetry**: GatherGate never phones home. Outbound network traffic happens only when you configure SMTP/Resend, S3/R2 storage, or webhooks.
 
 <CardGrid>
   <LinkCard
     title="Quickstart (30 seconds)"
     description="Run GatherGate locally via npx, Docker, or Docker Compose and verify /healthz."
-    href="/docs/getting-started/quickstart/"
+    href="./getting-started/quickstart/"
   />
   <LinkCard
     title="1-Click Self-Hosted Deploy"
     description="Launch on Render, Coolify, Dokploy, Railway, Umbrel, CasaOS, or Fly.io with persistent /data storage."
-    href="/docs/deployment/one-click-templates/"
+    href="./deployment/one-click-templates/"
   />
   <LinkCard
     title="AI Agents & MCP 2.0"
     description="Connect Antigravity, Claude, Cursor, Codex, Copilot, Windsurf, Cline, or Zed to POST /mcp without exposing raw IDs, notes, or files."
-    href="/docs/guides/ai-agents/"
+    href="./guides/ai-agents/"
   />
   <LinkCard
     title="Reverse Proxy & TLS"
     description="Put Caddy, Nginx, or Cloudflare Tunnel in front of 127.0.0.1:3080 with TRUST_PROXY."
-    href="/docs/deployment/reverse-proxy/"
+    href="./deployment/reverse-proxy/"
   />
   <LinkCard
     title="Webhooks, Retries & API Keys"
     description="Verify 6 signed lifecycle events, inspect dead-letter retries, and mint scoped workspace API keys."
-    href="/docs/guides/webhooks/"
+    href="./guides/webhooks/"
   />
 </CardGrid>
 
-> **Reading with an AI agent?** Fetch [`/docs/llms-full.txt`](/docs/llms-full.txt) for the full compiled guide, or append `.md` to any documentation URL (for example, `/docs/guides/ai-agents.md`).
+> **Reading with an AI agent?** Fetch [`/docs/llms-full.txt`](./llms-full.txt) for the full compiled guide, or replace the trailing `/` on any documentation URL with `.md` (for example, `/docs/guides/ai-agents.md`, or `/docs/index.md` for this overview).
 
 ## Architecture at a Glance
 

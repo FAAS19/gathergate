@@ -21,7 +21,7 @@ GatherGate includes [`render.yaml`](https://github.com/FAAS19/gathergate/blob/ma
 
 1. Open Render Blueprint deploy: `https://render.com/deploy?repo=https://github.com/FAAS19/gathergate`
 2. Select a paid web service plan (`starter` or higher, required by Render for persistent disks) with the preconfigured 10 GB disk mounted at `/data`.
-3. Fill in `BASE_URL` (your `https://<service>.onrender.com` or custom domain) and `MASTER_KEY` (`openssl rand -hex 32`).
+3. `BASE_URL` falls back automatically to Render's `RENDER_EXTERNAL_URL` (set `BASE_URL` explicitly if you attach a custom domain). On first boot without `MASTER_KEY`, GatherGate generates `/data/.master.key`; copy that 64-character hex value into a `MASTER_KEY` environment variable (and back it up offline) so existing encrypted records remain readable.
 4. Confirm `https://<your-domain>/healthz` returns HTTP `200`, then open `/` for first-run workspace setup.
   </TabItem>
   <TabItem label="Coolify">
@@ -42,36 +42,29 @@ Use [`deploy/dokploy/docker-compose.yml`](https://github.com/FAAS19/gathergate/b
   <TabItem label="Railway">
 Use [`deploy/railway/railway.json`](https://github.com/FAAS19/gathergate/blob/main/deploy/railway/railway.json):
 
-1. Create a new Railway service from `ghcr.io/faas19/gathergate:latest` (or link `FAAS19/gathergate` with Dockerfile builder).
+1. Create a new Railway service from `FAAS19/gathergate` using the `DOCKERFILE` builder with Config File Path `/deploy/railway/railway.json` (or deploy `ghcr.io/faas19/gathergate:latest` directly).
 2. Add a Railway **Volume** mounted at `/data` and keep **Replicas** set to `1`.
-3. Set environment variables: `NODE_ENV=production`, `HOST=0.0.0.0`, `PORT=3080`, `DATA_DIR=/data`, `TRUST_PROXY=true`, `RAILWAY_RUN_UID=0` (required by Railway so GatherGate can initialise its SQLite database on Railway's root-owned persistent volume), `BASE_URL=https://<your-railway-domain>`, and `MASTER_KEY` (`openssl rand -hex 32`).
+3. Set environment variables: `NODE_ENV=production`, `HOST=0.0.0.0`, `PORT=3080`, `DATA_DIR=/data`, `TRUST_PROXY=true`, and `MASTER_KEY` (`openssl rand -hex 32`). `BASE_URL` automatically falls back to `https://<RAILWAY_PUBLIC_DOMAIN>` (or set `BASE_URL` explicitly for a custom domain). The container entrypoint repairs `/data` ownership automatically and drops privileges to non-root UID `1000` (`node`).
 4. Configure healthcheck path `/healthz` and expose port `3080`.
   </TabItem>
   <TabItem label="Umbrel">
 Manifests live at [`deploy/umbrel/umbrel-app.yml`](https://github.com/FAAS19/gathergate/blob/main/deploy/umbrel/umbrel-app.yml) and [`deploy/umbrel/docker-compose.yml`](https://github.com/FAAS19/gathergate/blob/main/deploy/umbrel/docker-compose.yml):
 
 - Runs as non-root `user: "1000:1000"` (`node:24-alpine`) with `${APP_DATA_DIR}/data:/data` and `app_proxy` routing to `gathergate_web_1:3080`.
-- `app_proxy` configures `PROXY_AUTH_WHITELIST` strictly for the client magic-link portal (`/c/*`), static bundle assets (`/assets/*`, `/favicon.svg`, `/site.webmanifest`), client API (`/api/client/*`), public workspace logo (`/api/public/*`), Bearer-authenticated MCP (`/mcp`), and `/healthz`. Recipients can open magic links without an Umbrel session (protected by GatherGate's 256-bit magic token and optional 6-digit email OTP) and AI agents can authenticate directly to `POST /mcp` with a scoped Bearer API key (`mcp:read`), while operator console routes remain behind both Umbrel login and GatherGate authentication.
+- `app_proxy` configures `PROXY_AUTH_WHITELIST` strictly for the client magic-link portal (`/c/*`), static bundle assets (`/assets/*`, `/favicon.svg`, `/site.webmanifest`), client API (`/api/client/*`), public workspace logo (`/api/public/*`), Bearer-authenticated MCP (`/mcp`), and `/healthz`. Recipients can open magic links without an Umbrel session (protected by GatherGate's 256-bit magic token and optional 6-digit email OTP) and AI agents can authenticate directly to `POST /mcp` with a scoped Bearer API key (`mcp:read`), while the operator console and REST API routes (`/api/requests*`) remain behind both Umbrel login and GatherGate authentication.
 - Before creating client checklists, set `BASE_URL` to a reachable origin so generated magic links work from client devices: use `http://<device-host>:3080` (for example `http://umbrel.local:3080`) for LAN-only access, or your public `https://...` origin behind a TLS reverse proxy (keep direct container access restricted to the trusted proxy whenever `TRUST_PROXY=true`).
 - Ready for custom Umbrel Community App Stores or upstream submission to `getumbrel/umbrel-apps`.
   </TabItem>
   <TabItem label="CasaOS">
 Import [`deploy/casaos/docker-compose.yml`](https://github.com/FAAS19/gathergate/blob/main/deploy/casaos/docker-compose.yml) via **App Store > Custom Install > Import**:
 
-1. Because GatherGate runs as the non-root `node` user (`UID 1000` in `node:24-alpine`), create and chown the host bind directory before the first start (replace `<app-id>` with the CasaOS app identifier, typically `gathergate`):
-
-```bash
-sudo mkdir -p /DATA/AppData/<app-id>/data
-sudo chown -R 1000:1000 /DATA/AppData/<app-id>/data
-```
-
-2. Maps `/DATA/AppData/$AppID/data:/data` and exposes port `3080`.
-3. Set `BASE_URL` to a reachable origin before creating checklists:
+1. Maps `/DATA/AppData/$AppID/data:/data` and exposes port `3080`. The template retains minimal capabilities (`CHOWN`, `SETUID`, `SETGID`) so GatherGate's entrypoint initialises `/data` ownership automatically and drops to the non-root `node` user (`UID 1000`) with zero manual `chown` step.
+2. Set `BASE_URL` (defaults to `http://casaos.local:3080` in the template) to a reachable origin before creating checklists:
    - **Direct LAN access**: set `BASE_URL=http://<device-host>:3080` and keep `TRUST_PROXY=false`.
    - **Public HTTPS behind a reverse proxy** (Caddy, Nginx, or Cloudflare Tunnel): set `BASE_URL=https://intake.yourfirm.com.au` and **first restrict port `3080`** to loopback (`127.0.0.1:3080`), a private proxy network, or a host firewall allowing only the proxy before enabling `TRUST_PROXY=true` (preventing direct callers from spoofing `X-Forwarded-For` to bypass IP rate limits).
   </TabItem>
   <TabItem label="Fly.io">
-Use [`deploy/fly/fly.toml`](https://github.com/FAAS19/gathergate/blob/main/deploy/fly/fly.toml) (replace `your-gathergate-app` and `syd` with your chosen app name and region):
+Use [`deploy/fly/fly.toml`](https://github.com/FAAS19/gathergate/blob/main/deploy/fly/fly.toml) (replace `your-gathergate-app` and `syd` with your chosen app name and region; `BASE_URL` automatically falls back to `https://<FLY_APP_NAME>.fly.dev` unless overridden):
 
 ```bash
 fly apps create your-gathergate-app

@@ -387,6 +387,20 @@ test("Astro Starlight docs render cleanly under /docs/ with search, navigation, 
   await page.goto(`${baseUrl}/docs/`);
   await expect(page.getByRole("heading", { name: "GatherGate Documentation", level: 1 })).toBeVisible();
 
+  // Verify Starlight sidebar external links never double-prefix /docs/ or add trailing slash to .txt
+  await expect(page.locator("nav a", { hasText: "Full Docs (llms-full.txt)" })).toHaveAttribute(
+    "href",
+    "https://gathergate.tensorforge.dev/docs/llms-full.txt"
+  );
+  await expect(page.locator("nav a", { hasText: "Interactive Demo" })).toHaveAttribute(
+    "href",
+    "https://gathergate.tensorforge.dev/demo/#/"
+  );
+  await expect(page.locator("nav a", { hasText: "GatherGate Home" })).toHaveAttribute(
+    "href",
+    "https://gathergate.tensorforge.dev/"
+  );
+
   await page.getByRole("link", { name: /Quickstart/i }).first().click();
   await expect(page).toHaveURL(/\/docs\/getting-started\/quickstart\/$/);
   await expect(page.getByRole("heading", { name: "Quickstart", level: 1 })).toBeVisible();

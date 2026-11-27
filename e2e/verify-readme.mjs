@@ -65,18 +65,65 @@ for (const match of readme.matchAll(htmlHrefPattern)) {
 
 assert.ok(imageCount >= 3, `Expected at least 3 README images, found ${imageCount}`);
 
-// 2. Enforce zero em-dashes across core repository docs.
-for (const docName of ["README.md", "CHANGELOG.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", "SECURITY.md"]) {
-  const content = fs.readFileSync(path.join(ROOT, docName), "utf8");
-  assert.ok(!content.includes("\u2014"), `Found disallowed em-dash (U+2014) in ${docName}`);
+// 2. Enforce zero em-dashes across core repository docs, agent guides, and bundled skills.
+function listMarkdownFiles(dir) {
+  if (!fs.existsSync(dir)) return [];
+  const files = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const abs = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listMarkdownFiles(abs));
+    } else if (entry.isFile() && /\.(md|mdx)$/i.test(entry.name)) {
+      files.push(abs);
+    }
+  }
+  return files;
 }
 
-// 3. Verify package versions match across root, client, and site, and exist in CHANGELOG.md.
+const docFilesToCheck = [
+  "README.md",
+  "CHANGELOG.md",
+  "CONTRIBUTING.md",
+  "CODE_OF_CONDUCT.md",
+  "SECURITY.md",
+  "AGENTS.md",
+  "site/public/llms.txt",
+  ...listMarkdownFiles(path.join(ROOT, "skills", "gathergate")).map((abs) => path.relative(ROOT, abs)),
+  ...listMarkdownFiles(path.join(ROOT, "docs", "src", "content", "docs")).map((abs) => path.relative(ROOT, abs)),
+];
+for (const relPath of docFilesToCheck) {
+  const content = fs.readFileSync(path.join(ROOT, relPath), "utf8");
+  assert.ok(!content.includes("\u2014"), `Found disallowed em-dash (U+2014) in ${relPath}`);
+}
+
+// 3. Verify release versions stay aligned across packages, MCP manifest, Umbrel app, README badge, and CHANGELOG.
 const rootPkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
 const clientPkg = JSON.parse(fs.readFileSync(path.join(ROOT, "client", "package.json"), "utf8"));
 const sitePkg = JSON.parse(fs.readFileSync(path.join(ROOT, "site", "package.json"), "utf8"));
+const docsPkg = JSON.parse(fs.readFileSync(path.join(ROOT, "docs", "package.json"), "utf8"));
 assert.equal(clientPkg.version, rootPkg.version, "client/package.json version must match root");
 assert.equal(sitePkg.version, rootPkg.version, "site/package.json version must match root");
+assert.equal(docsPkg.version, rootPkg.version, "docs/package.json version must match root");
+
+const serverManifest = JSON.parse(fs.readFileSync(path.join(ROOT, "server.json"), "utf8"));
+assert.equal(serverManifest.version, rootPkg.version, "server.json version must match root");
+for (const pkgEntry of serverManifest.packages ?? []) {
+  assert.equal(pkgEntry.version, rootPkg.version, "server.json packages[].version must match root");
+}
+
+const umbrelApp = fs.readFileSync(path.join(ROOT, "deploy", "umbrel", "umbrel-app.yml"), "utf8");
+const umbrelVerMatch = umbrelApp.match(/^version:\s*["']?([^"'\r\n]+)["']?/m);
+assert.ok(umbrelVerMatch, "deploy/umbrel/umbrel-app.yml missing version field");
+assert.equal(
+  umbrelVerMatch[1].trim(),
+  rootPkg.version,
+  "deploy/umbrel/umbrel-app.yml version must match root"
+);
+
+assert.ok(
+  readme.includes(`release-v${rootPkg.version}-`),
+  `README.md release badge missing version v${rootPkg.version}`
+);
 
 const changelog = fs.readFileSync(path.join(ROOT, "CHANGELOG.md"), "utf8");
 assert.ok(

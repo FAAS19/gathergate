@@ -20,8 +20,9 @@ const COMPARISON_ROWS = [
     fileInvite: "Basic field validation & accepted file lists",
   },
   {
-    criterion: "Automated follow-ups & ZIP export",
-    gathergate: "Scheduled chasers, canonical ZIP & signed HMAC webhooks",
+    criterion: "Automated follow-ups, webhooks & AI agents",
+    gathergate:
+      "Scheduled chasers, canonical ZIP, 6 signed webhooks with retry queue & built-in MCP 2.0",
     contentSnare: "Scheduled reminders & PDF/ZIP exports",
     fileInvite: "Scheduled reminders & portal downloads",
   },

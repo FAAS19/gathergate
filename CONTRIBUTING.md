@@ -29,7 +29,7 @@ Follow the matching checklist whenever you add a feature or fix a bug.
 ### Adding a Feature
 1. **Branch from `main`:** `git checkout -b feat/<short-slug>`.
 2. **Keep scope tight:** Reuse existing helpers, `shadcn/ui` components, and semantic CSS tokens (`client/src/index.css`). Never hardcode hex colours outside CSS tokens or `client/src/lib/brand.ts`.
-3. **Database changes (if any):** Add idempotent, append-only migrations in `src/db/client.ts` (`COLUMN_MIGRATIONS`) and update the base `CREATE TABLE` DDL so fresh and upgraded SQLite databases match. Never rename or drop columns in place.
+3. **Database changes (if any):** Add idempotent, append-only migrations in `src/db/client.ts` (`MIGRATIONS`) and update the base `CREATE TABLE` DDL so fresh and upgraded SQLite databases match. Never rename or drop columns in place.
 4. **Security & tenant boundaries:** Scope every operator query and route by `auth.workspace.id`, validate untrusted inputs at trust boundaries, fail closed on unknown validators or file signatures, and record operator/client mutations in `audit_events`.
 5. **Copy & style invariants:** Use `en-AU` spelling (`normalises`, `standardised`, `colours`, `artefacts`), generic TensorForge attribution (`contact@tensorforge.dev`), and zero em-dashes (`U+2014`).
 6. **Tests (required):**
