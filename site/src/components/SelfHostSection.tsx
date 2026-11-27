@@ -7,9 +7,12 @@ import {
   ShieldCheck,
 } from "@phosphor-icons/react";
 
-type DeployTabId = "npx" | "run" | "compose";
+type DeployTabId = "npx" | "run" | "compose" | "agent";
 
-const COMMANDS: Record<DeployTabId, { label: string; command: string }> = {
+const COMMANDS: Record<
+  DeployTabId,
+  { label: string; command: string; isPrompt?: boolean }
+> = {
   npx: {
     label: "npx",
     command: "npx gathergate",
@@ -30,6 +33,14 @@ const COMMANDS: Record<DeployTabId, { label: string; command: string }> = {
       "git clone https://github.com/FAAS19/gathergate.git \\",
       "  && cd gathergate \\",
       "  && docker compose up -d --build",
+    ].join("\n"),
+  },
+  agent: {
+    label: "AI agent",
+    isPrompt: true,
+    command: [
+      "Read https://gathergate.tensorforge.dev/llms.txt and help me install GatherGate.",
+      "Check whether Docker or Node.js >= 22.13 is installed, ask my preferred port and storage path before making changes, start GatherGate, and verify GET /healthz returns 200.",
     ].join("\n"),
   },
 };
@@ -55,7 +66,12 @@ const HIGHLIGHTS = [
   },
 ] as const;
 
-const DEPLOY_TAB_ORDER: readonly DeployTabId[] = ["npx", "run", "compose"];
+const DEPLOY_TAB_ORDER: readonly DeployTabId[] = [
+  "npx",
+  "run",
+  "compose",
+  "agent",
+];
 
 export function SelfHostSection() {
   const [activeTab, setActiveTab] = useState<DeployTabId>("npx");
@@ -195,29 +211,48 @@ export function SelfHostSection() {
               >
                 <pre
                   tabIndex={0}
-                  aria-label={`${COMMANDS[activeTab].label} command`}
-                  className="overflow-x-auto rounded font-mono text-[13px] leading-relaxed [scrollbar-color:#334155_transparent] [scrollbar-width:thin] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6EE7B7]"
+                  aria-label={`${COMMANDS[activeTab].label} ${COMMANDS[activeTab].isPrompt ? "prompt" : "command"}`}
+                  className={`rounded font-mono text-[13px] leading-relaxed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6EE7B7] ${
+                    COMMANDS[activeTab].isPrompt
+                      ? "whitespace-pre-wrap break-words"
+                      : "overflow-x-auto [scrollbar-color:#334155_transparent] [scrollbar-width:thin]"
+                  }`}
                 >
                   <code>
-                    <span className="select-none text-[#6EE7B7]">$ </span>
+                    {!COMMANDS[activeTab].isPrompt && (
+                      <span className="select-none text-[#6EE7B7]">$ </span>
+                    )}
                     {COMMANDS[activeTab].command}
                   </code>
                 </pre>
               </div>
             </div>
 
-            <p className="mt-3.5 text-sm leading-relaxed text-[var(--ink-muted)]">
-              First boot automatically generates{" "}
-              <code className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-xs text-[var(--ink)]">
-                MASTER_KEY
-              </code>{" "}
-              at{" "}
-              <code className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-xs text-[var(--ink)]">
-                DATA_DIR/.master.key
-              </code>{" "}
-              and reminds operators to move it into environment variables for
-              production.
-            </p>
+            {COMMANDS[activeTab].isPrompt ? (
+              <p className="mt-3.5 text-sm leading-relaxed text-[var(--ink-muted)]">
+                Paste into Antigravity, Claude Code, Codex, or Cursor. Uses{" "}
+                <a
+                  href="./llms.txt"
+                  className="font-mono text-xs text-[var(--ink)] underline underline-offset-2 hover:text-[var(--accent)]"
+                >
+                  /llms.txt
+                </a>{" "}
+                with safe prerequisite checks.
+              </p>
+            ) : (
+              <p className="mt-3.5 text-sm leading-relaxed text-[var(--ink-muted)]">
+                First boot automatically generates{" "}
+                <code className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-xs text-[var(--ink)]">
+                  MASTER_KEY
+                </code>{" "}
+                at{" "}
+                <code className="rounded bg-[var(--surface-muted)] px-1.5 py-0.5 text-xs text-[var(--ink)]">
+                  DATA_DIR/.master.key
+                </code>{" "}
+                and reminds operators to move it into environment variables for
+                production.
+              </p>
+            )}
           </div>
 
           <div className="space-y-6 lg:col-span-5">

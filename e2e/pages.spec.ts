@@ -22,6 +22,7 @@ const MIME_TYPES: Record<string, string> = {
   ".webp": "image/webp",
   ".woff2": "font/woff2",
   ".woff": "font/woff",
+  ".txt": "text/plain; charset=utf-8",
   ".webmanifest": "application/manifest+json; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".ico": "image/x-icon",
@@ -182,6 +183,13 @@ test("showcase site renders cleanly under /gathergate/ subpath with 0 broken ass
       name: /docker compose/i,
       text: /docker compose up -d --build/,
       copied: /^git clone https:\/\/github\.com\/FAAS19\/gathergate\.git \\\n\s+&& cd gathergate \\\n\s+&& docker compose up -d --build$/,
+      alwaysFit: false,
+    },
+    {
+      name: /AI agent/i,
+      text: /gathergate\.tensorforge\.dev\/llms\.txt/,
+      copied: /^Read https:\/\/gathergate\.tensorforge\.dev\/llms\.txt and help me install GatherGate\.\nCheck whether Docker or Node\.js >= 22\.13 is installed/,
+      alwaysFit: true,
     },
   ];
 
@@ -191,7 +199,7 @@ test("showcase site renders cleanly under /gathergate/ subpath with 0 broken ass
     await expect(pre).toBeVisible();
     await expect(pre).toContainText(deployTab.text);
 
-    if (viewport && viewport.width >= 1024) {
+    if (deployTab.alwaysFit || (viewport && viewport.width >= 1024)) {
       const fitsWithoutScroll = await pre.evaluate((el) => el.scrollWidth <= el.clientWidth);
       expect(fitsWithoutScroll).toBe(true);
     }
@@ -202,6 +210,13 @@ test("showcase site renders cleanly under /gathergate/ subpath with 0 broken ass
     expect(clipboardText).toMatch(deployTab.copied);
     expect(clipboardText.startsWith("$ ")).toBe(false);
   }
+
+  const llmsRes = await page.request.get(`${baseUrl}/gathergate/llms.txt`);
+  expect(llmsRes.status()).toBe(200);
+  expect(llmsRes.headers()["content-type"]).toContain("text/plain");
+  const llmsBody = await llmsRes.text();
+  expect(llmsBody).toContain("GET http://127.0.0.1:3080/healthz");
+  expect(llmsBody).toContain("MASTER_KEY");
 
   await expectAccessible(page, testInfo, "pages-showcase");
   expect(issues).toEqual([]);

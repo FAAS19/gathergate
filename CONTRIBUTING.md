@@ -4,6 +4,15 @@ GatherGate follows a **trunk-based workflow** on a single long-lived branch (`ma
 
 ---
 
+## Core Principles & AI-Assisted Contributions
+
+- **Minimal core:** Keep GatherGate focused on self-hosted magic-link intake, deterministic validation, and operator triage. Regional IDs belong in `src/validators/packs/` rather than hard-coded branches, and backend dependencies stay minimal.
+- **Issue first for features:** Open an issue before coding new features, validator packs, or refactors (small bug fixes and documentation typos can open a PR directly). Keep issues concise (one screen) and written in your own words.
+- **AI-assisted code:** AI coding tools are welcome; unreviewed AI slop is not. You must read, test, and understand every changed line and be able to explain how it interacts with the codebase. If you use a coding agent, run it from the repository root so it loads `AGENTS.md`.
+- **Changelog & lockfiles:** Do not edit `CHANGELOG.md` in PRs (maintainers curate release notes at release time), and avoid unintended lockfile edits.
+
+---
+
 ## Branching & Release Model
 
 - **Single trunk (`main`):** All changes land via short-lived branches and squash-merged pull requests.
@@ -27,15 +36,13 @@ Follow the matching checklist whenever you add a feature or fix a bug.
    - Backend route/store logic: add cases in `tests/`.
    - Client interaction/state logic: add Vitest + Testing Library tests beside the component or page.
    - End-to-end or new screen: extend `e2e/` and verify 0 serious/critical WCAG 2.2 AA violations via `expectAccessible` in Light and Dark themes.
-7. **Update `CHANGELOG.md`:** Add a one-line bullet under `[Unreleased] -> Added` (or `Changed`).
-8. **Run the verification gate** (below), open a PR targeting `main`, and squash-merge once CI is green.
+7. **Run the verification gate** (below), open a PR targeting `main` (leaving `CHANGELOG.md` untouched), and squash-merge once CI is green.
 
 ### Fixing a Bug
 1. **Branch from `main`:** `git checkout -b fix/<short-slug>`.
 2. **Write a failing test first:** Reproduce the bug in `tests/` (backend), Vitest (UI), or `e2e/` (browser) so it cannot regress.
 3. **Fix root cause once:** Search all callers of any shared helper you change; preserve error handling, validation, and rollback behaviour.
-4. **Update `CHANGELOG.md`:** Add a one-line bullet under `[Unreleased] -> Fixed` (or `Security` for security fixes).
-5. **Run the verification gate** (below) and squash-merge via PR with `fix(<scope>): ...`.
+4. **Run the verification gate** (below) and open a PR targeting `main` with `fix(<scope>): ...` (leaving `CHANGELOG.md` untouched).
 
 ---
 

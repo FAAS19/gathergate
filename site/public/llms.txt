@@ -1,0 +1,64 @@
+# GatherGate
+
+> Self-hosted, MIT-licenced magic-link client document intake portal, deterministic validator engine, and operator review console. Built on Node.js >= 22.13 (Node 24+ recommended), Hono (5 backend production dependencies), SQLite WAL (`node:sqlite`), AES-256-GCM per-record encryption, React 19, and Tailwind CSS v4 with zero telemetry.
+
+- Website: https://gathergate.tensorforge.dev/
+- Interactive browser demo (no server): https://gathergate.tensorforge.dev/demo/#/
+- Source repository: https://github.com/FAAS19/gathergate
+- Security policy: https://github.com/FAAS19/gathergate/blob/main/SECURITY.md
+- Contact: contact@tensorforge.dev
+
+## Agent Installation Protocol
+
+Follow these steps in order when helping a user install GatherGate:
+
+1. **Check prerequisites first**:
+   - Run `docker --version` (and `docker compose version`) and/or `node -v` (requires `>= 22.13.0`, Node 24+ recommended).
+2. **Ask before writing files or starting services**:
+   - Confirm preferred runtime: Docker container (`ghcr.io/faas19/gathergate:latest`), Docker Compose from source, or native Node.js.
+   - Confirm host bind address and port (default `127.0.0.1:3080`).
+   - Confirm persistent storage path or Docker volume (default `DATA_DIR=./data` or volume `gathergate_data`).
+3. **Install and start using the user's chosen method**:
+   - **Option A: Docker image (`linux/amd64`, `linux/arm64`)**
+     ```bash
+     docker run -d \
+       --name gathergate \
+       -p 127.0.0.1:3080:3080 \
+       -v gathergate_data:/data \
+       ghcr.io/faas19/gathergate:latest
+     ```
+   - **Option B: Docker Compose from source**
+     ```bash
+     git clone https://github.com/FAAS19/gathergate.git \
+       && cd gathergate \
+       && docker compose up -d --build
+     ```
+   - **Option C: Native Node.js (`npx`, once published on npm)**
+     ```bash
+     npx gathergate
+     ```
+   - **Option D: Native Node.js from source**
+     ```bash
+     git clone https://github.com/FAAS19/gathergate.git \
+       && cd gathergate \
+       && npm ci \
+       && npm --prefix client ci \
+       && npm run build \
+       && NODE_ENV=production HOST=127.0.0.1 PORT=3080 DATA_DIR=./data npm start
+     ```
+4. **Verify health before finishing**:
+   - Check `GET http://127.0.0.1:3080/healthz` returns HTTP `200`.
+   - Tell the user to open `http://127.0.0.1:3080` in their browser to complete initial workspace setup.
+
+## Key Configuration (`.env.example`)
+
+- `MASTER_KEY`: 64-char hex key (32 bytes) for HKDF + AES-256-GCM encryption. If unset on first boot, GatherGate generates one at `DATA_DIR/.master.key` and reminds operators to move it into environment variables for production.
+- `HOST` / `PORT` / `BASE_URL`: Bind `127.0.0.1:3080` locally; set `TRUST_PROXY=true` and `BASE_URL=https://your-domain` only behind a trusted TLS reverse proxy (Caddy, Nginx, or Cloudflare Tunnel).
+- `STORAGE_BACKEND`: `local` (`DATA_DIR/blobs`) or `s3` (S3, Cloudflare R2, MinIO, Backblaze B2 via SigV4).
+- `EMAIL_BACKEND`: `console` (built-in Local Email Outbox), `smtp`, or `resend`.
+- `DEFAULT_PURGE_DAYS`: Default `30` (`14` auto-default for sensitive national ID packs).
+
+## Agent Safety Rules
+
+- Never print, echo, or commit `.env`, `.master.key`, or `MASTER_KEY` values.
+- Never bind GatherGate to `0.0.0.0` or expose port `3080` publicly without a TLS reverse proxy and `BASE_URL=https://...`.
