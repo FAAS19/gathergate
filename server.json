@@ -1,0 +1,32 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "dev.tensorforge/gathergate",
+  "title": "GatherGate",
+  "description": "Self-hosted magic-link client document checklist, deterministic validator, and auto-chaser with metadata-only MCP tools.",
+  "repository": {
+    "url": "https://github.com/FAAS19/gathergate",
+    "source": "github"
+  },
+  "version": "1.0.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://{host}/mcp",
+      "variables": {
+        "host": {
+          "description": "Hostname (and optional port) of your self-hosted GatherGate instance, e.g. intake.yourfirm.com.au",
+          "isRequired": true,
+          "format": "string"
+        }
+      },
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer workspace API key (Bearer gg_live_...) with mcp:read scope (plus requests:write for creating packs or sending reminders)",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

@@ -46,6 +46,7 @@ import {
   type RenderedEmail,
 } from "./emails/templates.js";
 import { seedDemoWorkspace } from "./jobs/demo.js";
+import { handleMcpJsonRpc } from "./mcp/server.js";
 import {
   attemptWebhookDelivery,
   buildWebhookEventPayload,
@@ -373,6 +374,13 @@ export function createApp(deps: GatherGateAppDeps) {
     if (!isPreview) {
       c.header("X-Frame-Options", "DENY");
     }
+  });
+
+  app.use("/mcp", async (c, next) => {
+    if (c.req.method === "POST") {
+      return defaultJsonLimit(c, next);
+    }
+    return next();
   });
 
   app.get("/healthz", (c) => c.json({ ok: true, service: "gathergate" }));
@@ -2973,6 +2981,78 @@ export function createApp(deps: GatherGateAppDeps) {
     const updated = store.getRequestItem(request.id, upload.request_item_id)!;
     const reqAfter = store.getRequestById(request.workspace_id, request.id)!;
     return c.json({ ok: true, requestStatus: reqAfter.status, item: { status: updated.status } });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Built-In Stateless MCP 2.0 Endpoint (POST /mcp, Bearer API Key Only)
+  // ---------------------------------------------------------------------------
+  app.post("/mcp", async (c) => {
+    const authHeader = c.req.header("authorization")?.trim();
+    if (!authHeader) {
+      c.header("WWW-Authenticate", 'Bearer realm="GatherGate MCP"');
+      return c.json({ error: "Bearer API key required for MCP." }, 401);
+    }
+
+    const resolved = resolveScopedAuth(c, "mcp:read");
+    if (resolved.error) {
+      if (resolved.error.status === 401) {
+        resolved.error.headers.set(
+          "WWW-Authenticate",
+          'Bearer realm="GatherGate MCP", error="invalid_token"'
+        );
+      }
+      return resolved.error;
+    }
+    if (resolved.auth.kind !== "api_key") {
+      c.header("WWW-Authenticate", 'Bearer realm="GatherGate MCP"');
+      return c.json({ error: "Bearer API key required for MCP." }, 401);
+    }
+
+    let rawBody: unknown;
+    try {
+      rawBody = await c.req.json();
+    } catch {
+      return c.json(
+        {
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32700, message: "Parse error: invalid JSON body." },
+        },
+        400
+      );
+    }
+
+    const res = await handleMcpJsonRpc(
+      rawBody,
+      {
+        workspace: resolved.auth.workspace,
+        apiKey: resolved.auth.apiKey,
+        scopes: resolved.auth.scopes,
+      },
+      {
+        config,
+        store,
+        sendEmail: sendEmailTracked,
+        nowFn,
+        manualReminderCooldownMs: deps.manualReminderCooldownMs,
+      }
+    );
+
+    c.header("Cache-Control", "no-store");
+    if (res.headers) {
+      for (const [k, v] of Object.entries(res.headers)) {
+        c.header(k, v);
+      }
+    }
+    if (res.status === 202 || !res.body) {
+      return c.body(null, 202);
+    }
+    return c.json(res.body, res.status as 200 | 400);
+  });
+
+  app.all("/mcp", (c) => {
+    c.header("Allow", "POST");
+    return c.json({ error: "Method Not Allowed. GatherGate MCP is stateless; send JSON-RPC via POST /mcp." }, 405);
   });
 
   app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
