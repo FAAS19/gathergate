@@ -2,6 +2,7 @@ import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
 const docsBase = process.env.DOCS_BASE || "/docs";
+const normalizedDocsBase = docsBase.endsWith("/") ? docsBase : `${docsBase}/`;
 
 export default defineConfig({
   site: "https://gathergate.tensorforge.dev",
@@ -30,6 +31,11 @@ export default defineConfig({
         baseUrl: "https://github.com/FAAS19/gathergate/edit/main/docs/",
       },
       customCss: ["./src/styles/custom.css"],
+      expressiveCode: {
+        defaultProps: {
+          wrap: true,
+        },
+      },
       sidebar: [
         {
           label: "Start Here",
@@ -42,6 +48,7 @@ export default defineConfig({
         {
           label: "Self-Hosting",
           items: [
+            { label: "1-Click Deploy Templates", slug: "deployment/one-click-templates" },
             { label: "Reverse Proxy & TLS", slug: "deployment/reverse-proxy" },
             { label: "Storage (Local & S3/R2)", slug: "deployment/storage" },
             { label: "Email Delivery", slug: "deployment/email" },
@@ -51,7 +58,8 @@ export default defineConfig({
         {
           label: "Integrations",
           items: [
-            { label: "Signed Webhooks & n8n", slug: "guides/webhooks" },
+            { label: "AI Agents & MCP 2.0", slug: "guides/ai-agents" },
+            { label: "Webhooks, Retries & API Keys", slug: "guides/webhooks" },
             { label: "Validator Packs", slug: "guides/validator-packs" },
           ],
         },
@@ -64,6 +72,7 @@ export default defineConfig({
         {
           label: "Links",
           items: [
+            { label: "Full Docs (llms-full.txt)", link: `${normalizedDocsBase}llms-full.txt` },
             { label: "Interactive Demo", link: "/demo/#/" },
             { label: "GatherGate Home", link: "/" },
           ],

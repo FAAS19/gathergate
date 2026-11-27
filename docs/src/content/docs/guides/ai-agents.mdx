@@ -1,0 +1,240 @@
+---
+title: AI Agents & MCP 2.0
+description: Connect Antigravity, Claude, Cursor, Codex, Copilot, Windsurf, Cline, or Zed to GatherGate's built-in stateless, metadata-only MCP endpoint and bundled SKILL.md.
+---
+
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+
+GatherGate ships with a **built-in stateless MCP 2.0 server** at `POST /mcp` and a bundled **Agent Skill (`SKILL.md`, `SEP-2640`)**. Because everything runs inside your own GatherGate container or Node.js process, AI agents can create checklists, triage overdue packs, adjust deadlines, and send follow-up reminders **100% offline/self-hosted** with zero external SaaS dependencies.
+
+## Strict Metadata-Only Security Boundary
+
+GatherGate's MCP endpoint is **metadata-only by design**, strictly separating workflow triage from raw client submissions:
+
+- **What MCP tools return**: Request titles, statuses, deadlines, item completion counts, validator keys, operator `review_url` deep links, `client_name` (for non-purged requests; `null` once purged), and masked client emails (`cl***@example.com.au`, or `***@domain` for 1-2 character local parts).
+- **Never exposed to LLMs**: Decrypted national IDs (TFN, Medicare, NINO, SSN), any submitted item text values, client notes, uploaded file names, raw file bytes, download/ZIP streams, workspace secrets (SMTP/Resend/webhook keys), and raw client magic-link tokens (`/c/<token>`).
+- **Human-in-the-loop review**: Every pack summary returns an operator `review_url` (`https://your-host/requests/<id>`). Agents direct humans to inspect uploaded documents or reveal masked IDs inside GatherGate's browser `ReviewSheet`.
+- **Bearer-only + Origin-checked**: `POST /mcp` requires a scoped workspace API key (`Authorization: Bearer gg_live_...`), rejects session cookies (eliminating CSRF), enforces `Origin` validation when present, and logs all mutations under `actor: "api_key"` in `audit_events`.
+
+## Step 1: Mint a Scoped API Key
+
+1. Open your GatherGate instance and navigate to **Settings > API Keys**.
+2. Create a key with the minimum scopes your agent needs:
+   - **Read-only triage**: `mcp:read`
+   - **Create packs, update due dates, and chase clients**: `mcp:read` + `requests:write`
+3. Copy the `gg_live_...` secret once and export it in your shell or secret manager as `GATHERGATE_API_KEY`.
+
+:::caution[Never paste API keys into prompts or committed config files]
+Reference `GATHERGATE_API_KEY` via environment variables or editor secret inputs instead of hardcoding `gg_live_...` tokens in shared repositories.
+:::
+
+## Step 2: Connect Your AI Agent
+
+Replace `https://intake.yourfirm.com.au/mcp` with your GatherGate base URL (`http://127.0.0.1:3080/mcp` for local setups).
+
+<Tabs>
+  <TabItem label="Antigravity">
+Add GatherGate to your Antigravity MCP configuration (`mcp_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "gathergate": {
+      "serverUrl": "https://intake.yourfirm.com.au/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:GATHERGATE_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+GatherGate also advertises `skill://gathergate/SKILL.md` over MCP (`SEP-2640`), or you can install the local skill folder directly from `skills/gathergate/SKILL.md` in the repository.
+  </TabItem>
+  <TabItem label="Claude Code">
+Register the remote Streamable HTTP server via CLI:
+
+```bash
+claude mcp add --transport http gathergate \
+  https://intake.yourfirm.com.au/mcp \
+  --header "Authorization: Bearer $GATHERGATE_API_KEY"
+```
+
+Optionally install the bundled skill so Claude Code loads workflow guidance automatically:
+
+```bash
+npx skills add FAAS19/gathergate
+```
+  </TabItem>
+  <TabItem label="Claude Desktop">
+For native remote connectors (Settings > Connectors), add `https://intake.yourfirm.com.au/mcp` with header `Authorization: Bearer <GATHERGATE_API_KEY>`.
+
+Or bridge via `mcp-remote` inside `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "gathergate": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://intake.yourfirm.com.au/mcp",
+        "--header",
+        "Authorization:${AUTH_HEADER}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer gg_live_replace_me"
+      }
+    }
+  }
+}
+```
+  </TabItem>
+  <TabItem label="Cursor">
+Add to `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
+
+```json
+{
+  "mcpServers": {
+    "gathergate": {
+      "url": "https://intake.yourfirm.com.au/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:GATHERGATE_API_KEY}"
+      }
+    }
+  }
+}
+```
+  </TabItem>
+  <TabItem label="Codex">
+Add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.gathergate]
+url = "https://intake.yourfirm.com.au/mcp"
+bearer_token_env_var = "GATHERGATE_API_KEY"
+```
+  </TabItem>
+  <TabItem label="GitHub Copilot (VS Code)">
+Add to `.vscode/mcp.json`:
+
+```json
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "gathergate_api_key",
+      "description": "GatherGate workspace API key (gg_live_...)",
+      "password": true
+    }
+  ],
+  "servers": {
+    "gathergate": {
+      "type": "http",
+      "url": "https://intake.yourfirm.com.au/mcp",
+      "headers": {
+        "Authorization": "Bearer ${input:gathergate_api_key}"
+      }
+    }
+  }
+}
+```
+  </TabItem>
+  <TabItem label="Windsurf">
+Add to `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "gathergate": {
+      "serverUrl": "https://intake.yourfirm.com.au/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:GATHERGATE_API_KEY}"
+      }
+    }
+  }
+}
+```
+  </TabItem>
+  <TabItem label="Cline">
+Add to `cline_mcp_settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "gathergate": {
+      "type": "streamableHttp",
+      "url": "https://intake.yourfirm.com.au/mcp",
+      "headers": {
+        "Authorization": "Bearer ${env:GATHERGATE_API_KEY}"
+      }
+    }
+  }
+}
+```
+  </TabItem>
+  <TabItem label="Zed">
+Add to Zed `settings.json`:
+
+```json
+{
+  "context_servers": {
+    "gathergate": {
+      "url": "https://intake.yourfirm.com.au/mcp",
+      "headers": {
+        "Authorization": "Bearer gg_live_replace_me"
+      }
+    }
+  }
+}
+```
+  </TabItem>
+</Tabs>
+
+## Bundled Agent Skill (`SKILL.md` / `SEP-2640`)
+
+GatherGate advertises the `io.modelcontextprotocol/skills` extension (`SEP-2640`) in both `server/discover` and legacy `initialize` capabilities. Hosts can inspect digests and pull progressive-disclosure Markdown files on demand:
+
+- `skills/list` and `skills/get` return `frontmatter` plus SHA-256 `digest` and byte `size` for each skill resource.
+- `resources/read` serves:
+  - `skill://gathergate/SKILL.md` (core operator workflows and zero-PII rules)
+  - `skill://gathergate/references/intake-workflows.md` (AU/UK/US/EU packs, OTP defaults, partial submissions)
+  - `skill://gathergate/references/security-boundary.md` (scopes, masking, and audit trail)
+
+For agents that read skills from disk, the exact same files live at `skills/gathergate/` in `FAAS19/gathergate` and inside the published `gathergate` npm package.
+
+## Tool Reference
+
+| Tool | Required Scope | Behaviour |
+| :--- | :--- | :--- |
+| `list_templates` | `mcp:read` | Lists workspace templates, item counts, validator keys, and sensitivity flags. |
+| `list_requests` | `mcp:read` | Lists active/closed packs with `client_name` (non-purged), masked emails (`cl***@example.com.au`), item counts, and `review_url`. |
+| `get_request_status` | `mcp:read` | Returns pack metadata (`client_name` for non-purged packs, masked email), per-item status (`pending`, `submitted`, `approved`, `rejected`), `has_value`, `has_client_note`, `upload_count`, and `review_url`. |
+| `list_overdue_requests` | `mcp:read` | Lists overdue packs (or packs due within `within_days` `0..30`) with `client_name` (non-purged), masked email, and outstanding item labels. |
+| `create_request` | `requests:write` | Creates a checklist from a workspace template and optionally emails the client invite. Never returns the raw client magic token. |
+| `send_reminder` | `requests:write` | Sends a polite manual reminder for outstanding items, enforcing the 15-minute cooldown and per-request concurrency lock. |
+| `update_due_date` | `requests:write` | Updates or clears `due_at` on an active pack. |
+
+## Protocol Versions & Quick Smoke Check
+
+GatherGate supports both **MCP `2026-07-28`** (stateless `server/discover`, `resultType: "complete"`, `Mcp-Method`/`Mcp-Name` header validation, `ttlMs`/`cacheScope`) and legacy revisions (`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`).
+
+Verify your live endpoint with `curl`:
+
+```bash
+curl -sS -X POST https://intake.yourfirm.com.au/mcp \
+  -H "Authorization: Bearer $GATHERGATE_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "MCP-Protocol-Version: 2026-07-28" \
+  -H "Mcp-Method: server/discover" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"server/discover"}'
+```
+
+## Reading GatherGate Docs from Agents
+
+Every page on `gathergate.tensorforge.dev/docs/` is also served as clean raw Markdown by appending `.md` to its slug, and the complete documentation is compiled into a single file:
+
+- Concise install index: `https://gathergate.tensorforge.dev/llms.txt`
+- Full agent documentation: `https://gathergate.tensorforge.dev/docs/llms-full.txt`
+- This page as raw Markdown: `https://gathergate.tensorforge.dev/docs/guides/ai-agents.md`

@@ -23,6 +23,7 @@ const MIME_TYPES: Record<string, string> = {
   ".woff2": "font/woff2",
   ".woff": "font/woff",
   ".txt": "text/plain; charset=utf-8",
+  ".md": "text/markdown; charset=utf-8",
   ".webmanifest": "application/manifest+json; charset=utf-8",
   ".json": "application/json; charset=utf-8",
   ".ico": "image/x-icon",
@@ -400,5 +401,43 @@ test("Astro Starlight docs render cleanly under /docs/ with search, navigation, 
   await page.keyboard.press("Escape");
 
   await expectAccessible(page, testInfo, "pages-docs");
+
+  // Verify new agentic MCP guide and 1-click deploy template guide render & pass WCAG 2.2 AA.
+  await page.goto(`${baseUrl}/docs/guides/ai-agents/`);
+  await expect(page.getByRole("heading", { name: "AI Agents & MCP 2.0", level: 1 })).toBeVisible();
+  await expect(page.getByText("POST /mcp").first()).toBeVisible();
+  await expectAccessible(page, testInfo, "pages-docs-ai-agents");
+
+  await page.goto(`${baseUrl}/docs/deployment/one-click-templates/`);
+  await expect(page.getByRole("heading", { name: "1-Click Self-Hosted Deploy Templates", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Why Not Vercel/i, level: 2 })).toBeVisible();
+  await expectAccessible(page, testInfo, "pages-docs-deploy-templates");
+
+  // Verify auto-generated /docs/llms-full.txt and per-page raw .md endpoints for AI agents.
+  const fullTxtRes = await page.request.get(`${baseUrl}/docs/llms-full.txt`);
+  expect(fullTxtRes.status()).toBe(200);
+  expect(fullTxtRes.headers()["content-type"]).toContain("text/plain");
+  const fullTxt = await fullTxtRes.text();
+  expect(fullTxt).toContain("# GatherGate Documentation (Full Agent Reference)");
+  expect(fullTxt).toContain("POST /mcp");
+  expect(fullTxt).toContain("render.yaml");
+  expect(fullTxt.includes("\u2014")).toBe(false);
+
+  for (const [mdPath, expectedText] of [
+    ["/docs/index.md", "# GatherGate Documentation"],
+    ["/docs/getting-started/quickstart.md", "npx gathergate"],
+    ["/docs/guides/ai-agents.md", "skill://gathergate/SKILL.md"],
+    ["/docs/deployment/one-click-templates.md", "ghcr.io/faas19/gathergate:latest"],
+    ["/docs/guides/webhooks.md", "X-GatherGate-Delivery"],
+  ] as const) {
+    const mdRes = await page.request.get(`${baseUrl}${mdPath}`);
+    expect(mdRes.status(), `Expected 200 for ${mdPath}`).toBe(200);
+    expect(mdRes.headers()["content-type"]).toContain("text/markdown");
+    const mdText = await mdRes.text();
+    expect(mdText).toContain(expectedText);
+    expect(mdText.includes("\u2014")).toBe(false);
+    expect(mdText).not.toContain("import {");
+  }
+
   expect(issues).toEqual([]);
 });

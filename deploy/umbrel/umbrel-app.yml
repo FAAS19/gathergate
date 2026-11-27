@@ -1,0 +1,28 @@
+manifestVersion: 1
+id: gathergate
+category: files
+name: GatherGate
+version: "1.0.0"
+tagline: Self-hosted magic-link client document checklist and encrypted intake vault
+description: >-
+  GatherGate is an open-source, self-hosted client document collection portal,
+  deterministic regional validator (AU/UK/US/EU checksums), encrypted file vault,
+  and automated follow-up engine. Collect tax, legal, onboarding, and patient
+  checklists over passwordless magic links with AES-256-GCM encryption at rest,
+  scoped workspace API keys, signed webhooks, and a metadata-only MCP 2.0 server.
+developer: TensorForge
+website: https://gathergate.tensorforge.dev/
+dependencies: []
+repo: https://github.com/FAAS19/gathergate
+support: https://github.com/FAAS19/gathergate/issues
+port: 3080
+gallery:
+  - https://gathergate.tensorforge.dev/social-preview.png
+path: ""
+defaultUsername: ""
+defaultPassword: ""
+releaseNotes: >-
+  Initial self-hosted Umbrel manifest with persistent /data storage,
+  built-in SQLite WAL, encrypted local blobs, scoped API keys, and MCP 2.0.
+submitter: TensorForge
+submission: https://github.com/FAAS19/gathergate

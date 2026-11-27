@@ -1,0 +1,32 @@
+# Render Blueprint for self-hosted GatherGate (persistent disk required for SQLite WAL & encrypted vault).
+# One-click deploy: https://render.com/deploy?repo=https://github.com/FAAS19/gathergate
+services:
+  - type: web
+    name: gathergate
+    runtime: image
+    plan: starter
+    image:
+      url: ghcr.io/faas19/gathergate:latest
+    healthCheckPath: /healthz
+    disk:
+      name: gathergate-data
+      mountPath: /data
+      sizeGB: 10
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: "3080"
+      - key: DATA_DIR
+        value: /data
+      - key: TRUST_PROXY
+        value: "true"
+      - key: BASE_URL
+        sync: false
+      # Optional: generate with `openssl rand -hex 32`. If left unset, GatherGate creates /data/.master.key on first boot.
+      - key: MASTER_KEY
+        sync: false
+      - key: TZ
+        value: UTC
