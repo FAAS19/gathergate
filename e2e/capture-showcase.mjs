@@ -789,7 +789,7 @@ async function main() {
         s.textContent?.includes("Quarter Records")
       );
       if (target) {
-        const y = target.getBoundingClientRect().top + window.scrollY - 76;
+        const y = target.getBoundingClientRect().top + window.scrollY - 64;
         window.scrollTo({ top: Math.max(0, y), behavior: "instant" });
       }
     });

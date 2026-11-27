@@ -874,9 +874,9 @@ function makeSeedRequestsAndOutbox(nowMs: number, templates: TemplateDto[], blob
     const csvBlob = createCsvBlob([
       "Date,Account,Description,Debit_AUD,Credit_AUD,Balance_AUD",
       "2026-01-05,NAB Business 083-170,Opening Balance,,,48210.45",
-      "2026-01-18,NAB Business 083-170,Reece Plumbing Supplies Inv #88412,4180.00,,44030.45",
+      "2026-01-18,NAB Business 083-170,Southern Cross Pipe & Fittings Inv #88412,4180.00,,44030.45",
       "2026-02-09,NAB Business 083-170,Bayside Strata Progress Claim #3,,18920.00,62950.45",
-      "2026-03-14,NAB Business 083-170,Tradelink Wholesale Inv #4092,3890.35,,59060.10",
+      "2026-03-14,NAB Business 083-170,Portside Trade Wholesale Inv #4092,3890.35,,59060.10",
       "2026-03-31,NAB Business 083-170,Commercial Fitout Settlement,,3880.00,62940.10",
     ]);
     const uplId = "upl_demo_bas_bank";
