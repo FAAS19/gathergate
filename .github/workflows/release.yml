@@ -6,14 +6,11 @@ on:
       - "v*.*.*"
 
 jobs:
-  publish-container:
-    name: Build & publish multi-arch image
+  verify:
+    name: Verify tag, typecheck, build & tests
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-      attestations: write
-      id-token: write
     steps:
       - uses: actions/checkout@v7
 
@@ -25,6 +22,25 @@ jobs:
         run: |
           node -e "const v = require('./package.json').version; const tag = process.env.GITHUB_REF_NAME; if (tag !== 'v' + v) { console.error('Tag', tag, 'does not match package.json v' + v); process.exit(1); }"
           node e2e/verify-readme.mjs
+
+      - name: Install dependencies, typecheck, build & test
+        run: |
+          npm ci
+          npm --prefix client ci
+          npm run typecheck
+          npm run build
+          npm test
+
+  publish-container:
+    name: Build & publish multi-arch image
+    needs: [verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-qemu-action@v4
 
@@ -82,6 +98,7 @@ jobs:
 
   publish-npm:
     name: Stage package on npm (2FA approval required)
+    needs: [verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -92,14 +109,9 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
-          registry-url: "https://registry.npmjs.org"
 
-      - name: Verify release tag matches package.json
-        run: |
-          node -e "const v = require('./package.json').version; const tag = process.env.GITHUB_REF_NAME; if (tag !== 'v' + v) { console.error('Tag', tag, 'does not match package.json v' + v); process.exit(1); }"
-
-      - name: Ensure npm supports OIDC Trusted Publishing
-        run: npm install -g npm@latest
+      - name: Ensure npm supports OIDC Trusted Publishing and staged publish
+        run: npm install -g npm@11.16.0
 
       - name: Install dependencies and build
         run: |
@@ -114,7 +126,7 @@ jobs:
           npm stage publish --provenance --access public --tag "$TAG"
 
   github-release:
-    name: Create GitHub Release
+    name: Create draft GitHub Release
     needs: [publish-container, publish-npm]
     runs-on: ubuntu-latest
     permissions:
@@ -124,5 +136,6 @@ jobs:
 
       - uses: softprops/action-gh-release@v3
         with:
+          draft: true
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}

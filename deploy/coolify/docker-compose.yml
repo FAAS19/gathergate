@@ -3,6 +3,7 @@
 services:
   gathergate:
     image: ghcr.io/faas19/gathergate:latest
+    user: "1000:1000"
     restart: unless-stopped
     environment:
       - SERVICE_URL_GATHERGATE_3080

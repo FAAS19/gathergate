@@ -30,11 +30,13 @@ jobs:
           cache-dependency-path: |
             client/package-lock.json
             site/package-lock.json
+            docs/package-lock.json
 
-      - name: Install client and site dependencies
+      - name: Install client, site, and docs dependencies
         run: |
           npm --prefix client ci
           npm --prefix site ci
+          npm --prefix docs ci
 
       - name: Build GitHub Pages bundle
         run: npm run build:pages

@@ -88,17 +88,66 @@ function resolveMasterKey(
   return { key: generated, source: "file", filePath: keyFile };
 }
 
+function parsePort(val: string | undefined, fallback: number): number {
+  if (val === undefined || val === "") return fallback;
+  const trimmed = val.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(`Invalid PORT "${val}"; expected an integer between 0 and 65535.`);
+  }
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) {
+    throw new Error(`Invalid PORT "${val}"; expected an integer between 0 and 65535.`);
+  }
+  return parsed;
+}
+
+function resolveDefaultBaseUrl(env: NodeJS.ProcessEnv, host: string, port: number): string {
+  const explicit = env.BASE_URL?.trim();
+  if (explicit) return explicit.replace(/\/+$/, "");
+
+  const renderUrl = env.RENDER_EXTERNAL_URL?.trim();
+  if (renderUrl) return renderUrl.replace(/\/+$/, "");
+
+  const railwayDomain = env.RAILWAY_PUBLIC_DOMAIN?.trim();
+  if (railwayDomain) {
+    const withScheme = /^https?:\/\//i.test(railwayDomain) ? railwayDomain : `https://${railwayDomain}`;
+    return withScheme.replace(/\/+$/, "");
+  }
+
+  const flyApp = env.FLY_APP_NAME?.trim();
+  if (flyApp) return `https://${flyApp}.fly.dev`;
+
+  if (host === "0.0.0.0" || host === "::" || host === "[::]") {
+    return `http://localhost:${port}`;
+  }
+  const cleanHost = host.replace(/^\[|\]$/g, "");
+  const formattedHost = cleanHost.includes(":") ? `[${cleanHost}]` : cleanHost;
+  return `http://${formattedHost}:${port}`;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const dataDir = path.resolve(env.DATA_DIR || "./data");
   const dbPath = env.DB_PATH || path.join(dataDir, "gathergate.sqlite");
-  const storageBackend = (env.STORAGE_BACKEND || "local") as StorageBackend;
-  const emailBackend = (env.EMAIL_BACKEND || "console") as EmailBackend;
+  const rawStorage = (env.STORAGE_BACKEND || "local").trim().toLowerCase();
+  if (rawStorage !== "local" && rawStorage !== "s3") {
+    throw new Error(`Invalid STORAGE_BACKEND "${env.STORAGE_BACKEND}"; expected "local" or "s3".`);
+  }
+  const storageBackend: StorageBackend = rawStorage;
+
+  const rawEmail = (env.EMAIL_BACKEND || "console").trim().toLowerCase();
+  if (rawEmail !== "console" && rawEmail !== "smtp" && rawEmail !== "resend") {
+    throw new Error(`Invalid EMAIL_BACKEND "${env.EMAIL_BACKEND}"; expected "console", "smtp", or "resend".`);
+  }
+  const emailBackend: EmailBackend = rawEmail;
+
+  const port = parsePort(env.PORT, 3080);
+  const host = (env.HOST || "127.0.0.1").trim();
   const resolvedKey = resolveMasterKey(env, dataDir);
 
   const config: AppConfig = {
-    port: parseIntSafe(env.PORT, 3080),
-    host: env.HOST || "127.0.0.1",
-    baseUrl: (env.BASE_URL || `http://localhost:${parseIntSafe(env.PORT, 3080)}`).replace(/\/+$/, ""),
+    port,
+    host,
+    baseUrl: resolveDefaultBaseUrl(env, host, port),
     dataDir,
     dbPath,
     masterKey: resolvedKey.key,

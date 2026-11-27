@@ -1,3 +1,4 @@
+import net from "node:net";
 import nodemailer from "nodemailer";
 import type { AppConfig, EmailBackend } from "../config.js";
 import type { WorkspaceRow } from "../db/queries.js";
@@ -42,7 +43,7 @@ export class MemoryEmailAdapter implements EmailAdapter {
 
 class ConsoleEmailAdapter implements EmailAdapter {
   async send(msg: EmailMessage): Promise<void> {
-    console.log(
+    console.error(
       `[GatherGate Email Console]\nTo: ${msg.to}\nSubject: ${msg.subject}\n${msg.text}\n---`
     );
   }
@@ -84,17 +85,76 @@ class SmtpEmailAdapter implements EmailAdapter {
 
   constructor(
     smtp: NonNullable<AppConfig["smtp"]>,
-    private readonly from: string
+    private readonly from: string,
+    pinnedAddresses?: Array<{ address: string; family: 4 | 6 }>
   ) {
-    this.transporter = nodemailer.createTransport({
-      host: smtp.host,
+    const normalizedHost = smtp.host.replace(/^\[|\]$/g, "").replace(/\.$/, "").trim();
+    const isIpLiteral = net.isIP(normalizedHost) !== 0;
+    const pinnedList = pinnedAddresses && pinnedAddresses.length > 0 ? [...pinnedAddresses] : null;
+    const transportOpts: Record<string, unknown> = {
+      host: normalizedHost,
       port: smtp.port,
       secure: smtp.secure,
+      ...(!isIpLiteral ? { tls: { servername: normalizedHost } } : {}),
       auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
       connectionTimeout: 8_000,
       greetingTimeout: 8_000,
       socketTimeout: 10_000,
-    });
+    };
+
+    if (pinnedList) {
+      // Pin outbound TCP socket strictly to pre-validated public IPs with Happy Eyeballs failover
+      // so IPv4-only containers fall back cleanly from AAAA to A while preserving TLS SNI.
+      transportOpts.getSocket = (
+        _opts: unknown,
+        cb: (err: Error | null, res?: { connection: net.Socket; secured: boolean }) => void
+      ) => {
+        let settled = false;
+        const done = (err: Error | null, res?: { connection: net.Socket; secured: boolean }) => {
+          if (settled) return;
+          settled = true;
+          cb(err, res);
+        };
+        const socket = net.connect({
+          host: normalizedHost,
+          port: smtp.port,
+          autoSelectFamily: true,
+          lookup: ((_host: string, opts: unknown, lookupCb: (...args: unknown[]) => void) => {
+            if (opts && typeof opts === "object" && "all" in opts && (opts as { all?: boolean }).all) {
+              lookupCb(null, pinnedList);
+            } else {
+              lookupCb(null, pinnedList[0].address, pinnedList[0].family);
+            }
+          }) as unknown as net.LookupFunction,
+        });
+        const onConnect = () => {
+          socket.setTimeout(0);
+          socket.removeListener("error", onError);
+          socket.removeListener("timeout", onTimeout);
+          done(null, { connection: socket, secured: false });
+        };
+        const onError = (err: Error) => {
+          socket.removeListener("connect", onConnect);
+          socket.removeListener("timeout", onTimeout);
+          socket.destroy();
+          done(err);
+        };
+        const onTimeout = () => {
+          socket.removeListener("connect", onConnect);
+          socket.removeListener("error", onError);
+          socket.destroy();
+          done(new Error("SMTP connection timed out"));
+        };
+        socket.setTimeout(8_000);
+        socket.once("connect", onConnect);
+        socket.once("error", onError);
+        socket.once("timeout", onTimeout);
+      };
+    }
+
+    this.transporter = nodemailer.createTransport(
+      transportOpts as Parameters<typeof nodemailer.createTransport>[0]
+    );
   }
 
   async send(msg: EmailMessage): Promise<void> {
@@ -114,13 +174,14 @@ export function createEmailAdapterFromOptions(opts: {
   from: string;
   resendApiKey?: string;
   smtp?: AppConfig["smtp"];
+  pinnedAddresses?: Array<{ address: string; family: 4 | 6 }>;
   fetchImpl?: typeof fetch;
 }): EmailAdapter {
   if (opts.backend === "resend" && opts.resendApiKey) {
     return new ResendEmailAdapter(opts.resendApiKey, opts.from, opts.fetchImpl);
   }
   if (opts.backend === "smtp" && opts.smtp?.host) {
-    return new SmtpEmailAdapter(opts.smtp, opts.from);
+    return new SmtpEmailAdapter(opts.smtp, opts.from, opts.pinnedAddresses);
   }
   return new ConsoleEmailAdapter();
 }

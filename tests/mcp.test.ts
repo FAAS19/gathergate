@@ -1091,3 +1091,138 @@ test("MCP 2.0: concurrent send_reminder and scheduled sweep share per-request re
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test("MCP 2.0 hardening: /.well-known 404, CORS preflight, Accept 406, protocol negotiation, resources/templates/list & -32603 error handling", async () => {
+  const ctx = await bootMcpApp();
+  try {
+    const readKey = await ctx.mintKey("Hardening Reader", ["mcp:read"]);
+    const auth = { authorization: `Bearer ${readKey.secret}` };
+
+    // 1. /.well-known/* returns 404 JSON (never 200 HTML SPA fallback)
+    const wk = await ctx.app.request("/.well-known/oauth-protected-resource");
+    assert.equal(wk.status, 404);
+    assert.match(wk.headers.get("content-type") || "", /application\/json/);
+
+    // 2. CORS preflight OPTIONS /mcp + POST /mcp CORS headers + Cache-Control: no-store
+    const badPreflight = await ctx.app.request("/mcp", {
+      method: "OPTIONS",
+      headers: { origin: "https://evil.example" },
+    });
+    assert.equal(badPreflight.status, 403);
+    assert.equal(badPreflight.headers.get("access-control-allow-origin"), null);
+
+    const okPreflight = await ctx.app.request("/mcp", {
+      method: "OPTIONS",
+      headers: { origin: "https://intake.harbour.test" },
+    });
+    assert.equal(okPreflight.status, 204);
+    assert.equal(okPreflight.headers.get("access-control-allow-origin"), "https://intake.harbour.test");
+    assert.match(okPreflight.headers.get("access-control-allow-methods") || "", /POST/);
+    assert.match(okPreflight.headers.get("access-control-allow-headers") || "", /MCP-Protocol-Version/i);
+    assert.equal(okPreflight.headers.get("vary"), "Origin");
+    assert.equal(okPreflight.headers.get("cache-control"), "no-store");
+
+    // 401 with allowed Origin still carries CORS + Cache-Control: no-store
+    const unauthOrigin = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 1, method: "ping" },
+      { origin: "https://intake.harbour.test" }
+    );
+    assert.equal(unauthOrigin.status, 401);
+    assert.equal(unauthOrigin.headers.get("access-control-allow-origin"), "https://intake.harbour.test");
+    assert.match(unauthOrigin.headers.get("access-control-expose-headers") || "", /WWW-Authenticate/i);
+    assert.equal(unauthOrigin.headers.get("cache-control"), "no-store");
+
+    // 3. Accept header: application/json + text/event-stream accepted; event-stream-only rejected with 406
+    const okAccept = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 2, method: "ping" },
+      { ...auth, accept: "application/json, text/event-stream" }
+    );
+    assert.equal(okAccept.status, 200);
+    const badAccept = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 3, method: "ping" },
+      { ...auth, accept: "text/event-stream" }
+    );
+    assert.equal(badAccept.status, 406);
+    const rejectedSpecificJson = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 31, method: "ping" },
+      { ...auth, accept: "application/json;q=0, application/*;q=1" }
+    );
+    assert.equal(rejectedSpecificJson.status, 406);
+
+    // 4. Protocol negotiation: initialize validates explicit header; headerless server/discover uses 2026-07-28
+    const badInitHeader = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 4, method: "initialize", params: { protocolVersion: "2025-11-25" } },
+      { ...auth, "mcp-protocol-version": "1900-01-01" }
+    );
+    assert.equal(badInitHeader.status, 400);
+    assert.equal(((await badInitHeader.json()) as { error: { code: number } }).error.code, -32022);
+
+    const modernInitHeader = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 5, method: "initialize", params: { protocolVersion: "2025-11-25" } },
+      { ...auth, "mcp-protocol-version": MCP_MODERN_PROTOCOL_VERSION }
+    );
+    assert.equal(modernInitHeader.status, 404);
+    assert.equal(((await modernInitHeader.json()) as { error: { code: number } }).error.code, -32601);
+
+    const coldDiscover = await ctx.mcpCall({ jsonrpc: "2.0", id: 6, method: "server/discover" }, auth);
+    assert.equal(coldDiscover.status, 200);
+    assert.equal(coldDiscover.headers.get("mcp-protocol-version"), MCP_MODERN_PROTOCOL_VERSION);
+    const coldDiscoverJson = (await coldDiscover.json()) as { result: { resultType: string } };
+    assert.equal(coldDiscoverJson.result.resultType, "complete");
+
+    // 5. resources/templates/list, skills cache fields, portable tool schemas, non-object arguments guard
+    const resTemplates = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 7, method: "resources/templates/list" },
+      modernHeaders(auth, "resources/templates/list")
+    );
+    assert.equal(resTemplates.status, 200);
+    const resTemplatesJson = (await resTemplates.json()) as {
+      result: { resultType: string; ttlMs: number; resourceTemplates: unknown[] };
+    };
+    assert.equal(resTemplatesJson.result.resultType, "complete");
+    assert.ok(resTemplatesJson.result.ttlMs > 0);
+    assert.deepEqual(resTemplatesJson.result.resourceTemplates, []);
+
+    const skillsModern = (await (
+      await ctx.mcpCall(
+        { jsonrpc: "2.0", id: 8, method: "skills/list" },
+        modernHeaders(auth, "skills/list")
+      )
+    ).json()) as { result: { ttlMs: number; cacheScope: string } };
+    assert.ok(skillsModern.result.ttlMs > 0);
+    assert.equal(skillsModern.result.cacheScope, "public");
+
+    const toolsList = (await (
+      await ctx.mcpCall({ jsonrpc: "2.0", id: 9, method: "tools/list" }, auth)
+    ).json()) as { result: { tools: Array<{ inputSchema: { properties?: Record<string, { type?: unknown }> } }> } };
+    for (const tool of toolsList.result.tools) {
+      for (const prop of Object.values(tool.inputSchema.properties ?? {})) {
+        assert.equal(Array.isArray(prop.type), false, "Tool schema property must not use array type");
+      }
+    }
+
+    const badArgs = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "list_templates", arguments: [] } },
+      auth
+    );
+    assert.equal(badArgs.status, 200);
+    assert.equal(((await badArgs.json()) as { error: { code: number } }).error.code, -32602);
+
+    // 6. Unhandled internal error inside MCP returns JSON-RPC -32603 (not plain-text 500)
+    const wsId = (ctx.db.prepare("SELECT id FROM workspaces LIMIT 1").get() as { id: string }).id;
+    ctx.db
+      .prepare("INSERT INTO templates (id, workspace_id, name, description, items_json, is_builtin, created_at) VALUES (?, ?, ?, ?, ?, 0, ?)")
+      .run("tpl_corrupt", wsId, "Corrupt", "", "{not-valid-json", new Date().toISOString());
+    const errRes = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 11, method: "tools/call", params: { name: "list_templates", arguments: {} } },
+      auth
+    );
+    assert.equal(errRes.status, 500);
+    const errJson = (await errRes.json()) as { jsonrpc: string; id: number; error: { code: number } };
+    assert.equal(errJson.jsonrpc, "2.0");
+    assert.equal(errJson.id, 11);
+    assert.equal(errJson.error.code, -32603);
+  } finally {
+    ctx.cleanup();
+  }
+});

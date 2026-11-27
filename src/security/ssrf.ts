@@ -90,14 +90,18 @@ export function isNonPublicIp(rawIp: string): boolean {
       }
       if (g[2] === 0x0001) return true;
     }
-    // fc00::/7 ULA, fe80::/10 link-local, ff00::/8 multicast, 2001:db8::/32 documentation
+    // fc00::/7 ULA, fe80::/10 link-local, fec0::/10 deprecated site-local, ff00::/8 multicast,
+    // 2001:db8::/32 documentation, 2001::/32 Teredo, 2002::/16 6to4, 100::/64 discard-only
     if ((g[0] & 0xfe00) === 0xfc00) return true;
     if ((g[0] & 0xffc0) === 0xfe80) return true;
+    if ((g[0] & 0xffc0) === 0xfec0) return true;
     if ((g[0] & 0xff00) === 0xff00) return true;
-    if (g[0] === 0x2001 && g[1] === 0x0db8) return true;
+    if (g[0] === 0x2001 && (g[1] === 0x0db8 || g[1] === 0x0000)) return true;
+    if (g[0] === 0x2002) return true;
+    if (g[0] === 0x0100 && g[1] === 0 && g[2] === 0 && g[3] === 0) return true;
     return false;
   }
-  return false;
+  return true;
 }
 
 export function isPrivateOrLocalHost(hostname: string): boolean {
@@ -120,6 +124,9 @@ export function isPrivateOrLocalHost(hostname: string): boolean {
 export function validateWebhookEndpoint(rawUrl: string, multiTenant: boolean): string | null {
   try {
     const parsed = new URL(rawUrl);
+    if (parsed.username || parsed.password) {
+      return "Webhook URL must not include embedded credentials.";
+    }
     if (multiTenant) {
       if (parsed.protocol !== "https:" || isPrivateOrLocalHost(parsed.hostname)) {
         return "Webhook URL must target a public https endpoint in multi-tenant mode.";
@@ -135,33 +142,52 @@ export function validateWebhookEndpoint(rawUrl: string, multiTenant: boolean): s
 
 export type LookupAllFn = (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 
-export async function assertPublicHostname(
+export type PublicHostnameResolution =
+  | { ok: true; addresses: Array<{ address: string; family: 4 | 6 }> }
+  | { ok: false; error: string };
+
+export async function resolvePublicHostname(
   hostname: string,
   lookupImpl?: LookupAllFn
-): Promise<string | null> {
+): Promise<PublicHostnameResolution> {
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase().replace(/\.$/, "").trim();
   if (isPrivateOrLocalHost(host)) {
-    return "Target host must be a public hostname.";
+    return { ok: false, error: "Target host must be a public hostname." };
   }
-  if (net.isIP(host)) {
-    return isNonPublicIp(host) ? "Target IP must be a public address." : null;
+  const ipKind = net.isIP(host);
+  if (ipKind === 4 || ipKind === 6) {
+    if (isNonPublicIp(host)) {
+      return { ok: false, error: "Target IP must be a public address." };
+    }
+    return { ok: true, addresses: [{ address: host, family: ipKind }] };
   }
   try {
     const records = lookupImpl
       ? await lookupImpl(host)
       : await dns.promises.lookup(host, { all: true });
     if (!records || records.length === 0) {
-      return "Target hostname could not be resolved.";
+      return { ok: false, error: "Target hostname could not be resolved." };
     }
+    const addresses: Array<{ address: string; family: 4 | 6 }> = [];
     for (const rec of records) {
       if (isNonPublicIp(rec.address)) {
-        return "Target hostname resolves to a private or non-public address.";
+        return { ok: false, error: "Target hostname resolves to a private or non-public address." };
       }
+      const family: 4 | 6 = rec.family === 6 || net.isIP(rec.address) === 6 ? 6 : 4;
+      addresses.push({ address: rec.address, family });
     }
-    return null;
+    return { ok: true, addresses };
   } catch {
-    return "Target hostname could not be resolved.";
+    return { ok: false, error: "Target hostname could not be resolved." };
   }
+}
+
+export async function assertPublicHostname(
+  hostname: string,
+  lookupImpl?: LookupAllFn
+): Promise<string | null> {
+  const res = await resolvePublicHostname(hostname, lookupImpl);
+  return res.ok ? null : res.error;
 }
 
 export type WebhookEndpointResolution =

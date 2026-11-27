@@ -95,7 +95,7 @@ function safeLogAudit(
  * the original hostname for TLS SNI (when DNS name), certificate checks, and the HTTP Host header.
  * Raw node:https never follows redirects.
  */
-function postPinnedHttps(params: {
+export function postPinnedHttps(params: {
   url: string;
   headers: Record<string, string>;
   body: string;
@@ -526,7 +526,14 @@ export async function attemptWebhookDelivery(params: {
       deliveredAt: doneNowIso,
       nowIso: doneNowIso,
     });
-    if (!updated) return { dispatched: true, status: sendRes.status, skipped: true, delivery: priorDelivery };
+    if (!updated) {
+      return {
+        dispatched: true,
+        status: sendRes.status,
+        skipped: true,
+        delivery: params.store.getWebhookDeliveryById(priorDelivery.id) ?? priorDelivery,
+      };
+    }
     safeLogAudit(params.store, workspace.id, priorDelivery.request_id, "system", "webhook.dispatched", {
       deliveryId: priorDelivery.id,
       event: priorDelivery.event,
@@ -767,7 +774,7 @@ export async function replayWebhookDelivery(params: {
     isReplay: true,
     workspaceOverride: params.workspace,
   });
-  if (res.skipped) {
+  if (res.skipped && !res.dispatched) {
     return {
       ok: false,
       error: "Delivery is already in progress. Try again shortly.",
