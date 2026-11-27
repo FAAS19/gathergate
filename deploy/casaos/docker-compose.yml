@@ -1,0 +1,71 @@
+name: gathergate
+services:
+  gathergate:
+    image: ghcr.io/faas19/gathergate:latest
+    container_name: gathergate
+    restart: unless-stopped
+    ports:
+      - target: 3080
+        published: "3080"
+        protocol: tcp
+    environment:
+      NODE_ENV: production
+      HOST: "0.0.0.0"
+      PORT: "3080"
+      DATA_DIR: /data
+      TRUST_PROXY: "false"
+      TZ: UTC
+    volumes:
+      - type: bind
+        source: /DATA/AppData/$AppID/data
+        target: /data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+    x-casaos:
+      envs:
+        - container: BASE_URL
+          description:
+            en_us: Public HTTPS URL for magic links (e.g. https://intake.yourfirm.com.au)
+        - container: TRUST_PROXY
+          description:
+            en_us: Set to true only when running behind a trusted TLS reverse proxy
+        - container: MASTER_KEY
+          description:
+            en_us: Optional 64-character hex key (openssl rand -hex 32); auto-generated in /data/.master.key if blank
+      ports:
+        - container: "3080"
+          description:
+            en_us: GatherGate Web UI, API, and stateless MCP port
+      volumes:
+        - container: /data
+          description:
+            en_us: Persistent SQLite WAL database and AES-256-GCM encrypted uploads
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+  main: gathergate
+  title:
+    en_us: GatherGate
+  tagline:
+    en_us: Self-hosted magic-link client document checklist and encrypted intake vault
+  description:
+    en_us: >-
+      Collect client documents and validated IDs via passwordless magic links
+      with AES-256-GCM encryption at rest, automated reminders, signed webhooks,
+      and a metadata-only MCP 2.0 endpoint.
+  developer: TensorForge
+  author: TensorForge
+  category: Documents
+  port_map: "3080"
+  scheme: http
+  index: /
+  icon: https://gathergate.tensorforge.dev/favicon.svg
+  thumbnail: https://gathergate.tensorforge.dev/social-preview.png
+  store_app_id: gathergate

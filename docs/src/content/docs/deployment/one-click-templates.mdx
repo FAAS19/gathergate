@@ -1,0 +1,86 @@
+---
+title: 1-Click Self-Hosted Deploy Templates
+description: Deploy GatherGate on Render, Coolify, Dokploy, Railway, Umbrel, CasaOS, or Fly.io with a persistent /data volume for SQLite WAL and encrypted uploads.
+---
+
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+
+GatherGate ships audited deployment manifests under `deploy/` and a root `render.yaml` Blueprint for persistent container hosts. Every template pulls the signed multi-arch container image (`ghcr.io/faas19/gathergate:latest`, `linux/amd64` and `linux/arm64`), mounts persistent storage at `/data`, and runs healthchecks against `GET /healthz`.
+
+## Prerequisites (All Platforms)
+
+1. **Persistent `/data` volume**: Stores `gathergate.sqlite` (SQLite WAL), encrypted local blobs (`DATA_DIR/blobs`), and `.master.key` if `MASTER_KEY` is not yet set in environment variables.
+2. **Single replica (`1` instance)**: SQLite WAL and the built-in background cron scheduler (automated reminders, webhook retries, auto-purge) expect one container attached to the `/data` volume.
+3. **Production `MASTER_KEY`**: Generate a 64-character hex key once (`openssl rand -hex 32`) and save it in your platform's secret manager alongside a separate offline backup.
+
+## Platform Templates
+
+<Tabs>
+  <TabItem label="Render (Instant Blueprint)">
+GatherGate includes [`render.yaml`](https://github.com/FAAS19/gathergate/blob/main/render.yaml) at the repository root so you can launch directly from GitHub:
+
+1. Open Render Blueprint deploy: `https://render.com/deploy?repo=https://github.com/FAAS19/gathergate`
+2. Select a paid web service plan (`starter` or higher, required by Render for persistent disks) with the preconfigured 10 GB disk mounted at `/data`.
+3. Fill in `BASE_URL` (your `https://<service>.onrender.com` or custom domain) and `MASTER_KEY` (`openssl rand -hex 32`).
+4. Confirm `https://<your-domain>/healthz` returns HTTP `200`, then open `/` for first-run workspace setup.
+  </TabItem>
+  <TabItem label="Coolify">
+Use [`deploy/coolify/docker-compose.yml`](https://github.com/FAAS19/gathergate/blob/main/deploy/coolify/docker-compose.yml):
+
+1. In Coolify, create **New Resource > Docker Compose Empty** and paste `deploy/coolify/docker-compose.yml`.
+2. Assign your HTTPS domain on port `3080` (`SERVICE_URL_GATHERGATE_3080` automatically populates `BASE_URL`).
+3. Set `MASTER_KEY` (`openssl rand -hex 32`) in Coolify's **Environment Variables** tab.
+4. Click **Deploy** and verify `/healthz`.
+  </TabItem>
+  <TabItem label="Dokploy">
+Use [`deploy/dokploy/docker-compose.yml`](https://github.com/FAAS19/gathergate/blob/main/deploy/dokploy/docker-compose.yml) and [`deploy/dokploy/template.toml`](https://github.com/FAAS19/gathergate/blob/main/deploy/dokploy/template.toml):
+
+1. In Dokploy, create a new **Compose** service using `deploy/dokploy/docker-compose.yml`.
+2. Attach a domain pointing to service `gathergate` on port `3080` with HTTPS enabled.
+3. Set `BASE_URL=https://your-domain` and `MASTER_KEY` (`openssl rand -hex 32`) in **Environment**, then deploy.
+  </TabItem>
+  <TabItem label="Railway">
+Use [`deploy/railway/railway.json`](https://github.com/FAAS19/gathergate/blob/main/deploy/railway/railway.json):
+
+1. Create a new Railway service from `ghcr.io/faas19/gathergate:latest` (or link `FAAS19/gathergate` with Dockerfile builder).
+2. Add a Railway **Volume** mounted at `/data` and keep **Replicas** set to `1`.
+3. Set environment variables: `NODE_ENV=production`, `HOST=0.0.0.0`, `PORT=3080`, `DATA_DIR=/data`, `TRUST_PROXY=true`, `BASE_URL=https://<your-railway-domain>`, and `MASTER_KEY` (`openssl rand -hex 32`).
+4. Configure healthcheck path `/healthz` and expose port `3080`.
+  </TabItem>
+  <TabItem label="Umbrel">
+Manifests live at [`deploy/umbrel/umbrel-app.yml`](https://github.com/FAAS19/gathergate/blob/main/deploy/umbrel/umbrel-app.yml) and [`deploy/umbrel/docker-compose.yml`](https://github.com/FAAS19/gathergate/blob/main/deploy/umbrel/docker-compose.yml):
+
+- Runs as non-root `user: "1000:1000"` (`node:24-alpine`) with `${APP_DATA_DIR}/data:/data` and `app_proxy` routing to `gathergate_web_1:3080`.
+- Ready for custom Umbrel Community App Stores or upstream submission to `getumbrel/umbrel-apps`.
+  </TabItem>
+  <TabItem label="CasaOS">
+Import [`deploy/casaos/docker-compose.yml`](https://github.com/FAAS19/gathergate/blob/main/deploy/casaos/docker-compose.yml) via **App Store > Custom Install > Import**:
+
+- Maps `/DATA/AppData/$AppID/data:/data` and exposes port `3080`.
+- Set `BASE_URL=https://...` and `TRUST_PROXY=true` only when exposing GatherGate behind a TLS reverse proxy (Caddy, Nginx, or Cloudflare Tunnel).
+  </TabItem>
+  <TabItem label="Fly.io">
+Use [`deploy/fly/fly.toml`](https://github.com/FAAS19/gathergate/blob/main/deploy/fly/fly.toml) (change `app` and `primary_region` to your preference):
+
+```bash
+fly apps create your-gathergate-app
+fly volumes create gathergate_data --region syd --size 10
+fly secrets set \
+  MASTER_KEY="$(openssl rand -hex 32)" \
+  BASE_URL="https://your-gathergate-app.fly.dev"
+fly deploy -c deploy/fly/fly.toml -a your-gathergate-app
+```
+
+`auto_stop_machines = "off"` and `min_machines_running = 1` keep GatherGate's built-in reminder, webhook retry, and auto-purge cron jobs running continuously.
+  </TabItem>
+</Tabs>
+
+## Why Not Vercel or Stateless Serverless Functions?
+
+GatherGate's **backend application** is intentionally designed for a persistent container or Node.js process rather than ephemeral serverless functions (such as Vercel Functions or Netlify Functions):
+
+- **Embedded SQLite WAL (`node:sqlite`)**: Requires a single persistent POSIX filesystem (`/data/gathergate.sqlite`) with write-ahead logging. Ephemeral serverless filesystems reset between cold starts and cannot share a local SQLite WAL file across concurrent invocations.
+- **Encrypted local blob storage (`/data/blobs`)**: Stores AES-256-GCM encrypted client documents on disk when `STORAGE_BACKEND=local`.
+- **In-process background cron**: Runs scheduled reminder sweeps, exponential webhook retries, overdue detection, and automatic document shredding without external queues or third-party schedulers.
+
+Static frontend artefacts (the marketing showcase, interactive browser demo, and Starlight documentation under `site/` and `docs/`) are pure static files and deploy cleanly to **Cloudflare Workers Static Assets**, **GitHub Pages**, or **Vercel**. For the live GatherGate server itself, always choose a persistent host above or a standard VPS with Docker / Node.js 24+.

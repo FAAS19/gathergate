@@ -1,15 +1,37 @@
 ---
-title: Signed Webhooks & n8n
-description: Trigger downstream workflows when a client pack is approved and verify HMAC-SHA256 signatures safely.
+title: Signed Webhooks, Retry Queue & API Keys
+description: Trigger downstream workflows across 6 request lifecycle events, inspect and replay failed deliveries, and automate securely with scoped workspace API keys.
 ---
 
-When an operator approves the final required item in a request (moving status to `completed`), GatherGate sends an HTTP `POST` JSON webhook to your workspace's configured **Webhook URL** (**Settings > Webhooks**).
+GatherGate sends HMAC-SHA256 signed HTTP `POST` JSON webhooks to your workspace's configured **Webhook URL** (**Settings > Webhooks**) across the full request lifecycle, backed by a durable SQLite retry queue and dead-letter replay log.
+
+## Supported Webhook Events
+
+| Event | Trigger |
+| :--- | :--- |
+| `request.opened` | Client opens a magic-link checklist for the first time (recorded atomically once per request). |
+| `item.submitted` | Client submits a text answer, uploads a file, or marks an optional item Not applicable. |
+| `request.in_review` | All required items are submitted and the pack enters operator review. |
+| `request.completed` | Operator approves the final required item and the pack reaches `completed`. |
+| `request.overdue` | Active pack passes its `due_at` deadline during the scheduled sweep (deduplicated per deadline). |
+| `request.purged` | Encrypted payload and uploaded blobs are shredded after retention expiry (sent before delivery payload history is purged). |
+
+The test button in **Settings > Webhooks** sends `X-GatherGate-Event: webhook.test`.
 
 ## Security Design
 
 - **Encrypted signing secret**: Your webhook secret is encrypted at rest with HKDF-SHA256 + AES-256-GCM in SQLite.
-- **Masked sensitive IDs**: Sensitive national IDs (`au_tfn_mod11`, `au_medicare_mod10`, `uk_nino`, `us_ssn`) are **always masked** in webhook payloads (e.g. `****** 789`). Raw sensitive fields are never broadcast to third-party automation endpoints.
-- **No redirects & bounded timeout**: Outbound requests use `redirect: "error"` and a 10-second `AbortSignal.timeout`. In `MULTI_TENANT=true`, private/loopback/link-local targets are blocked after DNS resolution.
+- **Masked sensitive IDs**: Sensitive national IDs (`au_tfn_mod11`, `au_medicare_mod10`, `uk_nino`, `us_ssn`) are **always masked** in webhook payloads (e.g. `****** 789`). Raw sensitive values are never broadcast to third-party automation endpoints.
+- **DNS-pinned delivery & zero redirects**: Outbound requests use `redirect: "error"` and a 10-second timeout. In `MULTI_TENANT=true`, private, loopback, and link-local IP ranges are blocked after DNS resolution and connections pin directly to verified public IPs (mitigating DNS rebinding).
+- **Pre-purge shredding**: When a request is purged, its stored `webhook_deliveries` payload rows are shredded from SQLite after notifying downstream systems.
+
+## Durable Retry Queue & Manual Replay
+
+Every lifecycle event is written to the `webhook_deliveries` table in SQLite before dispatch:
+
+- **5 exponential retries**: Transient 5xx, 429, timeout, or network failures automatically retry at **1 minute, 5 minutes, 15 minutes, 1 hour, and 6 hours** (6 total attempts).
+- **Dead-letter queue**: Exhausted deliveries move to `dead_letter`.
+- **Inspect & replay**: Filter recent deliveries by status (`pending`, `delivered`, `retrying`, `dead_letter`) in **Settings > Webhooks** and trigger one-click **Replay** (or call `GET /api/webhook-deliveries` and `POST /api/webhook-deliveries/:id/replay` with a browser session).
 
 ## Request Headers
 
@@ -19,11 +41,12 @@ Every delivery includes these headers:
 Content-Type: application/json
 User-Agent: GatherGate/1.0 (TensorForge; contact@tensorforge.dev)
 X-GatherGate-Event: request.completed
+X-GatherGate-Delivery: whd_01J...
 X-GatherGate-Timestamp: 1764240000
 X-GatherGate-Signature: t=1764240000,v1=<hex-hmac-sha256>
 ```
 
-The test button in Settings sends `X-GatherGate-Event: webhook.test`.
+Use `X-GatherGate-Delivery` as your idempotency key so retried deliveries never duplicate downstream work.
 
 ## Payload Shape (`request.completed`)
 
@@ -92,5 +115,18 @@ export function verifyGatherGateWebhook(rawBody, signatureHeader, secret, maxAge
 ### Using with n8n
 
 1. Add a **Webhook** trigger node (`POST`, Raw Body enabled under Options).
-2. Add a **Code** node immediately after it running the signature check against `$env.GATHERGATE_WEBHOOK_SECRET` and failing closed on mismatch.
-3. Route valid `request.completed` payloads to Slack, Xero, Cliniko, or your document management system.
+2. Add a **Code** node immediately after it running the signature check against `$env.GATHERGATE_WEBHOOK_SECRET`, deduplicating on `X-GatherGate-Delivery`, and failing closed on mismatch.
+3. Route verified events (`request.completed`, `request.overdue`, `item.submitted`) to Slack, Xero, Cliniko, or your document management system.
+
+## Scoped Workspace API Keys
+
+For headless automation and n8n HTTP Request nodes, create least-privilege Bearer tokens (`gg_live_...`) under **Settings > API Keys**:
+
+| Scope | Permitted Operations |
+| :--- | :--- |
+| `templates:read` | `GET /api/templates` |
+| `requests:read` | `GET /api/requests`, `GET /api/requests/:id` (sensitive IDs remain masked) |
+| `requests:write` | `POST /api/requests`, `PATCH /api/requests/:id`, `POST /api/requests/:id/items`, `POST /api/requests/:id/remind-now`, `POST /api/requests/:id/reminders/toggle`, `POST /api/requests/reminders/bulk` |
+| `mcp:read` | Access `POST /mcp` read tools and bundled `SKILL.md` resources (combine with `requests:write` for MCP write tools) |
+
+Keys are stored strictly as SHA-256 hashes (shown once at creation), support optional expiry dates and instant revocation, and are blocked from session-only routes (Settings, API key management, raw sensitive ID reveal, file downloads, and `export.zip`).

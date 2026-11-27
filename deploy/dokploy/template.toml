@@ -1,0 +1,13 @@
+[variables]
+main_domain = "${domain}"
+
+[config]
+[[config.domains]]
+serviceName = "gathergate"
+port = 3080
+host = "${main_domain}"
+
+[config.env]
+BASE_URL = "https://${main_domain}"
+MASTER_KEY = ""
+TZ = "UTC"

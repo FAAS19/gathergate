@@ -50,3 +50,19 @@ h3,
   font-family: "Plus Jakarta Sans Variable", var(--sl-font);
   letter-spacing: -0.02em;
 }
+
+/* Prevent unfocusable horizontal scroll containers on narrow mobile viewports (WCAG 2.2 AA). */
+@media (max-width: 50rem) {
+  .sl-markdown-content table {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+    overflow-x: visible;
+  }
+
+  .sl-markdown-content th,
+  .sl-markdown-content td {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+}
