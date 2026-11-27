@@ -154,6 +154,23 @@ docker compose up -d
 </details>
 
 <details>
+<summary>Run Without Docker (Node.js 24+)</summary>
+
+GatherGate runs natively on Node.js >= 22.13 (Node 24+ recommended for built-in `node:sqlite` and `node:crypto.argon2Sync`) with zero native compilation or external database:
+
+```bash
+git clone https://github.com/FAAS19/gathergate.git && cd gathergate
+npm ci
+npm --prefix client ci
+npm run build
+NODE_ENV=production HOST=127.0.0.1 PORT=3080 DATA_DIR=./data npm start
+```
+
+Put a reverse proxy (Caddy, Nginx, or Cloudflare Tunnel) in front of `127.0.0.1:3080` and set `TRUST_PROXY=true` and `BASE_URL=https://your-domain` in `.env`.
+
+</details>
+
+<details>
 <summary>Local Development &amp; Verification</summary>
 
 Requires Node.js >= 22.13 (Node 24+ recommended for built-in `node:crypto.argon2Sync` and `node:sqlite`):

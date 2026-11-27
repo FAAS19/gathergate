@@ -5,7 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-11-25
+## [1.0.0] - 2026-11-27
 
 ### Added
 - **Launch Assets & Release Verification (`e2e/`):** Animated workflow WebP (`.github/assets/demo-workflow.webp`), dark repository banner (`.github/assets/banner-dark.webp`), `2160x1080` social preview / OpenGraph card (`site/public/social-preview.png`), timed `<60s` 1-command Docker quickstart check (`e2e/verify-docker-quickstart.mjs`), and README asset/version verification script (`e2e/verify-readme.mjs`).
