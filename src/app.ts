@@ -273,6 +273,33 @@ function extractAddress(raw: string): string {
   return (match ? match[1] : raw).trim();
 }
 
+function acceptsApplicationJson(acceptHeader: string): boolean {
+  let bestSpecificity = 0;
+  let bestQuality = 0;
+  for (const rawRange of acceptHeader.split(",")) {
+    const parts = rawRange.split(";").map((p) => p.trim()).filter(Boolean);
+    const media = (parts[0] || "").toLowerCase();
+    const specificity =
+      media === "application/json" ? 3 : media === "application/*" ? 2 : media === "*/*" ? 1 : 0;
+    if (specificity === 0) continue;
+
+    let q = 1;
+    for (const param of parts.slice(1)) {
+      const m = param.match(/^q\s*=\s*([0-9.]+)$/i);
+      if (m) {
+        const parsed = Number(m[1]);
+        q = Number.isFinite(parsed) ? parsed : 0;
+        break;
+      }
+    }
+    if (specificity > bestSpecificity || (specificity === bestSpecificity && q > bestQuality)) {
+      bestSpecificity = specificity;
+      bestQuality = q;
+    }
+  }
+  return bestSpecificity > 0 && bestQuality > 0;
+}
+
 function isAllowedMcpOrigin(originHeader: string, baseUrl: string, multiTenant: boolean): boolean {
   let parsed: URL;
   try {
@@ -559,8 +586,8 @@ export function createApp(deps: GatherGateAppDeps) {
     request: RequestRow;
     event: WebhookEventType;
     item?: RequestItemRow;
-  }) {
-    if (!params.workspace.webhook_url?.trim()) return;
+  }): Promise<string | undefined> {
+    if (!params.workspace.webhook_url?.trim()) return undefined;
     try {
       await dispatchWebhookEvent({
         store,
@@ -575,8 +602,11 @@ export function createApp(deps: GatherGateAppDeps) {
         lookupImpl: deps.lookupImpl,
         nowMs: nowFn(),
       });
-    } catch {
-      // Delivery errors are already persisted inside webhook_deliveries.
+      return undefined;
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error(`[GatherGate Webhook] failed to enqueue ${params.event}:`, err);
+      return config.multiTenant ? "Completion webhook could not be queued." : detail;
     }
   }
 
@@ -1482,8 +1512,13 @@ export function createApp(deps: GatherGateAppDeps) {
       }
     }
 
+    let webhookError: string | undefined;
     if (justCompleted) {
-      await emitWebhookSafe({ workspace: auth.workspace, request, event: "request.completed" });
+      webhookError = await emitWebhookSafe({
+        workspace: auth.workspace,
+        request,
+        event: "request.completed",
+      });
     }
 
     return c.json({
@@ -1491,6 +1526,7 @@ export function createApp(deps: GatherGateAppDeps) {
       status: request.status,
       justCompleted,
       ...(emailError ? { emailError } : {}),
+      ...(webhookError ? { webhookError } : {}),
     });
   });
 
@@ -1512,11 +1548,22 @@ export function createApp(deps: GatherGateAppDeps) {
       auth.actorLabel
     );
 
+    let webhookError: string | undefined;
     if (justCompleted) {
-      await emitWebhookSafe({ workspace: auth.workspace, request, event: "request.completed" });
+      webhookError = await emitWebhookSafe({
+        workspace: auth.workspace,
+        request,
+        event: "request.completed",
+      });
     }
 
-    return c.json({ ok: true, approvedCount, status: request.status, justCompleted });
+    return c.json({
+      ok: true,
+      approvedCount,
+      status: request.status,
+      justCompleted,
+      ...(webhookError ? { webhookError } : {}),
+    });
   });
 
   async function streamDecryptedUpload(
@@ -3053,15 +3100,8 @@ export function createApp(deps: GatherGateAppDeps) {
 
   app.post("/mcp", async (c) => {
     const acceptHeader = c.req.header("accept")?.trim();
-    if (acceptHeader) {
-      const acceptsJson = acceptHeader
-        .split(",")
-        .filter((part) => !/;\s*q\s*=\s*0(?:\.0+)?(?:\s*;|$)/i.test(part))
-        .map((part) => part.split(";")[0].trim().toLowerCase())
-        .some((media) => media === "application/json" || media === "*/*" || media === "application/*");
-      if (!acceptsJson) {
-        return c.json({ error: "Not Acceptable: POST /mcp responds with application/json." }, 406);
-      }
+    if (acceptHeader && !acceptsApplicationJson(acceptHeader)) {
+      return c.json({ error: "Not Acceptable: POST /mcp responds with application/json." }, 406);
     }
 
     const authHeader = c.req.header("authorization")?.trim();

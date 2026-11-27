@@ -24,6 +24,6 @@ services:
       - key: TRUST_PROXY
         value: "true"
       # BASE_URL automatically falls back to Render's RENDER_EXTERNAL_URL; set BASE_URL in Render Environment if you attach a custom domain.
-      # GatherGate auto-generates /data/.master.key on first boot; move MASTER_KEY (`openssl rand -hex 32`) into Render Secret Env Vars for production.
+      # GatherGate auto-generates /data/.master.key on first boot; copy that existing key into Render Secret Env Vars for production (or generate a new key with `openssl rand -hex 32` only before storing any data).
       - key: TZ
         value: UTC

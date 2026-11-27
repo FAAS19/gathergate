@@ -1143,6 +1143,11 @@ test("MCP 2.0 hardening: /.well-known 404, CORS preflight, Accept 406, protocol 
       { ...auth, accept: "text/event-stream" }
     );
     assert.equal(badAccept.status, 406);
+    const rejectedSpecificJson = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 31, method: "ping" },
+      { ...auth, accept: "application/json;q=0, application/*;q=1" }
+    );
+    assert.equal(rejectedSpecificJson.status, 406);
 
     // 4. Protocol negotiation: initialize validates explicit header; headerless server/discover uses 2026-07-28
     const badInitHeader = await ctx.mcpCall(
