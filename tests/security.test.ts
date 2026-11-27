@@ -691,7 +691,7 @@ test("Security: expired/purged token rejection and HMAC webhook verification", a
     const completedHooks = webhooks.filter((w) => w.headers["x-gathergate-event"] === "request.completed");
     assert.equal(completedHooks.length, 1);
     for (const wh of webhooks) {
-      assert.match(wh.headers["user-agent"] || "", /^GatherGate\/1\.0\b/);
+      assert.match(wh.headers["user-agent"] || "", /^GatherGate\/1\.\d+\b/);
       const sigHeader = wh.headers["x-gathergate-signature"];
       const m = sigHeader.match(/^t=(\d+),v1=([0-9a-f]{64})$/);
       assert.ok(m, `Unexpected signature header: ${sigHeader}`);
