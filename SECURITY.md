@@ -19,10 +19,12 @@ We acknowledge reports within 48 hours and coordinate a fix and release before p
 - **Data at rest:** Uploaded documents and sensitive text fields (such as TFN and Medicare numbers) are encrypted with **AES-256-GCM** using per-record HKDF-SHA256 keys derived from `MASTER_KEY` and bound via authenticated additional data (AAD). Tampered ciphertext fails decryption.
 - **Spoofed file uploads:** Every upload is checked by magic-byte signature (`PDF`, `PNG`, `JPEG`, `WebP`, `DOCX`, `XLSX`, `CSV`, `TXT`), not just file extension or `Content-Type`. SVG logos are rejected to prevent embedded script execution.
 - **Unsafe inline previews:** Decrypted previews stream with `Content-Security-Policy: default-src 'none'; sandbox` and `X-Content-Type-Options: nosniff`. Local Outbox HTML previews render inside empty-sandbox iframes (`sandbox=""`).
-- **Sensitive field over-exposure:** Sensitive validators (`au_tfn_mod11`, `au_medicare_mod10`, `uk_nino`, `us_ssn`) stay masked in API responses, operator lists, and completion webhooks unless an authenticated operator triggers an audited reveal.
+- **Sensitive field over-exposure:** Sensitive validators (`au_tfn_mod11`, `au_medicare_mod10`, `uk_nino`, `us_ssn`) stay masked in API responses, operator lists, and lifecycle webhooks unless an authenticated operator triggers an audited reveal.
+- **Scoped API keys & metadata-only MCP:** Workspace API keys (`gg_live_...`) are stored strictly as SHA-256 hashes, enforce per-scope least privilege, redact `portal_url` / `portalUrl` on `requests:read`-only keys, and cannot access session-only routes (Settings, API key management, sensitive ID reveal, file downloads, or `export.zip`). `POST /mcp` is Bearer-only (no cookie auth), Origin-checked, and exposes metadata only.
+- **Outbound SSRF & redirect protection:** Outbound webhooks enforce `redirect: "error"`. In `MULTI_TENANT=true`, private, loopback, and link-local IPv4/IPv6 ranges are blocked with DNS-pinned connections for both webhooks and workspace SMTP.
 - **Cross-tenant data access:** All operator endpoints scope queries by the authenticated user's `workspace_id`.
 - **Magic-link leakage:** Responses send `Referrer-Policy: no-referrer`. Sensitive checklists can require a 6-digit email OTP with attempt limits and expiry.
-- **Retention hygiene:** Completed packs schedule automatic encrypted blob deletion and field erasure (`purge_at`).
+- **Retention hygiene:** Completed packs schedule automatic encrypted blob deletion, field erasure (`purge_at`), and pre-purge shredding of stored webhook delivery payloads.
 
 ### What GatherGate Does Not Protect Against
 - **Compromised `MASTER_KEY` or host root access:** If an attacker controls the host runtime or reads `MASTER_KEY`, encrypted blobs and SQLite fields can be decrypted. Store `MASTER_KEY` in a secret manager or hardened environment file in production.
@@ -33,4 +35,4 @@ We acknowledge reports within 48 hours and coordinate a fix and release before p
 
 ## No Telemetry
 
-GatherGate collects **zero telemetry, analytics, or crash reports**. No requests are sent to TensorForge or any third party unless you explicitly configure an outbound email provider (`SMTP` / `Resend`), S3 storage endpoint, or completion webhook URL.
+GatherGate collects **zero telemetry, analytics, or crash reports**. No requests are sent to TensorForge or any third party unless you explicitly configure an outbound email provider (`SMTP` / `Resend`), S3 storage endpoint, or webhook URL.

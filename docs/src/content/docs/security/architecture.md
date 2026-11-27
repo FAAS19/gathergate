@@ -17,7 +17,7 @@ GatherGate is designed for practices handling regulated identity, tax, financial
 Every upload is inspected by binary signature (`src/security/magic-bytes.ts`), never just file extension or `Content-Type`:
 
 - **Allowed**: `PDF`, `PNG`, `JPEG`, `WebP`, `DOCX`, `XLSX`, `CSV`, `TXT`.
-- **Blocked**: Spoofed executables, HTML/JavaScript masquerading as images, formula-injection CSV cells, and SVG workspace logos (preventing stored XSS via embedded `<script>`).
+- **Blocked**: Spoofed executables, HTML/JavaScript masquerading as images, HTML/script tags disguised as CSV/TXT, arbitrary ZIPs, and SVG workspace logos (preventing stored XSS via embedded `<script>`).
 
 ### 3. Sandboxed Previews & Strict Headers
 - Decrypted operator document previews stream with `Content-Security-Policy: default-src 'none'; sandbox` and `X-Content-Type-Options: nosniff`.
@@ -30,8 +30,13 @@ Every upload is inspected by binary signature (`src/security/magic-bytes.ts`), n
 - Fixed-window per-IP and per-token rate limits protect login, OTP, and upload endpoints (`429` + `Retry-After`).
 - Every operator query and route is scoped by `auth.workspace.id` with cross-tenant IDOR regression tests.
 
-### 5. Automated Retention & Purging
-Completed packs schedule automatic cryptographic blob deletion and sensitive field erasure (`purge_at`), defaulting to **14 days** when sensitive national ID validators are present and **30 days** otherwise.
+### 5. Scoped API Keys, Metadata-Only MCP & Outbound SSRF Guards
+- Workspace API keys (`gg_live_...`) are stored strictly as SHA-256 hashes, enforce per-scope least privilege (`templates:read`, `requests:read`, `requests:write`, `mcp:read`), and block session-only routes (Settings, API key management, sensitive ID reveal, downloads, and `export.zip`). Read-only (`requests:read`) keys redact `portal_url` / `portalUrl` unless `requests:write` is also granted.
+- `POST /mcp` is Bearer-only (rejecting browser cookies), validates `Origin` headers, and returns pack metadata only (never raw files, client notes, submitted text values, workspace secrets, or magic-link tokens).
+- Outbound webhooks enforce `redirect: "error"` and, under `MULTI_TENANT=true`, block private/loopback/link-local IPv4 and IPv6 ranges with DNS-pinned connections for both webhooks and workspace SMTP.
+
+### 6. Automated Retention & Purging
+Completed packs schedule automatic cryptographic blob deletion and sensitive field erasure (`purge_at`), defaulting to **14 days** when sensitive national ID validators are present and **30 days** otherwise. Prior `webhook_deliveries` payloads are shredded before dispatching the minimal `request.purged` metadata event.
 
 ## Out-of-Scope Threat Boundaries
 

@@ -1,11 +1,13 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
+const docsSite = (process.env.DOCS_SITE || "https://gathergate.tensorforge.dev").replace(/\/+$/, "");
 const docsBase = process.env.DOCS_BASE || "/docs";
 const normalizedDocsBase = docsBase.endsWith("/") ? docsBase : `${docsBase}/`;
+const siteRoot = normalizedDocsBase.replace(/docs\/$/, "") || "/";
 
 export default defineConfig({
-  site: "https://gathergate.tensorforge.dev",
+  site: docsSite,
   base: docsBase,
   outDir: "../site/dist/docs",
   trailingSlash: "always",
@@ -72,9 +74,9 @@ export default defineConfig({
         {
           label: "Links",
           items: [
-            { label: "Full Docs (llms-full.txt)", link: `${normalizedDocsBase}llms-full.txt` },
-            { label: "Interactive Demo", link: "/demo/#/" },
-            { label: "GatherGate Home", link: "/" },
+            { label: "Full Docs (llms-full.txt)", link: `${docsSite}${normalizedDocsBase}llms-full.txt` },
+            { label: "Interactive Demo", link: `${docsSite}${siteRoot}demo/#/` },
+            { label: "GatherGate Home", link: `${docsSite}${siteRoot}` },
           ],
         },
       ],

@@ -16,5 +16,5 @@ GatherGate is designed so AI assistants can coordinate client document intake wi
 - Every query and mutation is isolated strictly to the API key's `workspace_id`.
 - **Read tools & resources** (`list_templates`, `list_requests`, `get_request_status`, `list_overdue_requests`, `resources/*`, `skills/*`) require `mcp:read`.
 - **Write tools** (`create_request`, `send_reminder`, `update_due_date`) require both `mcp:read` and `requests:write`.
-- Every MCP mutation writes an `audit_events` entry with `actor: "api_key"` and `via: "mcp"`.
+- Every MCP mutation writes an `audit_events` entry with `actor: "api_key"` (including `by: "mcp:<keyId>"` in metadata), and invite dispatch records `actor: "system"` (`invite.sent` / `invite.failed`) with `via: "mcp"`.
 - Revoking the API key in **Settings > API Keys** immediately blocks future MCP calls with HTTP 401.

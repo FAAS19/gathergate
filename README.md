@@ -22,11 +22,12 @@ Self-hosted, open-source alternative to Content Snare and FileInvite. Collect cl
 
 <p>
   <a href="https://gathergate.tensorforge.dev/demo/#/"><strong>Live Demo</strong></a> &middot;
+  <a href="https://gathergate.tensorforge.dev/docs/"><strong>Docs</strong></a> &middot;
   <a href="https://gathergate.tensorforge.dev/">Showcase</a> &middot;
-  <a href="#why-gathergate">Why GatherGate</a> &middot;
+  <a href="https://gathergate.tensorforge.dev/docs/guides/ai-agents/">AI Agents &amp; MCP 2.0</a> &middot;
+  <a href="https://gathergate.tensorforge.dev/docs/deployment/one-click-templates/">1-Click Deploy</a> &middot;
   <a href="#validator-packs">Validator Packs</a> &middot;
   <a href="#compare">Compare</a> &middot;
-  <a href="#configuration">Configuration</a> &middot;
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -66,6 +67,16 @@ Or boot locally from source with Docker Compose:
 docker compose up -d --build
 ```
 
+Built-in zero-Docker CLI helpers:
+
+```bash
+npx gathergate doctor --url http://127.0.0.1:3080               # Read-only runtime, SQLite & MCP check
+npx gathergate setup --client claude-desktop --url http://127.0.0.1:3080  # Generate MCP client config
+GATHERGATE_API_KEY=gg_live_... npx gathergate mcp               # Built-in stdio-to-HTTP MCP bridge
+```
+
+Or deploy on persistent container hosts with 1-click templates: [Render Blueprint](https://render.com/deploy?repo=https://github.com/FAAS19/gathergate) ([`render.yaml`](render.yaml)), [Coolify](deploy/coolify/docker-compose.yml), [Dokploy](deploy/dokploy/docker-compose.yml), [Railway](deploy/railway/railway.json), [Umbrel](deploy/umbrel/umbrel-app.yml), [CasaOS](deploy/casaos/docker-compose.yml), and [Fly.io](deploy/fly/fly.toml) (see the [1-Click Self-Hosted Deploy Guide](https://gathergate.tensorforge.dev/docs/deployment/one-click-templates/)).
+
 When `MASTER_KEY` is unset, GatherGate generates a 32-byte key at `DATA_DIR/.master.key` and displays a banner until you move `MASTER_KEY` into your environment (see [`.env.example`](.env.example)). Open `http://127.0.0.1:3080` to initialise your workspace.
 
 ## Product Tour
@@ -97,8 +108,9 @@ Built on Node.js 24 (`node:sqlite` WAL + `node:crypto`), Hono (5 production depe
 - **Per-record AES-256-GCM vault**: Every uploaded file and sensitive text field derives a unique HKDF-SHA256 subkey from `MASTER_KEY` bound with authenticated additional data (`enc_version = "v1"`).
 - **Magic-byte inspection**: Verifies real file signatures (`PDF`, `PNG`, `JPEG`, `WebP`, `DOCX`, `XLSX`, `CSV`, `TXT`) before storage and rejects executables, HTML, SVG uploads, and arbitrary ZIPs.
 - **Sandboxed inline previews**: Decrypted previews stream with `Content-Security-Policy: default-src 'none'; sandbox`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`.
-- **Canonical ZIP export & signed webhooks**: Export consistently named packs (`{client}_{item}_{seq}.{ext}` + `summary.json`) or receive HMAC-SHA256 `request.completed` webhooks into n8n or downstream pipelines.
-- **Scheduled retention auto-purge**: Automatically deletes completed encrypted blobs and erases stored field values after your retention window (14 days default for TFN, Medicare, UK NINO, and US SSN packs, 30 days otherwise).
+- **Canonical ZIP export, 6 signed webhooks & scoped API keys**: Export consistently named packs (`{client}_{item}_{seq}.{ext}` + `summary.json`), deliver 6 HMAC-SHA256 lifecycle events (`request.opened`, `item.submitted`, `request.in_review`, `request.completed`, `request.overdue`, `request.purged`) backed by a 6-attempt SQLite retry queue (5 exponential retries) with dead-letter replay, and automate via SHA-256-hashed scoped workspace API keys (`gg_live_...`).
+- **Built-in stateless MCP 2.0 server & Agent Skill**: Expose `POST /mcp` (`2026-07-28` + legacy revisions), zero-dependency stdio bridge (`npx gathergate mcp`), Official MCP Registry manifest ([`server.json`](server.json)), and bundled `SEP-2640` skill ([`skills/gathergate/SKILL.md`](skills/gathergate/SKILL.md)) with a strict metadata-only boundary (zero raw IDs, notes, files, or magic tokens in LLM context). See the [AI Agents & MCP 2.0 Guide](https://gathergate.tensorforge.dev/docs/guides/ai-agents/).
+- **Scheduled retention auto-purge**: Automatically deletes completed encrypted blobs, erases stored field values, and shreds prior webhook payload rows after your retention window (14 days default for TFN, Medicare, UK NINO, and US SSN packs, 30 days otherwise).
 
 ## Validator Packs
 
@@ -123,7 +135,7 @@ Adding more regional packs (NZ, CA, SG, JP) requires one module implementing `Va
 | **Pricing** | Free & MIT open source (self-hosted) | Paid monthly request & team tiers | Paid per-seat & enterprise tiers |
 | **Data residency & encryption** | Your host or S3 bucket, per-record AES-256-GCM with auto-purge | Vendor-managed SaaS infrastructure | Vendor-managed SaaS infrastructure |
 | **Deterministic checksums & magic-bytes** | Built-in mod-89/11/10/97 packs plus binary signature inspection | Basic field formatting & extension rules | Basic field validation & accepted file lists |
-| **Automated follow-ups & ZIP export** | Scheduled chasers, canonical ZIP & signed HMAC webhooks | Scheduled reminders & PDF/ZIP exports | Scheduled reminders & portal downloads |
+| **Automated follow-ups, webhooks & AI agents** | Scheduled chasers, canonical ZIP, 6 signed webhooks with retry queue, scoped API keys & built-in MCP 2.0 | Scheduled reminders & PDF/ZIP exports | Scheduled reminders & portal downloads |
 | **Source & lock-in** | Full source on GitHub, portable SQLite & encrypted blobs | Closed-source SaaS | Closed-source SaaS |
 
 ## Configuration
@@ -135,7 +147,7 @@ Adding more regional packs (NZ, CA, SG, JP) requires one module implementing `Va
 | :--- | :--- | :--- |
 | `MASTER_KEY` | Auto-generated file | 64-char hex key (32 bytes) for HKDF + AES-256-GCM encryption |
 | `STORAGE_BACKEND` | `local` | `local` (`DATA_DIR/blobs`) or `s3` (Cloudflare R2, AWS S3, MinIO, Backblaze B2 via SigV4) |
-| `EMAIL_BACKEND` | `console` | `console` (Local Email Outbox + stdout), `smtp` (Nodemailer), or `resend` (Resend HTTP API); also configurable per workspace in `/settings` |
+| `EMAIL_BACKEND` | `console` | `console` (Local Email Outbox + stderr), `smtp` (Nodemailer), or `resend` (Resend HTTP API); also configurable per workspace in `/settings` |
 | `MULTI_TENANT` | `false` | `false` for single-workspace unlimited hosting, or `true` with `FREE_MAX_ACTIVE_REQUESTS` and `FREE_MAX_STORAGE_BYTES` |
 
 See [`.env.example`](.env.example) for the complete list of environment variables.

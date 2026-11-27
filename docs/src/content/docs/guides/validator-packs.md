@@ -54,7 +54,7 @@ GatherGate validates structured text fields deterministically on **every** clien
 Any validator marked `sensitive: true`:
 
 1. Triggers a **14-day default auto-purge** window (instead of 30 days) on requests using it.
-2. Stays masked (`****** 789`) in operator lists, API detail responses, and completion webhooks until an authenticated operator triggers an audited reveal.
+2. Stays masked (`****** 789`) in operator lists, API detail responses, and lifecycle webhooks until an authenticated operator triggers an audited reveal.
 
 ## Contributing a Country Validator Pack
 

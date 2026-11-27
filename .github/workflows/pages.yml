@@ -39,6 +39,9 @@ jobs:
           npm --prefix docs ci
 
       - name: Build GitHub Pages bundle
+        env:
+          DOCS_SITE: https://faas19.github.io
+          DOCS_BASE: /gathergate/docs
         run: npm run build:pages
 
       - name: Upload Pages artefact

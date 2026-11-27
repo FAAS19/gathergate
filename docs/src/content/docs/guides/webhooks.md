@@ -14,7 +14,7 @@ GatherGate sends HMAC-SHA256 signed HTTP `POST` JSON webhooks to your workspace'
 | `request.in_review` | All required items are submitted and the pack enters operator review. |
 | `request.completed` | Operator approves the final required item and the pack reaches `completed`. |
 | `request.overdue` | Active pack passes its `due_at` deadline during the scheduled sweep (deduplicated per deadline). |
-| `request.purged` | Encrypted payload and uploaded blobs are shredded after retention expiry (sent before delivery payload history is purged). |
+| `request.purged` | Encrypted payload and uploaded blobs are shredded after retention expiry (prior `webhook_deliveries` payloads are shredded first, then a minimal metadata-only `request.purged` event is queued and dispatched). |
 
 The test button in **Settings > Webhooks** sends `X-GatherGate-Event: webhook.test`.
 
@@ -23,7 +23,7 @@ The test button in **Settings > Webhooks** sends `X-GatherGate-Event: webhook.te
 - **Encrypted signing secret**: Your webhook secret is encrypted at rest with HKDF-SHA256 + AES-256-GCM in SQLite.
 - **Masked sensitive IDs**: Sensitive national IDs (`au_tfn_mod11`, `au_medicare_mod10`, `uk_nino`, `us_ssn`) are **always masked** in webhook payloads (e.g. `****** 789`). Raw sensitive values are never broadcast to third-party automation endpoints.
 - **DNS-pinned delivery & zero redirects**: Outbound requests use `redirect: "error"` and a 10-second timeout. In `MULTI_TENANT=true`, private, loopback, and link-local IP ranges are blocked after DNS resolution and connections pin directly to verified public IPs (mitigating DNS rebinding).
-- **Pre-purge shredding**: When a request is purged, its stored `webhook_deliveries` payload rows are shredded from SQLite after notifying downstream systems.
+- **Pre-purge shredding**: When a request is purged, its prior stored `webhook_deliveries` payload rows are shredded from SQLite first, then a minimal metadata-only `request.purged` event is inserted and dispatched.
 
 ## Durable Retry Queue & Manual Replay
 
@@ -31,7 +31,7 @@ Every lifecycle event is written to the `webhook_deliveries` table in SQLite bef
 
 - **5 exponential retries**: Transient 5xx, 429, timeout, or network failures automatically retry at **1 minute, 5 minutes, 15 minutes, 1 hour, and 6 hours** (6 total attempts).
 - **Dead-letter queue**: Exhausted deliveries move to `dead_letter`.
-- **Inspect & replay**: Filter recent deliveries by status (`pending`, `delivered`, `retrying`, `dead_letter`) in **Settings > Webhooks** and trigger one-click **Replay** (or call `GET /api/settings/webhook/deliveries` and `POST /api/settings/webhook/deliveries/:id/replay` with a browser session).
+- **Inspect & replay**: Filter recent deliveries in **Settings > Webhooks** (`All`, `Dead letter`, `Retrying`, `Delivered`) and trigger one-click **Replay** (the session-authenticated API `GET /api/settings/webhook/deliveries?status=...` also accepts `pending` and `in_flight`, alongside `POST /api/settings/webhook/deliveries/:id/replay`).
 
 ## Request Headers
 
@@ -98,7 +98,7 @@ export function verifyGatherGateWebhook(rawBody, signatureHeader, secret, maxAge
   );
   const ts = Number(parts.t);
   const v1 = parts.v1;
-  if (!Number.isFinite(ts) || !v1) return false;
+  if (!Number.isFinite(ts) || !v1 || !/^[0-9a-f]{64}$/i.test(v1)) return false;
   if (Math.abs(Math.floor(Date.now() / 1000) - ts) > maxAgeSec) return false;
 
   const expected = crypto
@@ -125,8 +125,8 @@ For headless automation and n8n HTTP Request nodes, create least-privilege Beare
 | Scope | Permitted Operations |
 | :--- | :--- |
 | `templates:read` | `GET /api/templates` |
-| `requests:read` | `GET /api/requests`, `GET /api/requests/:id` (sensitive IDs remain masked) |
-| `requests:write` | `POST /api/requests`, `PATCH /api/requests/:id`, `POST /api/requests/:id/items`, `POST /api/requests/:id/remind-now`, `POST /api/requests/:id/toggle-reminders`, `POST /api/requests/bulk-reminders` |
+| `requests:read` | `GET /api/requests`, `GET /api/requests/:id`, `GET /api/clients`, `GET /api/validators` (sensitive IDs remain masked; `portal_url`, `portalUrl`, and `demoPortalUrl` are redacted unless the key also holds `requests:write`) |
+| `requests:write` | `POST /api/requests`, `PATCH /api/requests/:id`, `POST /api/requests/:id/items`, `POST /api/requests/:id/items/:itemId/review`, `POST /api/requests/:id/approve-all-submitted`, `POST /api/requests/:id/remind-now`, `POST /api/requests/:id/toggle-reminders`, `POST /api/requests/bulk-reminders` |
 | `mcp:read` | Access `POST /mcp` read tools and bundled `SKILL.md` resources (combine with `requests:write` for MCP write tools) |
 
 Keys are stored strictly as SHA-256 hashes (shown once at creation), support optional expiry dates and instant revocation, and are blocked from session-only routes (Settings, API key management, raw sensitive ID reveal, file downloads, and `export.zip`).

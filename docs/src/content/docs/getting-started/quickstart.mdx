@@ -12,7 +12,7 @@ GatherGate requires no external database, Redis, or message broker. Pick the run
 ```bash
 npx gathergate
 ```
-Runs natively on Node.js `>= 22.13` (Node 24+ recommended) and stores data in `./data` on `http://127.0.0.1:3080`.
+Runs natively on Node.js `>= 22.13` (Node 24+ recommended), auto-loads `.env` from the working directory, and stores data in `./data` on `http://127.0.0.1:3080`. Useful CLI helpers: `npx gathergate doctor`, `npx gathergate setup --client claude-desktop`, and `npx gathergate mcp`.
   </TabItem>
   <TabItem label="Docker">
 ```bash
@@ -45,11 +45,13 @@ NODE_ENV=production HOST=127.0.0.1 PORT=3080 DATA_DIR=./data npm start
 
 ## Verify the Server
 
-Confirm the health endpoint returns HTTP `200`:
+Confirm the health endpoint returns HTTP `200`, or run the read-only CLI diagnostic:
 
 ```bash
 curl http://127.0.0.1:3080/healthz
 # {"ok":true,"service":"gathergate"}
+
+npx gathergate doctor --url http://127.0.0.1:3080
 ```
 
 ## First-Run Setup
@@ -64,6 +66,6 @@ On first boot without `MASTER_KEY` set, GatherGate auto-generates a 32-byte key 
 
 ## Next Steps
 
-- Set `BASE_URL=https://...` and `TRUST_PROXY=true` behind a [Reverse Proxy & TLS](/docs/deployment/reverse-proxy/).
-- Configure [Storage](/docs/deployment/storage/) and [Email Delivery](/docs/deployment/email/).
-- Review all variables in the [Configuration (.env) Reference](/docs/getting-started/configuration/).
+- Set `BASE_URL=https://...` and `TRUST_PROXY=true` behind a [Reverse Proxy & TLS](../../deployment/reverse-proxy/).
+- Configure [Storage](../../deployment/storage/) and [Email Delivery](../../deployment/email/).
+- Review all variables in the [Configuration (.env) Reference](../configuration/).
