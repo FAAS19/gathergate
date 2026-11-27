@@ -13,6 +13,9 @@ services:
       HOST: "0.0.0.0"
       PORT: "3080"
       DATA_DIR: /data
+      # Set to a reachable LAN origin (http://<device-host>:3080) with TRUST_PROXY=false,
+      # or your public HTTPS origin with TRUST_PROXY=true behind a TLS reverse proxy.
+      BASE_URL: ${BASE_URL:-http://casaos.local:3080}
       TRUST_PROXY: "false"
       TZ: UTC
     volumes:
@@ -30,7 +33,7 @@ services:
       envs:
         - container: BASE_URL
           description:
-            en_us: Public HTTPS URL for magic links (e.g. https://intake.yourfirm.com.au)
+            en_us: Reachable LAN (http://<device-host>:3080) or public HTTPS origin for client magic links
         - container: TRUST_PROXY
           description:
             en_us: Set to true only when running behind a trusted TLS reverse proxy

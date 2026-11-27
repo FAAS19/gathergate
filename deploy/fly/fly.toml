@@ -1,9 +1,9 @@
 # Fly.io configuration for self-hosted GatherGate (single-machine persistent volume)
-# Quickstart:
+# Quickstart (replace <your-app-name> consistently across every command):
 #   fly apps create <your-app-name>
-#   fly volumes create gathergate_data --region syd --size 10
-#   fly secrets set MASTER_KEY="$(openssl rand -hex 32)" BASE_URL="https://<your-app-name>.fly.dev"
-#   fly deploy -c deploy/fly/fly.toml
+#   fly volumes create gathergate_data --region syd --size 10 -a <your-app-name>
+#   fly secrets set MASTER_KEY="$(openssl rand -hex 32)" BASE_URL="https://<your-app-name>.fly.dev" -a <your-app-name>
+#   fly deploy -c deploy/fly/fly.toml -a <your-app-name>
 
 app = "gathergate"
 primary_region = "syd"

@@ -31,7 +31,7 @@ Every lifecycle event is written to the `webhook_deliveries` table in SQLite bef
 
 - **5 exponential retries**: Transient 5xx, 429, timeout, or network failures automatically retry at **1 minute, 5 minutes, 15 minutes, 1 hour, and 6 hours** (6 total attempts).
 - **Dead-letter queue**: Exhausted deliveries move to `dead_letter`.
-- **Inspect & replay**: Filter recent deliveries by status (`pending`, `delivered`, `retrying`, `dead_letter`) in **Settings > Webhooks** and trigger one-click **Replay** (or call `GET /api/webhook-deliveries` and `POST /api/webhook-deliveries/:id/replay` with a browser session).
+- **Inspect & replay**: Filter recent deliveries by status (`pending`, `delivered`, `retrying`, `dead_letter`) in **Settings > Webhooks** and trigger one-click **Replay** (or call `GET /api/settings/webhook/deliveries` and `POST /api/settings/webhook/deliveries/:id/replay` with a browser session).
 
 ## Request Headers
 
@@ -126,7 +126,7 @@ For headless automation and n8n HTTP Request nodes, create least-privilege Beare
 | :--- | :--- |
 | `templates:read` | `GET /api/templates` |
 | `requests:read` | `GET /api/requests`, `GET /api/requests/:id` (sensitive IDs remain masked) |
-| `requests:write` | `POST /api/requests`, `PATCH /api/requests/:id`, `POST /api/requests/:id/items`, `POST /api/requests/:id/remind-now`, `POST /api/requests/:id/reminders/toggle`, `POST /api/requests/reminders/bulk` |
+| `requests:write` | `POST /api/requests`, `PATCH /api/requests/:id`, `POST /api/requests/:id/items`, `POST /api/requests/:id/remind-now`, `POST /api/requests/:id/toggle-reminders`, `POST /api/requests/bulk-reminders` |
 | `mcp:read` | Access `POST /mcp` read tools and bundled `SKILL.md` resources (combine with `requests:write` for MCP write tools) |
 
 Keys are stored strictly as SHA-256 hashes (shown once at creation), support optional expiry dates and instant revocation, and are blocked from session-only routes (Settings, API key management, raw sensitive ID reveal, file downloads, and `export.zip`).

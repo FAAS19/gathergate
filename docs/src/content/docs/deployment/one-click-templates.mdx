@@ -44,30 +44,39 @@ Use [`deploy/railway/railway.json`](https://github.com/FAAS19/gathergate/blob/ma
 
 1. Create a new Railway service from `ghcr.io/faas19/gathergate:latest` (or link `FAAS19/gathergate` with Dockerfile builder).
 2. Add a Railway **Volume** mounted at `/data` and keep **Replicas** set to `1`.
-3. Set environment variables: `NODE_ENV=production`, `HOST=0.0.0.0`, `PORT=3080`, `DATA_DIR=/data`, `TRUST_PROXY=true`, `BASE_URL=https://<your-railway-domain>`, and `MASTER_KEY` (`openssl rand -hex 32`).
+3. Set environment variables: `NODE_ENV=production`, `HOST=0.0.0.0`, `PORT=3080`, `DATA_DIR=/data`, `TRUST_PROXY=true`, `RAILWAY_RUN_UID=0` (required by Railway so GatherGate can initialise its SQLite database on Railway's root-owned persistent volume), `BASE_URL=https://<your-railway-domain>`, and `MASTER_KEY` (`openssl rand -hex 32`).
 4. Configure healthcheck path `/healthz` and expose port `3080`.
   </TabItem>
   <TabItem label="Umbrel">
 Manifests live at [`deploy/umbrel/umbrel-app.yml`](https://github.com/FAAS19/gathergate/blob/main/deploy/umbrel/umbrel-app.yml) and [`deploy/umbrel/docker-compose.yml`](https://github.com/FAAS19/gathergate/blob/main/deploy/umbrel/docker-compose.yml):
 
 - Runs as non-root `user: "1000:1000"` (`node:24-alpine`) with `${APP_DATA_DIR}/data:/data` and `app_proxy` routing to `gathergate_web_1:3080`.
+- Before creating client checklists, set `BASE_URL` to a reachable origin so generated magic links work from client devices: use `http://<device-host>:3080` (for example `http://umbrel.local:3080`) for LAN-only access, or your public `https://...` origin when exposed behind a TLS reverse proxy (setting `TRUST_PROXY=true` only when a trusted proxy forwards requests).
 - Ready for custom Umbrel Community App Stores or upstream submission to `getumbrel/umbrel-apps`.
   </TabItem>
   <TabItem label="CasaOS">
 Import [`deploy/casaos/docker-compose.yml`](https://github.com/FAAS19/gathergate/blob/main/deploy/casaos/docker-compose.yml) via **App Store > Custom Install > Import**:
 
-- Maps `/DATA/AppData/$AppID/data:/data` and exposes port `3080`.
-- Set `BASE_URL=https://...` and `TRUST_PROXY=true` only when exposing GatherGate behind a TLS reverse proxy (Caddy, Nginx, or Cloudflare Tunnel).
+1. Because GatherGate runs as the non-root `node` user (`UID 1000` in `node:24-alpine`), create and chown the host bind directory before the first start (replace `<app-id>` with the CasaOS app identifier, typically `gathergate`):
+
+```bash
+sudo mkdir -p /DATA/AppData/<app-id>/data
+sudo chown -R 1000:1000 /DATA/AppData/<app-id>/data
+```
+
+2. Maps `/DATA/AppData/$AppID/data:/data` and exposes port `3080`.
+3. Set `BASE_URL` to a reachable origin before creating checklists: use `http://<device-host>:3080` with `TRUST_PROXY=false` for direct LAN access, or your public `https://...` origin with `TRUST_PROXY=true` when running behind a trusted TLS reverse proxy (Caddy, Nginx, or Cloudflare Tunnel).
   </TabItem>
   <TabItem label="Fly.io">
-Use [`deploy/fly/fly.toml`](https://github.com/FAAS19/gathergate/blob/main/deploy/fly/fly.toml) (change `app` and `primary_region` to your preference):
+Use [`deploy/fly/fly.toml`](https://github.com/FAAS19/gathergate/blob/main/deploy/fly/fly.toml) (replace `your-gathergate-app` and `syd` with your chosen app name and region):
 
 ```bash
 fly apps create your-gathergate-app
-fly volumes create gathergate_data --region syd --size 10
+fly volumes create gathergate_data --region syd --size 10 -a your-gathergate-app
 fly secrets set \
   MASTER_KEY="$(openssl rand -hex 32)" \
-  BASE_URL="https://your-gathergate-app.fly.dev"
+  BASE_URL="https://your-gathergate-app.fly.dev" \
+  -a your-gathergate-app
 fly deploy -c deploy/fly/fly.toml -a your-gathergate-app
 ```
 
