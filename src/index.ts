@@ -19,7 +19,7 @@ const db = openDatabase(config.dbPath);
 const storage = createStorageAdapter(config);
 const email = createEmailAdapter(config);
 
-const { app, store } = createApp({ config, db, storage, email });
+const { app, store, inFlightReminders } = createApp({ config, db, storage, email });
 
 const server = serve(
   {
@@ -53,6 +53,7 @@ if (config.cronIntervalMinutes > 0) {
           masterKey: config.masterKey,
           config,
           saveToOutbox: config.emailBackend === "console",
+          inFlightReminders,
         });
       } catch (err) {
         console.error("[GatherGate Cron] reminder sweep failed:", err);

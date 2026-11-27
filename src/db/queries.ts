@@ -1199,12 +1199,17 @@ export class Store {
         "UPDATE requests SET reminders_sent = ?, last_manual_reminder_at = ?, next_reminder_at = ? WHERE id = ? AND workspace_id = ?"
       )
       .run(sent, nowIso, nextReminder, requestId, workspaceId);
-    this.logAudit(workspaceId, requestId, actor, "reminder.manual_sent", {
-      by: actorEmail,
-      outstandingCount,
-      reminderNumber: sent,
-    });
-    return this.getRequestById(workspaceId, requestId)!;
+    const updated = this.getRequestById(workspaceId, requestId)!;
+    try {
+      this.logAudit(workspaceId, requestId, actor, "reminder.manual_sent", {
+        by: actorEmail,
+        outstandingCount,
+        reminderNumber: sent,
+      });
+    } catch {
+      // Best-effort audit after reminder state has committed.
+    }
+    return updated;
   }
 
   updateRequestDueAt(

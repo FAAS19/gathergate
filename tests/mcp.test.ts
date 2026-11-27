@@ -11,8 +11,26 @@ import { createStorageAdapter } from "../src/adapters/storage.js";
 import { createApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { openDatabase } from "../src/db/client.js";
+import { runReminderSweep } from "../src/jobs/chaser.js";
 import { resolveWebhookSecret } from "../src/jobs/webhook.js";
-import { MCP_DEFAULT_PROTOCOL_VERSION } from "../src/mcp/server.js";
+import {
+  MCP_HEADERLESS_FALLBACK_VERSION,
+  MCP_LEGACY_DEFAULT_VERSION,
+  MCP_MODERN_PROTOCOL_VERSION,
+} from "../src/mcp/server.js";
+
+function modernHeaders(
+  base: Record<string, string>,
+  method: string,
+  name?: string
+): Record<string, string> {
+  return {
+    ...base,
+    "mcp-protocol-version": MCP_MODERN_PROTOCOL_VERSION,
+    "mcp-method": method,
+    ...(name !== undefined ? { "mcp-name": name } : {}),
+  };
+}
 
 function extractCookie(setCookieHeader: string | null, name: string): string {
   assert.ok(setCookieHeader, `Expected Set-Cookie containing ${name}`);
@@ -135,13 +153,15 @@ test("MCP 2.0: auth boundaries (Bearer-only, mcp:read gate, requests:write gate,
     );
     assert.equal(badOrigin.status, 403);
 
+    // Headerless request assumes 2025-03-26 (no resultType / ttlMs)
     const okOrigin = await ctx.mcpCall(
       { jsonrpc: "2.0", id: 0, method: "ping" },
       { ...authHeader, origin: "https://intake.harbour.test" }
     );
     assert.equal(okOrigin.status, 200);
-    const okOriginJson = (await okOrigin.json()) as { result: { resultType?: string } };
-    assert.equal(okOriginJson.result.resultType, "complete");
+    assert.equal(okOrigin.headers.get("mcp-protocol-version"), MCP_HEADERLESS_FALLBACK_VERSION);
+    const okOriginJson = (await okOrigin.json()) as { result: Record<string, unknown> };
+    assert.equal("resultType" in okOriginJson.result, false);
 
     // Unsupported MCP-Protocol-Version header & _meta rejected with HTTP 400 + JSON-RPC -32022
     const badHeaderVer = await ctx.mcpCall(
@@ -153,7 +173,7 @@ test("MCP 2.0: auth boundaries (Bearer-only, mcp:read gate, requests:write gate,
       error: { code: number; data: { supported: string[]; requested: string } };
     };
     assert.equal(badHeaderVerJson.error.code, -32022);
-    assert.ok(badHeaderVerJson.error.data.supported.includes("2026-07-28"));
+    assert.ok(badHeaderVerJson.error.data.supported.includes(MCP_MODERN_PROTOCOL_VERSION));
     assert.equal(badHeaderVerJson.error.data.requested, "1900-01-01");
 
     const badMetaVer = await ctx.mcpCall(
@@ -169,20 +189,72 @@ test("MCP 2.0: auth boundaries (Bearer-only, mcp:read gate, requests:write gate,
     const badMetaVerJson = (await badMetaVer.json()) as { error: { code: number } };
     assert.equal(badMetaVerJson.error.code, -32022);
 
-    // Earlier protocol version omits resultType
-    const legacyPing = await ctx.mcpCall(
-      { jsonrpc: "2.0", id: 92, method: "ping" },
+    // _meta declaring supported version without MCP-Protocol-Version header returns 400 + -32020
+    const missingHeaderForMeta = await ctx.mcpCall(
+      {
+        jsonrpc: "2.0",
+        id: 911,
+        method: "ping",
+        params: { _meta: { "io.modelcontextprotocol/protocolVersion": MCP_MODERN_PROTOCOL_VERSION } },
+      },
+      authHeader
+    );
+    assert.equal(missingHeaderForMeta.status, 400);
+    assert.equal(((await missingHeaderForMeta.json()) as { error: { code: number } }).error.code, -32020);
+
+    // Modern 2026-07-28 requests validate Mcp-Method and Mcp-Name before dispatch (-32020 HTTP 400)
+    const badMethodHeader = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 912, method: "tools/list" },
+      { ...authHeader, "mcp-protocol-version": MCP_MODERN_PROTOCOL_VERSION, "mcp-method": "tools/call" }
+    );
+    assert.equal(badMethodHeader.status, 400);
+    assert.equal(((await badMethodHeader.json()) as { error: { code: number } }).error.code, -32020);
+
+    const missingNameHeader = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 913, method: "tools/call", params: { name: "list_templates", arguments: {} } },
+      modernHeaders(authHeader, "tools/call")
+    );
+    assert.equal(missingNameHeader.status, 400);
+    assert.equal(((await missingNameHeader.json()) as { error: { code: number } }).error.code, -32020);
+
+    const mismatchedResName = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 914, method: "resources/read", params: { uri: "skill://gathergate/SKILL.md" } },
+      modernHeaders(authHeader, "resources/read", "skill://other/SKILL.md")
+    );
+    assert.equal(mismatchedResName.status, 400);
+    assert.equal(((await mismatchedResName.json()) as { error: { code: number } }).error.code, -32020);
+
+    // Unknown method returns HTTP 404 under 2026-07-28 and HTTP 200 under legacy 2025-11-25
+    const modernUnknown = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 915, method: "custom/unknown" },
+      modernHeaders(authHeader, "custom/unknown")
+    );
+    assert.equal(modernUnknown.status, 404);
+    assert.equal(((await modernUnknown.json()) as { error: { code: number } }).error.code, -32601);
+
+    const legacyUnknown = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 916, method: "custom/unknown" },
       { ...authHeader, "mcp-protocol-version": "2025-11-25" }
     );
-    assert.equal(legacyPing.status, 200);
-    assert.equal(legacyPing.headers.get("mcp-protocol-version"), "2025-11-25");
-    const legacyPingJson = (await legacyPing.json()) as { result: Record<string, unknown> };
-    assert.equal("resultType" in legacyPingJson.result, false);
+    assert.equal(legacyUnknown.status, 200);
+    assert.equal(((await legacyUnknown.json()) as { error: { code: number } }).error.code, -32601);
 
-    // MCP 2026-07-28 server/discover
+    // Earlier protocol version omits resultType and cache fields
+    const legacyTools = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 92, method: "tools/list" },
+      { ...authHeader, "mcp-protocol-version": "2025-11-25" }
+    );
+    assert.equal(legacyTools.status, 200);
+    assert.equal(legacyTools.headers.get("mcp-protocol-version"), "2025-11-25");
+    const legacyToolsJson = (await legacyTools.json()) as { result: Record<string, unknown> };
+    assert.equal("resultType" in legacyToolsJson.result, false);
+    assert.equal("ttlMs" in legacyToolsJson.result, false);
+    assert.equal("cacheScope" in legacyToolsJson.result, false);
+
+    // MCP 2026-07-28 server/discover, tools/list, resources/list include resultType, ttlMs, cacheScope
     const discoverRes = await ctx.mcpCall(
       { jsonrpc: "2.0", id: 93, method: "server/discover" },
-      authHeader
+      modernHeaders(authHeader, "server/discover")
     );
     assert.equal(discoverRes.status, 200);
     const discoverJson = (await discoverRes.json()) as {
@@ -196,41 +268,65 @@ test("MCP 2.0: auth boundaries (Bearer-only, mcp:read gate, requests:write gate,
       };
     };
     assert.equal(discoverJson.result.resultType, "complete");
-    assert.ok(discoverJson.result.supportedVersions.includes("2026-07-28"));
+    assert.ok(discoverJson.result.supportedVersions.includes(MCP_MODERN_PROTOCOL_VERSION));
     assert.equal(discoverJson.result.cacheScope, "public");
     assert.ok(discoverJson.result.ttlMs > 0);
     assert.equal(discoverJson.result._meta["io.modelcontextprotocol/serverInfo"].name, "gathergate");
     assert.ok("io.modelcontextprotocol/skills" in discoverJson.result.capabilities.extensions);
 
-    const initRes = await ctx.mcpCall(
+    const modernToolsRes = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 931, method: "tools/list" },
+      modernHeaders(authHeader, "tools/list")
+    );
+    assert.equal(modernToolsRes.status, 200);
+    const modernToolsJson = (await modernToolsRes.json()) as {
+      result: { resultType: string; ttlMs: number; cacheScope: string; tools: unknown[] };
+    };
+    assert.equal(modernToolsJson.result.resultType, "complete");
+    assert.equal(modernToolsJson.result.cacheScope, "public");
+    assert.ok(modernToolsJson.result.ttlMs > 0);
+
+    const modernResourcesRes = await ctx.mcpCall(
+      { jsonrpc: "2.0", id: 932, method: "resources/list" },
+      modernHeaders(authHeader, "resources/list")
+    );
+    assert.equal(modernResourcesRes.status, 200);
+    const modernResourcesJson = (await modernResourcesRes.json()) as {
+      result: { resultType: string; ttlMs: number; cacheScope: string; resources: unknown[] };
+    };
+    assert.equal(modernResourcesJson.result.resultType, "complete");
+    assert.equal(modernResourcesJson.result.cacheScope, "public");
+    assert.ok(modernResourcesJson.result.ttlMs > 0);
+
+    // Legacy initialize negotiates only legacy revisions (never 2026-07-28)
+    const initUnsupportedOffer = await ctx.mcpCall(
       { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2026-07-28" } },
       authHeader
     );
-    assert.equal(initRes.status, 200);
-    const initJson = (await initRes.json()) as {
+    assert.equal(initUnsupportedOffer.status, 200);
+    assert.equal(initUnsupportedOffer.headers.get("mcp-protocol-version"), MCP_LEGACY_DEFAULT_VERSION);
+    const initJson = (await initUnsupportedOffer.json()) as {
       result: {
-        resultType: string;
         protocolVersion: string;
         capabilities: { extensions: Record<string, unknown> };
         serverInfo: { name: string };
       };
     };
-    assert.equal(initJson.result.resultType, "complete");
-    assert.equal(initJson.result.protocolVersion, MCP_DEFAULT_PROTOCOL_VERSION);
+    assert.equal(initJson.result.protocolVersion, MCP_LEGACY_DEFAULT_VERSION);
+    assert.equal("resultType" in initJson.result, false);
     assert.equal(initJson.result.serverInfo.name, "gathergate");
     assert.ok("io.modelcontextprotocol/skills" in initJson.result.capabilities.extensions);
 
-    // Legacy initialize negotiates older version without resultType
     const legacyInit = await ctx.mcpCall(
-      { jsonrpc: "2.0", id: 94, method: "initialize", params: { protocolVersion: "2025-11-25" } },
+      { jsonrpc: "2.0", id: 94, method: "initialize", params: { protocolVersion: "2025-03-26" } },
       authHeader
     );
     assert.equal(legacyInit.status, 200);
-    assert.equal(legacyInit.headers.get("mcp-protocol-version"), "2025-11-25");
+    assert.equal(legacyInit.headers.get("mcp-protocol-version"), "2025-03-26");
     const legacyInitJson = (await legacyInit.json()) as {
-      result: { protocolVersion: string; resultType?: string };
+      result: { protocolVersion: string };
     };
-    assert.equal(legacyInitJson.result.protocolVersion, "2025-11-25");
+    assert.equal(legacyInitJson.result.protocolVersion, "2025-03-26");
     assert.equal("resultType" in legacyInitJson.result, false);
 
     // Notification returns 202 Accepted with no body
@@ -304,7 +400,10 @@ test("MCP 2.0: strict zero-PII & zero-blob boundary, SEP-2640 SKILL.md resources
 
     // 1. SEP-2640 skills/list, skills/get, resources/list, resources/read
     const skillsList = (await (
-      await ctx.mcpCall({ jsonrpc: "2.0", id: 10, method: "skills/list" }, authA)
+      await ctx.mcpCall(
+        { jsonrpc: "2.0", id: 10, method: "skills/list" },
+        modernHeaders(authA, "skills/list")
+      )
     ).json()) as {
       result: {
         resultType: string;
@@ -330,20 +429,22 @@ test("MCP 2.0: strict zero-PII & zero-blob boundary, SEP-2640 SKILL.md resources
     const skillGet = (await (
       await ctx.mcpCall(
         { jsonrpc: "2.0", id: 11, method: "skills/get", params: { uri: "skill://gathergate/SKILL.md" } },
-        authA
+        modernHeaders(authA, "skills/get")
       )
     ).json()) as {
       result: {
         resultType: string;
-        uri: string;
-        frontmatter: { name: string; description: string };
-        resources: Array<{ uri: string; digest: string; size: number }>;
+        skill: {
+          uri: string;
+          frontmatter: { name: string; description: string };
+          resources: Array<{ uri: string; digest: string; size: number }>;
+        };
       };
     };
     assert.equal(skillGet.result.resultType, "complete");
-    assert.equal(skillGet.result.uri, listedSkill.uri);
-    assert.deepEqual(skillGet.result.frontmatter, listedSkill.frontmatter);
-    assert.deepEqual(skillGet.result.resources, listedSkill.resources);
+    assert.equal(skillGet.result.skill.uri, listedSkill.uri);
+    assert.deepEqual(skillGet.result.skill.frontmatter, listedSkill.frontmatter);
+    assert.deepEqual(skillGet.result.skill.resources, listedSkill.resources);
 
     const skillRead = (await (
       await ctx.mcpCall(
@@ -353,12 +454,21 @@ test("MCP 2.0: strict zero-PII & zero-blob boundary, SEP-2640 SKILL.md resources
           method: "resources/read",
           params: { uri: "skill://gathergate/SKILL.md" },
         },
-        authA
+        modernHeaders(authA, "resources/read", "skill://gathergate/SKILL.md")
       )
-    ).json()) as { result: { resultType: string; contents: Array<{ uri: string; text: string }> } };
+    ).json()) as {
+      result: {
+        resultType: string;
+        ttlMs: number;
+        cacheScope: string;
+        contents: Array<{ uri: string; text: string }>;
+      };
+    };
     assert.equal(skillRead.result.resultType, "complete");
+    assert.equal(skillRead.result.cacheScope, "public");
+    assert.ok(skillRead.result.ttlMs > 0);
     assert.match(skillRead.result.contents[0].text, /Hard Security Boundary/);
-    const rootResEntry = skillGet.result.resources.find((r) => r.uri === "skill://gathergate/SKILL.md")!;
+    const rootResEntry = skillGet.result.skill.resources.find((r) => r.uri === "skill://gathergate/SKILL.md")!;
     assert.equal(rootResEntry.size, Buffer.byteLength(skillRead.result.contents[0].text, "utf8"));
     assert.equal(
       rootResEntry.digest,
@@ -588,24 +698,30 @@ test("MCP 2.0: strict zero-PII & zero-blob boundary, SEP-2640 SKILL.md resources
     ).json()) as { result: { isError: boolean } };
     assert.equal(sameDueRes.result.isError, false);
     const afterSameDue = ctx.db
-      .prepare("SELECT overdue_notified_at FROM requests WHERE id = ?")
-      .get(reqId) as { overdue_notified_at: string | null };
+      .prepare("SELECT due_at, overdue_notified_at FROM requests WHERE id = ?")
+      .get(reqId) as { due_at: string | null; overdue_notified_at: string | null };
+    assert.equal(afterSameDue.due_at, newDue);
     assert.equal(afterSameDue.overdue_notified_at, "2026-11-26T00:00:00.000Z");
 
-    // Changing due_at clears overdue_notified_at
+    // Changing due_at persists the new deadline and clears overdue_notified_at
     const nextDue = "2026-12-21T00:00:00.000Z";
-    await ctx.mcpCall(
-      {
-        jsonrpc: "2.0",
-        id: 26,
-        method: "tools/call",
-        params: { name: "update_due_date", arguments: { request_id: reqId, due_at: nextDue } },
-      },
-      authA
-    );
+    const changedDueRes = (await (
+      await ctx.mcpCall(
+        {
+          jsonrpc: "2.0",
+          id: 26,
+          method: "tools/call",
+          params: { name: "update_due_date", arguments: { request_id: reqId, due_at: nextDue } },
+        },
+        authA
+      )
+    ).json()) as { result: { isError: boolean; structuredContent: { due_at: string } } };
+    assert.equal(changedDueRes.result.isError, false);
+    assert.equal(changedDueRes.result.structuredContent.due_at, nextDue);
     const afterChangedDue = ctx.db
-      .prepare("SELECT overdue_notified_at FROM requests WHERE id = ?")
-      .get(reqId) as { overdue_notified_at: string | null };
+      .prepare("SELECT due_at, overdue_notified_at FROM requests WHERE id = ?")
+      .get(reqId) as { due_at: string | null; overdue_notified_at: string | null };
+    assert.equal(afterChangedDue.due_at, nextDue);
     assert.equal(afterChangedDue.overdue_notified_at, null);
 
     // Short email local parts withhold characters (CWE-200)
@@ -749,15 +865,23 @@ test("MCP 2.0 live HTTP E2E: real TCP server initialize, tools/list, tools/call,
     const badJsonBody = (await badJson.json()) as { error: { code: number } };
     assert.equal(badJsonBody.error.code, -32700);
 
-    // Live initialize -> notifications/initialized -> tools/list -> skills/list -> list_templates
+    // Live server/discover (2026-07-28) + legacy initialize -> tools/list -> list_templates
+    const discover = await fetch(endpoint, {
+      method: "POST",
+      headers: modernHeaders(headers, "server/discover"),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "server/discover" }),
+    });
+    assert.equal(discover.status, 200);
+    assert.equal(discover.headers.get("cache-control"), "no-store");
+    assert.equal(discover.headers.get("mcp-protocol-version"), MCP_MODERN_PROTOCOL_VERSION);
+
     const init = await fetch(endpoint, {
       method: "POST",
       headers,
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2026-07-28" } }),
+      body: JSON.stringify({ jsonrpc: "2.0", id: 10, method: "initialize", params: { protocolVersion: "2025-11-25" } }),
     });
     assert.equal(init.status, 200);
-    assert.equal(init.headers.get("cache-control"), "no-store");
-    assert.equal(init.headers.get("mcp-protocol-version"), MCP_DEFAULT_PROTOCOL_VERSION);
+    assert.equal(init.headers.get("mcp-protocol-version"), MCP_LEGACY_DEFAULT_VERSION);
 
     const notif = await fetch(endpoint, {
       method: "POST",
@@ -769,16 +893,18 @@ test("MCP 2.0 live HTTP E2E: real TCP server initialize, tools/list, tools/call,
     const tools = (await (
       await fetch(endpoint, {
         method: "POST",
-        headers,
+        headers: modernHeaders(headers, "tools/list"),
         body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
       })
-    ).json()) as { result: { tools: Array<{ name: string }> } };
+    ).json()) as { result: { resultType: string; ttlMs: number; tools: Array<{ name: string }> } };
+    assert.equal(tools.result.resultType, "complete");
+    assert.ok(tools.result.ttlMs > 0);
     assert.equal(tools.result.tools.length, 7);
 
     const tplRes = (await (
       await fetch(endpoint, {
         method: "POST",
-        headers,
+        headers: modernHeaders(headers, "tools/call", "list_templates"),
         body: JSON.stringify({
           jsonrpc: "2.0",
           id: 3,
@@ -786,7 +912,8 @@ test("MCP 2.0 live HTTP E2E: real TCP server initialize, tools/list, tools/call,
           params: { name: "list_templates", arguments: {} },
         }),
       })
-    ).json()) as { result: { isError: boolean; structuredContent: { templates: unknown[] } } };
+    ).json()) as { result: { resultType: string; isError: boolean; structuredContent: { templates: unknown[] } } };
+    assert.equal(tplRes.result.resultType, "complete");
     assert.equal(tplRes.result.isError, false);
     assert.ok(tplRes.result.structuredContent.templates.length >= 4);
   } finally {
@@ -795,12 +922,16 @@ test("MCP 2.0 live HTTP E2E: real TCP server initialize, tools/list, tools/call,
   }
 });
 
-test("MCP 2.0: concurrent send_reminder calls reserve per-request and send at most one email", async () => {
+test("MCP 2.0: concurrent send_reminder and scheduled sweep share per-request reservation", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gathergate-mcp-race-"));
   let releaseSend!: () => void;
+  let markSendEntered!: () => void;
   let sendCount = 0;
   const gate = new Promise<void>((resolve) => {
     releaseSend = resolve;
+  });
+  const sendEntered = new Promise<void>((resolve) => {
+    markSendEntered = resolve;
   });
 
   const config = loadConfig({
@@ -817,10 +948,11 @@ test("MCP 2.0: concurrent send_reminder calls reserve per-request and send at mo
   const delayedEmail = {
     async send() {
       sendCount += 1;
+      markSendEntered();
       await gate;
     },
   };
-  const { app } = createApp({
+  const { app, store, inFlightReminders } = createApp({
     config,
     db,
     storage,
@@ -828,6 +960,7 @@ test("MCP 2.0: concurrent send_reminder calls reserve per-request and send at mo
     now: () => Date.parse("2026-11-27T00:00:00.000Z"),
   });
 
+  const startedCalls: Array<Promise<Response>> = [];
   try {
     const setup = await app.request("/api/setup", {
       method: "POST",
@@ -887,7 +1020,13 @@ test("MCP 2.0: concurrent send_reminder calls reserve per-request and send at mo
     ).json()) as { result: { structuredContent: { request_id: string } } };
     const reqId = created.result.structuredContent.request_id;
 
-    // Fire two overlapping send_reminder calls before the first send settles
+    // Make the request also look due for the scheduled reminder sweep
+    db.prepare("UPDATE requests SET next_reminder_at = ? WHERE id = ?").run(
+      "2026-11-26T00:00:00.000Z",
+      reqId
+    );
+
+    // Start call A and wait until it has entered the email adapter
     const callA = app.request("/mcp", {
       method: "POST",
       headers: auth,
@@ -898,6 +1037,10 @@ test("MCP 2.0: concurrent send_reminder calls reserve per-request and send at mo
         params: { name: "send_reminder", arguments: { request_id: reqId } },
       }),
     });
+    startedCalls.push(callA);
+    await sendEntered;
+
+    // Fire competing call B with a bounded timeout so any reservation regression fails fast
     const callB = app.request("/mcp", {
       method: "POST",
       headers: auth,
@@ -908,9 +1051,30 @@ test("MCP 2.0: concurrent send_reminder calls reserve per-request and send at mo
         params: { name: "send_reminder", arguments: { request_id: reqId } },
       }),
     });
+    startedCalls.push(callB);
 
-    const resB = (await (await callB).json()) as { result: { isError: boolean } };
+    const boundedB = await Promise.race([
+      callB,
+      new Promise<never>((_, reject) => {
+        const timer = setTimeout(() => reject(new Error("Competing send_reminder hung on email gate")), 2000);
+        timer.unref();
+      }),
+    ]);
+    const resB = (await boundedB.json()) as { result: { isError: boolean } };
     assert.equal(resB.result.isError, true);
+    assert.equal(sendCount, 1);
+
+    // Scheduled sweep must skip the reserved request too
+    const sweepSent = await runReminderSweep({
+      store,
+      email: delayedEmail,
+      baseUrl: config.baseUrl,
+      masterKey: config.masterKey,
+      config,
+      nowIso: "2026-11-27T00:00:00.000Z",
+      inFlightReminders,
+    });
+    assert.equal(sweepSent, 0);
     assert.equal(sendCount, 1);
 
     releaseSend();
@@ -921,6 +1085,8 @@ test("MCP 2.0: concurrent send_reminder calls reserve per-request and send at mo
     assert.equal(resA.result.structuredContent?.reminders_sent, 1);
     assert.equal(sendCount, 1);
   } finally {
+    releaseSend();
+    await Promise.allSettled(startedCalls);
     db.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

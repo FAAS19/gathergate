@@ -19,16 +19,24 @@ import {
   type BundledSkill,
 } from "./skills.js";
 
-export const MCP_PROTOCOL_VERSIONS = [
-  "2026-07-28",
+export const MCP_MODERN_PROTOCOL_VERSION = "2026-07-28";
+export const MCP_LEGACY_PROTOCOL_VERSIONS = [
   "2025-11-25",
   "2025-06-18",
   "2025-03-26",
   "2024-11-05",
 ] as const;
+export const MCP_PROTOCOL_VERSIONS = [
+  MCP_MODERN_PROTOCOL_VERSION,
+  ...MCP_LEGACY_PROTOCOL_VERSIONS,
+] as const;
 
-export const MCP_DEFAULT_PROTOCOL_VERSION = "2026-07-28";
+export const MCP_DEFAULT_PROTOCOL_VERSION = MCP_MODERN_PROTOCOL_VERSION;
+export const MCP_LEGACY_DEFAULT_VERSION = "2025-11-25";
+export const MCP_HEADERLESS_FALLBACK_VERSION = "2025-03-26";
 const SUPPORTED_PROTOCOL_VERSIONS = new Set<string>(MCP_PROTOCOL_VERSIONS);
+const SUPPORTED_LEGACY_VERSIONS = new Set<string>(MCP_LEGACY_PROTOCOL_VERSIONS);
+const MCP_CACHE_TTL_MS = 300_000;
 const FALLBACK_IN_FLIGHT_REMINDERS = new Set<string>();
 const MCP_SERVER_INSTRUCTIONS =
   "GatherGate MCP is strictly metadata-only: never ask for or expect decrypted national IDs, client notes, file names, or uploaded bytes. Direct operators to review_url to inspect documents inside GatherGate's browser ReviewSheet. Read skill://gathergate/SKILL.md for workflows.";
@@ -74,6 +82,8 @@ export interface McpHandlerDeps {
 
 export interface McpRequestOptions {
   protocolVersionHeader?: string | null;
+  mcpMethodHeader?: string | null;
+  mcpNameHeader?: string | null;
 }
 
 interface JsonRpcRequest {
@@ -446,7 +456,7 @@ export async function handleMcpJsonRpc(
 
   // Validate per-request protocol version (MCP-Protocol-Version header and _meta) for all
   // non-initialize requests; leave legacy initialize negotiation unchanged.
-  let activeVersion: string = MCP_DEFAULT_PROTOCOL_VERSION;
+  let activeVersion: string = MCP_HEADERLESS_FALLBACK_VERSION;
   if (msg.method !== "initialize") {
     const headerVersion = options?.protocolVersionHeader?.trim() ?? "";
     const metaObj =
@@ -467,13 +477,10 @@ export async function handleMcpJsonRpc(
 
     if (
       (headerVersion && !SUPPORTED_PROTOCOL_VERSIONS.has(headerVersion)) ||
-      (metaVersion && !SUPPORTED_PROTOCOL_VERSIONS.has(metaVersion)) ||
-      (headerVersion && metaVersion && headerVersion !== metaVersion)
+      (metaVersion && !SUPPORTED_PROTOCOL_VERSIONS.has(metaVersion))
     ) {
       const requested =
         (metaVersion && !SUPPORTED_PROTOCOL_VERSIONS.has(metaVersion) ? metaVersion : "") ||
-        (headerVersion && !SUPPORTED_PROTOCOL_VERSIONS.has(headerVersion) ? headerVersion : "") ||
-        metaVersion ||
         headerVersion;
       return rpcError(
         id,
@@ -483,8 +490,68 @@ export async function handleMcpJsonRpc(
         400
       );
     }
-    if (metaVersion || headerVersion) {
-      activeVersion = metaVersion || headerVersion;
+    if (metaVersion && !headerVersion) {
+      return rpcError(
+        id,
+        -32020,
+        "Header mismatch: MCP-Protocol-Version header is missing.",
+        undefined,
+        400
+      );
+    }
+    if (headerVersion && metaVersion && headerVersion !== metaVersion) {
+      return rpcError(
+        id,
+        -32020,
+        "Header mismatch: MCP-Protocol-Version does not match _meta.",
+        undefined,
+        400
+      );
+    }
+    if (headerVersion) {
+      activeVersion = headerVersion;
+    }
+
+    // Modern 2026-07-28 requests must mirror method and target name/uri in HTTP headers.
+    if (activeVersion === MCP_MODERN_PROTOCOL_VERSION) {
+      const methodHeader = options?.mcpMethodHeader?.trim() ?? "";
+      if (!methodHeader || methodHeader !== msg.method) {
+        return rpcError(
+          id,
+          -32020,
+          "Header mismatch: Mcp-Method header must match JSON-RPC method.",
+          undefined,
+          400,
+          activeVersion
+        );
+      }
+      if (msg.method === "tools/call" || msg.method === "prompts/get") {
+        const expectedName = typeof params.name === "string" ? params.name.trim() : "";
+        const nameHeader = options?.mcpNameHeader?.trim() ?? "";
+        if (!nameHeader || !expectedName || nameHeader !== expectedName) {
+          return rpcError(
+            id,
+            -32020,
+            "Header mismatch: Mcp-Name header must match params.name.",
+            undefined,
+            400,
+            activeVersion
+          );
+        }
+      } else if (msg.method === "resources/read") {
+        const expectedUri = typeof params.uri === "string" ? params.uri.trim() : "";
+        const nameHeader = options?.mcpNameHeader?.trim() ?? "";
+        if (!nameHeader || !expectedUri || nameHeader !== expectedUri) {
+          return rpcError(
+            id,
+            -32020,
+            "Header mismatch: Mcp-Name header must match params.uri.",
+            undefined,
+            400,
+            activeVersion
+          );
+        }
+      }
     }
   }
 
@@ -500,6 +567,10 @@ export async function handleMcpJsonRpc(
       "io.modelcontextprotocol/skills": {},
     },
   };
+  const modernCacheFields =
+    activeVersion === MCP_MODERN_PROTOCOL_VERSION
+      ? { ttlMs: MCP_CACHE_TTL_MS, cacheScope: "public" as const }
+      : {};
 
   if (msg.method === "server/discover") {
     return rpcOk(
@@ -508,7 +579,7 @@ export async function handleMcpJsonRpc(
         supportedVersions: [...MCP_PROTOCOL_VERSIONS],
         capabilities: serverCapabilities,
         instructions: MCP_SERVER_INSTRUCTIONS,
-        ttlMs: 300_000,
+        ttlMs: MCP_CACHE_TTL_MS,
         cacheScope: "public",
         _meta: {
           "io.modelcontextprotocol/serverInfo": {
@@ -524,9 +595,9 @@ export async function handleMcpJsonRpc(
 
   if (msg.method === "initialize") {
     const requested = typeof params.protocolVersion === "string" ? params.protocolVersion : "";
-    const negotiated = SUPPORTED_PROTOCOL_VERSIONS.has(requested)
+    const negotiated = SUPPORTED_LEGACY_VERSIONS.has(requested)
       ? requested
-      : MCP_DEFAULT_PROTOCOL_VERSION;
+      : MCP_LEGACY_DEFAULT_VERSION;
     return rpcOk(
       id,
       {
@@ -551,6 +622,7 @@ export async function handleMcpJsonRpc(
     return rpcOk(
       id,
       {
+        ...modernCacheFields,
         tools: MCP_TOOLS.map((t) => ({
           name: t.name,
           description: t.description,
@@ -567,6 +639,7 @@ export async function handleMcpJsonRpc(
     return rpcOk(
       id,
       {
+        ...modernCacheFields,
         resources: skill.files.map((f) => ({
           uri: f.uri,
           name: f.name,
@@ -590,6 +663,7 @@ export async function handleMcpJsonRpc(
     return rpcOk(
       id,
       {
+        ...modernCacheFields,
         contents: [
           {
             uri: resource.uri,
@@ -614,7 +688,7 @@ export async function handleMcpJsonRpc(
     if (uri !== skill.uri && uri !== `skill://${skill.name}`) {
       return rpcError(id, -32602, `Skill not found: ${uri || "(empty)"}`, undefined, 200, activeVersion);
     }
-    return rpcOk(id, serializeSkillEntry(skill), activeVersion);
+    return rpcOk(id, { skill: serializeSkillEntry(skill) }, activeVersion);
   }
 
   if (msg.method === "tools/call") {
@@ -642,7 +716,8 @@ export async function handleMcpJsonRpc(
     return rpcOk(id, result, activeVersion);
   }
 
-  return rpcError(id, -32601, `Method not found: ${msg.method}`, undefined, 200, activeVersion);
+  const unknownMethodStatus = activeVersion === MCP_MODERN_PROTOCOL_VERSION ? 404 : 200;
+  return rpcError(id, -32601, `Method not found: ${msg.method}`, undefined, unknownMethodStatus, activeVersion);
 }
 
 async function executeMcpTool(

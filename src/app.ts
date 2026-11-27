@@ -3077,6 +3077,8 @@ export function createApp(deps: GatherGateAppDeps) {
       },
       {
         protocolVersionHeader: c.req.header("mcp-protocol-version") ?? null,
+        mcpMethodHeader: c.req.header("mcp-method") ?? null,
+        mcpNameHeader: c.req.header("mcp-name") ?? null,
       }
     );
 
@@ -3089,7 +3091,7 @@ export function createApp(deps: GatherGateAppDeps) {
     if (res.status === 202 || !res.body) {
       return c.body(null, 202);
     }
-    return c.json(res.body, res.status as 200 | 400);
+    return c.json(res.body, res.status as 200 | 400 | 404);
   });
 
   app.all("/mcp", (c) => {
@@ -3130,5 +3132,5 @@ export function createApp(deps: GatherGateAppDeps) {
     });
   });
 
-  return { app, store };
+  return { app, store, inFlightReminders };
 }
