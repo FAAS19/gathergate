@@ -2,16 +2,19 @@ import { ArrowRight } from "@phosphor-icons/react";
 import { BrandMark } from "./BrandMark";
 
 const FOOTER_LINKS = [
-  { label: "GitHub", href: "https://github.com/FAAS19/gathergate" },
+  { label: "Docs", href: "./docs/", external: false },
+  { label: "GitHub", href: "https://github.com/FAAS19/gathergate", external: true },
   {
     label: "Security",
     href: "https://github.com/FAAS19/gathergate/blob/main/SECURITY.md",
+    external: true,
   },
   {
     label: "Contributing",
     href: "https://github.com/FAAS19/gathergate/blob/main/CONTRIBUTING.md",
+    external: true,
   },
-  { label: "TensorForge", href: "https://tensorforge.dev" },
+  { label: "TensorForge", href: "https://tensorforge.dev", external: true },
 ] as const;
 
 export function CloudFooter() {
@@ -59,8 +62,8 @@ export function CloudFooter() {
               <a
                 key={link.label}
                 href={link.href}
-                target="_blank"
-                rel="noreferrer"
+                target={link.external ? "_blank" : undefined}
+                rel={link.external ? "noreferrer" : undefined}
                 className="rounded-md transition-colors hover:text-[var(--ink)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
               >
                 {link.label}

@@ -1,0 +1,69 @@
+---
+title: Quickstart
+description: Start GatherGate in under 30 seconds with npx, Docker, Docker Compose, or Node.js from source.
+---
+
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+
+GatherGate requires no external database, Redis, or message broker. Pick the runtime that matches your machine or server.
+
+<Tabs>
+  <TabItem label="npx (Node.js 24+)">
+```bash
+npx gathergate
+```
+Runs natively on Node.js `>= 22.13` (Node 24+ recommended) and stores data in `./data` on `http://127.0.0.1:3080`.
+  </TabItem>
+  <TabItem label="Docker">
+```bash
+docker run -d \
+  --name gathergate \
+  -p 127.0.0.1:3080:3080 \
+  -v gathergate_data:/data \
+  ghcr.io/faas19/gathergate:latest
+```
+Multi-arch (`linux/amd64` and `linux/arm64`) non-root container image published from GitHub Actions.
+  </TabItem>
+  <TabItem label="Docker Compose">
+```bash
+git clone https://github.com/FAAS19/gathergate.git \
+  && cd gathergate \
+  && docker compose up -d --build
+```
+Hardened container defaults (`cap_drop: [ALL]`, `read_only: true`, `no-new-privileges:true`, bound to `127.0.0.1:3080`).
+  </TabItem>
+  <TabItem label="From Source">
+```bash
+git clone https://github.com/FAAS19/gathergate.git && cd gathergate
+npm ci
+npm --prefix client ci
+npm run build
+NODE_ENV=production HOST=127.0.0.1 PORT=3080 DATA_DIR=./data npm start
+```
+  </TabItem>
+</Tabs>
+
+## Verify the Server
+
+Confirm the health endpoint returns HTTP `200`:
+
+```bash
+curl http://127.0.0.1:3080/healthz
+# {"ok":true,"service":"gathergate"}
+```
+
+## First-Run Setup
+
+1. Open `http://127.0.0.1:3080` in your browser.
+2. Complete the split-screen workspace onboarding (workspace name, operator email, password, and optional demo packs).
+3. Inspect outgoing magic-link invites and 6-digit OTP codes inside **Local Outbox** (`/outbox`) before connecting SMTP or Resend.
+
+:::caution[Production `MASTER_KEY`]
+On first boot without `MASTER_KEY` set, GatherGate auto-generates a 32-byte key at `DATA_DIR/.master.key` so quickstarts work immediately. Before storing real client documents, move that value into your environment or secret manager and back it up separately from `DATA_DIR`.
+:::
+
+## Next Steps
+
+- Set `BASE_URL=https://...` and `TRUST_PROXY=true` behind a [Reverse Proxy & TLS](/docs/deployment/reverse-proxy/).
+- Configure [Storage](/docs/deployment/storage/) and [Email Delivery](/docs/deployment/email/).
+- Review all variables in the [Configuration (.env) Reference](/docs/getting-started/configuration/).

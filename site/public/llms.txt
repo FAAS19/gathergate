@@ -3,6 +3,7 @@
 > Self-hosted, MIT-licenced magic-link client document intake portal, deterministic validator engine, and operator review console. Built on Node.js >= 22.13 (Node 24+ recommended), Hono (5 backend production dependencies), SQLite WAL (`node:sqlite`), AES-256-GCM per-record encryption, React 19, and Tailwind CSS v4 with zero telemetry.
 
 - Website: https://gathergate.tensorforge.dev/
+- Documentation: https://gathergate.tensorforge.dev/docs/
 - Interactive browser demo (no server): https://gathergate.tensorforge.dev/demo/#/
 - Source repository: https://github.com/FAAS19/gathergate
 - Security policy: https://github.com/FAAS19/gathergate/blob/main/SECURITY.md
@@ -33,7 +34,7 @@ Follow these steps in order when helping a user install GatherGate:
        && cd gathergate \
        && docker compose up -d --build
      ```
-   - **Option C: Native Node.js (`npx`, once published on npm)**
+   - **Option C: Native Node.js (`npx`)**
      ```bash
      npx gathergate
      ```

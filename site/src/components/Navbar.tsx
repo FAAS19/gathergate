@@ -8,6 +8,7 @@ const NAV_LINKS = [
   { label: "Walkthrough", href: "#walkthrough", external: false },
   { label: "Self-host", href: "#self-host", external: false },
   { label: "Compare", href: "#compare", external: false },
+  { label: "Docs", href: "./docs/", external: false },
   {
     label: "GitHub",
     href: "https://github.com/FAAS19/gathergate",

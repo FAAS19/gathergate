@@ -3,6 +3,7 @@
 node_modules
 client/node_modules
 site/node_modules
+docs/node_modules
 dist
 client/dist
 site/dist
@@ -11,6 +12,7 @@ data
 e2e
 tests
 site
+docs
 playwright-report
 .env
 .env.*

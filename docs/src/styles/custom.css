@@ -1,0 +1,52 @@
+@import "@fontsource-variable/plus-jakarta-sans";
+@import "@fontsource-variable/inter";
+@import "@fontsource/geist-mono/400.css";
+@import "@fontsource/geist-mono/500.css";
+@import "@fontsource/geist-mono/600.css";
+
+/* Neutral zinc dark mode + emerald accent matching GatherGate */
+:root {
+  --sl-font: "Inter Variable", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --sl-font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --sl-color-accent-low: #10261f;
+  --sl-color-accent: #22a882;
+  --sl-color-accent-high: #6ee7b7;
+
+  --sl-color-white: #f4f4f5;
+  --sl-color-gray-1: #e4e4e7;
+  --sl-color-gray-2: #a1a1aa;
+  --sl-color-gray-3: #71717a;
+  --sl-color-gray-4: #3f3f46;
+  --sl-color-gray-5: #26262c;
+  --sl-color-gray-6: #121215;
+  --sl-color-black: #09090b;
+}
+
+/* Daylight-first warm neutral light mode + pine accent */
+:root[data-theme="light"] {
+  --sl-color-accent-low: #e6f2ee;
+  --sl-color-accent: #0f5243;
+  --sl-color-accent-high: #0b3e33;
+
+  --sl-color-white: #11181c;
+  --sl-color-gray-1: #1e292e;
+  --sl-color-gray-2: #3c4a46;
+  --sl-color-gray-3: #5b6b66;
+  --sl-color-gray-4: #9aa8a3;
+  --sl-color-gray-5: #e2e7e3;
+  --sl-color-gray-6: #f1f4f1;
+  --sl-color-gray-7: #f8f9f7;
+  --sl-color-black: #ffffff;
+  --sl-color-bg: #f8f9f7;
+  --sl-color-bg-nav: #f8f9f7;
+  --sl-color-bg-sidebar: #f1f4f1;
+}
+
+h1,
+h2,
+h3,
+.site-title {
+  font-family: "Plus Jakarta Sans Variable", var(--sl-font);
+  letter-spacing: -0.02em;
+}
