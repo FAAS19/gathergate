@@ -5,6 +5,9 @@ services:
     environment:
       APP_HOST: gathergate_web_1
       APP_PORT: 3080
+      # Allow client magic-link portals, static SPA assets, public workspace logos, and health checks
+      # without an Umbrel session while keeping operator routes behind Umbrel login + GatherGate auth.
+      PROXY_AUTH_WHITELIST: "/c/*,/assets/*,/favicon.svg,/site.webmanifest,/api/client/*,/api/public/*,/healthz"
 
   web:
     image: ghcr.io/faas19/gathergate:latest

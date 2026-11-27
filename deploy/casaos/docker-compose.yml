@@ -13,8 +13,8 @@ services:
       HOST: "0.0.0.0"
       PORT: "3080"
       DATA_DIR: /data
-      # Set to a reachable LAN origin (http://<device-host>:3080) with TRUST_PROXY=false,
-      # or your public HTTPS origin with TRUST_PROXY=true behind a TLS reverse proxy.
+      # Set to a reachable LAN origin (http://<device-host>:3080) with TRUST_PROXY=false.
+      # For HTTPS behind a trusted reverse proxy, restrict port 3080 to loopback/private network or firewall it to the proxy before setting TRUST_PROXY=true.
       BASE_URL: ${BASE_URL:-http://casaos.local:3080}
       TRUST_PROXY: "false"
       TZ: UTC
