@@ -50,7 +50,6 @@ import { handleMcpJsonRpc } from "./mcp/server.js";
 import {
   attemptWebhookDelivery,
   buildWebhookEventPayload,
-  dispatchCompletionWebhook,
   dispatchTestWebhook,
   dispatchWebhookEvent,
   MAX_WEBHOOK_ATTEMPTS,
@@ -83,6 +82,7 @@ import { extractClientIp, RateLimiter } from "./security/rate-limit.js";
 import {
   assertPublicHostname,
   isPrivateOrLocalHost,
+  resolvePublicHostname,
   validateWebhookEndpoint,
   type LookupAllFn,
 } from "./security/ssrf.js";
@@ -280,13 +280,14 @@ function isAllowedMcpOrigin(originHeader: string, baseUrl: string, multiTenant: 
   } catch {
     return false;
   }
+  if (parsed.origin !== originHeader) return false;
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
   try {
     if (parsed.origin === new URL(baseUrl).origin) return true;
   } catch {
     return false;
   }
-  if (!multiTenant && parsed.protocol === "http:") {
+  if (!multiTenant && (parsed.protocol === "http:" || parsed.protocol === "https:")) {
     const host = parsed.hostname.toLowerCase();
     if (host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1") {
       return true;
@@ -396,15 +397,31 @@ export function createApp(deps: GatherGateAppDeps) {
     if (!isPreview) {
       c.header("X-Frame-Options", "DENY");
     }
+    if (
+      ((c.req.path.startsWith("/api/") && !c.req.path.startsWith("/api/public/")) ||
+        c.req.path === "/mcp") &&
+      !c.res.headers.has("cache-control")
+    ) {
+      c.header("Cache-Control", "no-store");
+    }
   });
 
   const inFlightReminders = new Set<string>();
 
   app.use("/mcp", async (c, next) => {
-    if (c.req.method === "POST") {
-      return defaultJsonLimit(c, next);
+    const originHeader = c.req.header("origin")?.trim();
+    if (originHeader && !isAllowedMcpOrigin(originHeader, config.baseUrl, config.multiTenant)) {
+      c.header("Vary", "Origin");
+      return c.json({ error: "Forbidden Origin header." }, 403);
     }
-    return next();
+    const maybeRes = c.req.method === "POST" ? await defaultJsonLimit(c, next) : await next();
+    const target = maybeRes instanceof Response ? maybeRes : c.res;
+    if (originHeader && target) {
+      target.headers.set("Access-Control-Allow-Origin", originHeader);
+      target.headers.set("Access-Control-Expose-Headers", "MCP-Protocol-Version, WWW-Authenticate");
+      target.headers.set("Vary", "Origin");
+    }
+    return maybeRes instanceof Response ? maybeRes : undefined;
   });
 
   app.get("/healthz", (c) => c.json({ ok: true, service: "gathergate" }));
@@ -614,17 +631,20 @@ export function createApp(deps: GatherGateAppDeps) {
     const resolved = ws ? resolveWorkspaceEmail(ws, config, config.masterKey) : null;
     const { subject, text, html } = params.message;
     if (resolved && resolved.source === "workspace") {
+      let pinnedAddresses: Array<{ address: string; family: 4 | 6 }> | undefined;
       if (config.multiTenant && resolved.backend === "smtp" && resolved.smtp?.host) {
-        const dnsErr = await assertPublicHostname(resolved.smtp.host, deps.lookupImpl);
-        if (dnsErr) {
+        const dnsRes = await resolvePublicHostname(resolved.smtp.host, deps.lookupImpl);
+        if (!dnsRes.ok) {
           throw new Error("SMTP host must resolve to a public address in multi-tenant mode.");
         }
+        pinnedAddresses = dnsRes.addresses;
       }
       const adapter = createEmailAdapterFromOptions({
         backend: resolved.backend,
         from: resolved.from,
         resendApiKey: resolved.resendApiKey,
         smtp: resolved.smtp,
+        pinnedAddresses,
         fetchImpl: deps.fetchImpl,
       });
       await adapter.send({
@@ -888,11 +908,12 @@ export function createApp(deps: GatherGateAppDeps) {
     const resolved = resolveScopedAuth(c, "requests:read");
     if (resolved.error) return resolved.error;
     const { auth } = resolved;
+    const canExposePortalUrl = auth.kind === "session" || auth.scopes.has("requests:write");
 
     const rows = store.listRequests(auth.workspace.id);
     const enriched = rows.map((r) => {
       const magicToken =
-        r.status === "purged" || !r.token_encrypted
+        !canExposePortalUrl || r.status === "purged" || !r.token_encrypted
           ? ""
           : decryptField(config.masterKey, r.token_encrypted, r.id);
       return {
@@ -937,7 +958,7 @@ export function createApp(deps: GatherGateAppDeps) {
       activeCount: store.countActiveRequests(auth.workspace.id),
       workspace: sanitizeWorkspace(auth.workspace),
       hasDemoData: enriched.some((r) => r.is_demo),
-      demoPortalUrl: demoCandidate?.portal_url ?? null,
+      demoPortalUrl: canExposePortalUrl ? (demoCandidate?.portal_url || null) : null,
     });
   });
 
@@ -945,18 +966,6 @@ export function createApp(deps: GatherGateAppDeps) {
     const resolved = resolveScopedAuth(c, "requests:write");
     if (resolved.error) return resolved.error;
     const { auth } = resolved;
-
-    if (
-      auth.workspace.max_active_requests > 0 &&
-      store.countActiveRequests(auth.workspace.id, true) >= auth.workspace.max_active_requests
-    ) {
-      return c.json(
-        {
-          error: `Active request cap (${auth.workspace.max_active_requests}) reached on current plan.`,
-        },
-        403
-      );
-    }
 
     const body = (await c.req.json().catch(() => ({}))) as {
       templateId?: string;
@@ -973,6 +982,18 @@ export function createApp(deps: GatherGateAppDeps) {
       purgeAfterDays?: number;
       dueAt?: string | null;
     };
+
+    if (
+      auth.workspace.max_active_requests > 0 &&
+      store.countActiveRequests(auth.workspace.id, true) >= auth.workspace.max_active_requests
+    ) {
+      return c.json(
+        {
+          error: `Active request cap (${auth.workspace.max_active_requests}) reached on current plan.`,
+        },
+        403
+      );
+    }
 
     const templateId = String(body.templateId || "");
     const title = String(body.title || "").trim();
@@ -1094,11 +1115,12 @@ export function createApp(deps: GatherGateAppDeps) {
     const resolved = resolveScopedAuth(c, "requests:read");
     if (resolved.error) return resolved.error;
     const { auth } = resolved;
+    const canExposePortalUrl = auth.kind === "session" || auth.scopes.has("requests:write");
     const request = store.getRequestById(auth.workspace.id, c.req.param("id"));
     if (!request) return c.json({ error: "Not found" }, 404);
 
     const magicToken =
-      request.status === "purged" || !request.token_encrypted
+      !canExposePortalUrl || request.status === "purged" || !request.token_encrypted
         ? ""
         : decryptField(config.masterKey, request.token_encrypted, request.id);
     const portalUrl = magicToken ? `${config.baseUrl}/c/${magicToken}` : "";
@@ -1461,17 +1483,7 @@ export function createApp(deps: GatherGateAppDeps) {
     }
 
     if (justCompleted) {
-      await dispatchCompletionWebhook({
-        store,
-        workspace: auth.workspace,
-        request,
-        masterKey: config.masterKey,
-        baseUrl: config.baseUrl,
-        multiTenant: config.multiTenant,
-        fetchImpl: deps.fetchImpl,
-        lookupImpl: deps.lookupImpl,
-        nowMs: nowFn(),
-      });
+      await emitWebhookSafe({ workspace: auth.workspace, request, event: "request.completed" });
     }
 
     return c.json({
@@ -1501,17 +1513,7 @@ export function createApp(deps: GatherGateAppDeps) {
     );
 
     if (justCompleted) {
-      await dispatchCompletionWebhook({
-        store,
-        workspace: auth.workspace,
-        request,
-        masterKey: config.masterKey,
-        baseUrl: config.baseUrl,
-        multiTenant: config.multiTenant,
-        fetchImpl: deps.fetchImpl,
-        lookupImpl: deps.lookupImpl,
-        nowMs: nowFn(),
-      });
+      await emitWebhookSafe({ workspace: auth.workspace, request, event: "request.completed" });
     }
 
     return c.json({ ok: true, approvedCount, status: request.status, justCompleted });
@@ -1956,6 +1958,11 @@ export function createApp(deps: GatherGateAppDeps) {
       ? encryptField(config.masterKey, webhookSecret, `${auth.workspace.id}:webhook`)
       : null;
     store.updateWorkspaceWebhook(auth.workspace.id, webhookUrl || null, encryptedSecret);
+    store.logAudit(auth.workspace.id, null, "operator", "settings.webhook_updated", {
+      actorEmail: auth.user.email,
+      configured: Boolean(webhookUrl),
+      hasSecret: Boolean(webhookSecret),
+    });
     return c.json({ ok: true });
   });
 
@@ -2293,6 +2300,10 @@ export function createApp(deps: GatherGateAppDeps) {
     }
 
     store.updateUserProfile(auth.user.id, { displayName: nextDisplayName, email: nextEmail });
+    store.logAudit(auth.workspace.id, null, "operator", "account.profile_updated", {
+      actorEmail: auth.user.email,
+      nextEmail,
+    });
     const updatedUser = store.getUserById(auth.user.id)!;
     const updatedWorkspace = store.getWorkspaceById(auth.workspace.id)!;
     return c.json({
@@ -2309,6 +2320,16 @@ export function createApp(deps: GatherGateAppDeps) {
   app.put("/api/account/password", async (c) => {
     const auth = requireSessionOnly(c);
     if (auth.error) return auth.error;
+    const ip = extractClientIp(c, config.trustProxy);
+    const limited = enforceRateLimit(
+      c,
+      [
+        { bucket: "loginAccount", key: `pw:${auth.user.id}` },
+        { bucket: "loginIp", key: `pw:${ip}` },
+      ],
+      "Too many password change attempts. Please wait and try again."
+    );
+    if (limited) return limited;
     const body = (await c.req.json().catch(() => ({}))) as {
       currentPassword?: unknown;
       newPassword?: unknown;
@@ -3019,10 +3040,28 @@ export function createApp(deps: GatherGateAppDeps) {
   // ---------------------------------------------------------------------------
   // Built-In Stateless MCP 2.0 Endpoint (POST /mcp, Bearer API Key Only)
   // ---------------------------------------------------------------------------
+  app.options("/mcp", (c) => {
+    c.header("Allow", "POST, OPTIONS");
+    c.header("Access-Control-Allow-Methods", "POST, OPTIONS");
+    c.header(
+      "Access-Control-Allow-Headers",
+      "Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Method, Mcp-Name, Mcp-Session-Id"
+    );
+    c.header("Access-Control-Max-Age", "600");
+    return c.body(null, 204);
+  });
+
   app.post("/mcp", async (c) => {
-    const originHeader = c.req.header("origin")?.trim();
-    if (originHeader && !isAllowedMcpOrigin(originHeader, config.baseUrl, config.multiTenant)) {
-      return c.json({ error: "Forbidden Origin header." }, 403);
+    const acceptHeader = c.req.header("accept")?.trim();
+    if (acceptHeader) {
+      const acceptsJson = acceptHeader
+        .split(",")
+        .filter((part) => !/;\s*q\s*=\s*0(?:\.0+)?(?:\s*;|$)/i.test(part))
+        .map((part) => part.split(";")[0].trim().toLowerCase())
+        .some((media) => media === "application/json" || media === "*/*" || media === "application/*");
+      if (!acceptsJson) {
+        return c.json({ error: "Not Acceptable: POST /mcp responds with application/json." }, 406);
+      }
     }
 
     const authHeader = c.req.header("authorization")?.trim();
@@ -3060,29 +3099,47 @@ export function createApp(deps: GatherGateAppDeps) {
       );
     }
 
-    const res = await handleMcpJsonRpc(
-      rawBody,
-      {
-        workspace: resolved.auth.workspace,
-        apiKey: resolved.auth.apiKey,
-        scopes: resolved.auth.scopes,
-      },
-      {
-        config,
-        store,
-        sendEmail: sendEmailTracked,
-        nowFn,
-        manualReminderCooldownMs: deps.manualReminderCooldownMs,
-        inFlightReminders,
-      },
-      {
-        protocolVersionHeader: c.req.header("mcp-protocol-version") ?? null,
-        mcpMethodHeader: c.req.header("mcp-method") ?? null,
-        mcpNameHeader: c.req.header("mcp-name") ?? null,
-      }
-    );
+    let res: Awaited<ReturnType<typeof handleMcpJsonRpc>>;
+    try {
+      res = await handleMcpJsonRpc(
+        rawBody,
+        {
+          workspace: resolved.auth.workspace,
+          apiKey: resolved.auth.apiKey,
+          scopes: resolved.auth.scopes,
+        },
+        {
+          config,
+          store,
+          sendEmail: sendEmailTracked,
+          nowFn,
+          manualReminderCooldownMs: deps.manualReminderCooldownMs,
+          inFlightReminders,
+        },
+        {
+          protocolVersionHeader: c.req.header("mcp-protocol-version") ?? null,
+          mcpMethodHeader: c.req.header("mcp-method") ?? null,
+          mcpNameHeader: c.req.header("mcp-name") ?? null,
+        }
+      );
+    } catch (err) {
+      console.error("[GatherGate MCP] unhandled error:", err);
+      const rawId =
+        rawBody && typeof rawBody === "object" && !Array.isArray(rawBody)
+          ? (rawBody as { id?: unknown }).id
+          : null;
+      const safeId =
+        typeof rawId === "string" || typeof rawId === "number" || rawId === null ? rawId : null;
+      return c.json(
+        {
+          jsonrpc: "2.0",
+          id: safeId,
+          error: { code: -32603, message: "Internal error" },
+        },
+        500
+      );
+    }
 
-    c.header("Cache-Control", "no-store");
     if (res.headers) {
       for (const [k, v] of Object.entries(res.headers)) {
         c.header(k, v);
@@ -3095,10 +3152,11 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.all("/mcp", (c) => {
-    c.header("Allow", "POST");
+    c.header("Allow", "POST, OPTIONS");
     return c.json({ error: "Method Not Allowed. GatherGate MCP is stateless; send JSON-RPC via POST /mcp." }, 405);
   });
 
+  app.all("/.well-known/*", (c) => c.json({ error: "Not found" }, 404));
   app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 
   // ---------------------------------------------------------------------------

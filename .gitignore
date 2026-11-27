@@ -1,6 +1,6 @@
 node_modules/
 dist/
-data/
+/data/
 client/node_modules/
 client/dist/
 site/node_modules/
@@ -23,4 +23,3 @@ e2e/.auth/
 e2e/.results/
 e2e/.pages-results/
 e2e/screenshots/
-

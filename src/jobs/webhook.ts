@@ -95,7 +95,7 @@ function safeLogAudit(
  * the original hostname for TLS SNI (when DNS name), certificate checks, and the HTTP Host header.
  * Raw node:https never follows redirects.
  */
-function postPinnedHttps(params: {
+export function postPinnedHttps(params: {
   url: string;
   headers: Record<string, string>;
   body: string;

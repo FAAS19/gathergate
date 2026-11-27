@@ -204,6 +204,12 @@ export const MCP_TOOLS: ReadonlyArray<McpToolDefinition> = [
           maximum: 30,
           description: "Include active packs due within the next N days (default 0 = overdue only).",
         },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 50,
+          description: "Maximum number of overdue requests to return (default 50, max 50).",
+        },
       },
     },
   },
@@ -228,7 +234,7 @@ export const MCP_TOOLS: ReadonlyArray<McpToolDefinition> = [
         client_name: { type: "string", minLength: 1, maxLength: 120 },
         client_email: { type: "string", minLength: 3, maxLength: 200 },
         due_at: {
-          type: ["string", "null"],
+          type: "string",
           description: "Optional ISO 8601 deadline timestamp.",
         },
         require_otp: {
@@ -240,7 +246,7 @@ export const MCP_TOOLS: ReadonlyArray<McpToolDefinition> = [
           description: "Email the client portal invite immediately (default true).",
         },
         welcome_note: {
-          type: ["string", "null"],
+          type: "string",
           maxLength: 2000,
           description: "Optional personalised note shown at the top of the client checklist.",
         },
@@ -285,7 +291,7 @@ export const MCP_TOOLS: ReadonlyArray<McpToolDefinition> = [
       properties: {
         request_id: { type: "string", minLength: 1 },
         due_at: {
-          type: ["string", "null"],
+          anyOf: [{ type: "string" }, { type: "null" }],
           description: "ISO 8601 timestamp, or null to clear the due date.",
         },
       },
@@ -433,20 +439,46 @@ export async function handleMcpJsonRpc(
   deps: McpHandlerDeps,
   options?: McpRequestOptions
 ): Promise<McpHttpResult> {
+  const headerVersion = options?.protocolVersionHeader?.trim() ?? "";
+  const errorVersion = SUPPORTED_PROTOCOL_VERSIONS.has(headerVersion)
+    ? headerVersion
+    : MCP_DEFAULT_PROTOCOL_VERSION;
+
   if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
-    return rpcError(null, -32600, "Invalid Request: expected a single JSON-RPC 2.0 object.", undefined, 400);
+    return rpcError(
+      null,
+      -32600,
+      "Invalid Request: expected a single JSON-RPC 2.0 object.",
+      undefined,
+      400,
+      errorVersion
+    );
   }
 
   const msg = rawBody as Partial<JsonRpcRequest>;
   const hasId = Object.prototype.hasOwnProperty.call(msg, "id");
   const rawId = msg.id;
   if (hasId && rawId !== null && typeof rawId !== "string" && typeof rawId !== "number") {
-    return rpcError(null, -32600, "Invalid Request: id must be string, number, or null.", undefined, 400);
+    return rpcError(
+      null,
+      -32600,
+      "Invalid Request: id must be string, number, or null.",
+      undefined,
+      400,
+      errorVersion
+    );
   }
   const id: string | number | null = hasId ? (rawId as string | number | null) : null;
 
   if (msg.jsonrpc !== "2.0" || typeof msg.method !== "string" || !msg.method) {
-    return rpcError(id, -32600, "Invalid Request: expected jsonrpc '2.0' and string method.", undefined, 400);
+    return rpcError(
+      id,
+      -32600,
+      "Invalid Request: expected jsonrpc '2.0' and string method.",
+      undefined,
+      400,
+      errorVersion
+    );
   }
 
   const params =
@@ -454,11 +486,34 @@ export async function handleMcpJsonRpc(
       ? (msg.params as Record<string, unknown>)
       : {};
 
-  // Validate per-request protocol version (MCP-Protocol-Version header and _meta) for all
-  // non-initialize requests; leave legacy initialize negotiation unchanged.
-  let activeVersion: string = MCP_HEADERLESS_FALLBACK_VERSION;
-  if (msg.method !== "initialize") {
-    const headerVersion = options?.protocolVersionHeader?.trim() ?? "";
+  // Validate per-request protocol version (MCP-Protocol-Version header and _meta).
+  let activeVersion: string =
+    msg.method === "server/discover" && !headerVersion
+      ? MCP_MODERN_PROTOCOL_VERSION
+      : MCP_HEADERLESS_FALLBACK_VERSION;
+
+  if (msg.method === "initialize") {
+    if (headerVersion && !SUPPORTED_PROTOCOL_VERSIONS.has(headerVersion)) {
+      return rpcError(
+        id,
+        -32022,
+        "Unsupported protocol version.",
+        { supported: [...MCP_PROTOCOL_VERSIONS], requested: headerVersion },
+        400,
+        errorVersion
+      );
+    }
+    if (headerVersion === MCP_MODERN_PROTOCOL_VERSION) {
+      return rpcError(
+        id,
+        -32601,
+        "Method not found: initialize is removed in 2026-07-28; use server/discover.",
+        undefined,
+        404,
+        MCP_MODERN_PROTOCOL_VERSION
+      );
+    }
+  } else {
     const metaObj =
       params._meta && typeof params._meta === "object" && !Array.isArray(params._meta)
         ? (params._meta as Record<string, unknown>)
@@ -470,7 +525,8 @@ export async function handleMcpJsonRpc(
         -32022,
         "Unsupported protocol version.",
         { supported: [...MCP_PROTOCOL_VERSIONS] },
-        400
+        400,
+        errorVersion
       );
     }
     const metaVersion = typeof rawMetaVersion === "string" ? rawMetaVersion.trim() : "";
@@ -487,7 +543,8 @@ export async function handleMcpJsonRpc(
         -32022,
         "Unsupported protocol version.",
         { supported: [...MCP_PROTOCOL_VERSIONS], requested },
-        400
+        400,
+        errorVersion
       );
     }
     if (metaVersion && !headerVersion) {
@@ -496,7 +553,8 @@ export async function handleMcpJsonRpc(
         -32020,
         "Header mismatch: MCP-Protocol-Version header is missing.",
         undefined,
-        400
+        400,
+        errorVersion
       );
     }
     if (headerVersion && metaVersion && headerVersion !== metaVersion) {
@@ -505,15 +563,16 @@ export async function handleMcpJsonRpc(
         -32020,
         "Header mismatch: MCP-Protocol-Version does not match _meta.",
         undefined,
-        400
+        400,
+        errorVersion
       );
     }
     if (headerVersion) {
       activeVersion = headerVersion;
     }
 
-    // Modern 2026-07-28 requests must mirror method and target name/uri in HTTP headers.
-    if (activeVersion === MCP_MODERN_PROTOCOL_VERSION) {
+    // Modern 2026-07-28 requests declaring the version header must mirror method and target name/uri.
+    if (headerVersion === MCP_MODERN_PROTOCOL_VERSION) {
       const methodHeader = options?.mcpMethodHeader?.trim() ?? "";
       if (!methodHeader || methodHeader !== msg.method) {
         return rpcError(
@@ -676,10 +735,21 @@ export async function handleMcpJsonRpc(
     );
   }
 
+  if (msg.method === "resources/templates/list") {
+    return rpcOk(
+      id,
+      {
+        ...modernCacheFields,
+        resourceTemplates: [],
+      },
+      activeVersion
+    );
+  }
+
   // SEP-2640 (io.modelcontextprotocol/skills) progressive-disclosure discovery methods
   if (msg.method === "skills/list") {
     const skill = getBundledGatherGateSkill();
-    return rpcOk(id, { skills: [serializeSkillEntry(skill)] }, activeVersion);
+    return rpcOk(id, { ...modernCacheFields, skills: [serializeSkillEntry(skill)] }, activeVersion);
   }
 
   if (msg.method === "skills/get") {
@@ -688,15 +758,18 @@ export async function handleMcpJsonRpc(
     if (uri !== skill.uri && uri !== `skill://${skill.name}`) {
       return rpcError(id, -32602, `Skill not found: ${uri || "(empty)"}`, undefined, 200, activeVersion);
     }
-    return rpcOk(id, { skill: serializeSkillEntry(skill) }, activeVersion);
+    return rpcOk(id, { ...modernCacheFields, skill: serializeSkillEntry(skill) }, activeVersion);
   }
 
   if (msg.method === "tools/call") {
     const toolName = typeof params.name === "string" ? params.name : "";
-    const args =
-      params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments)
-        ? (params.arguments as Record<string, unknown>)
-        : {};
+    if (
+      params.arguments !== undefined &&
+      (params.arguments === null || typeof params.arguments !== "object" || Array.isArray(params.arguments))
+    ) {
+      return rpcError(id, -32602, "Invalid params: arguments must be a JSON object.", undefined, 200, activeVersion);
+    }
+    const args = (params.arguments as Record<string, unknown> | undefined) ?? {};
     const tool = MCP_TOOLS.find((t) => t.name === toolName);
     if (!tool) {
       return rpcError(id, -32602, `Unknown tool: ${toolName}`, undefined, 200, activeVersion);
@@ -841,7 +914,14 @@ async function executeMcpTool(
     ) {
       return toolErr("within_days must be an integer between 0 and 30.");
     }
+    if (
+      args.limit !== undefined &&
+      (typeof args.limit !== "number" || !Number.isInteger(args.limit) || args.limit < 1 || args.limit > 50)
+    ) {
+      return toolErr("limit must be an integer between 1 and 50.");
+    }
     const withinDays = args.within_days === undefined ? 0 : args.within_days;
+    const limit = args.limit === undefined ? 50 : args.limit;
     const nowMs = nowFn();
     const cutoffIso = new Date(nowMs + withinDays * 86400_000).toISOString();
     const nowIso = new Date(nowMs).toISOString();
@@ -853,7 +933,8 @@ async function executeMcpTool(
           (r.status === "open" || r.status === "in_review") &&
           Boolean(r.due_at) &&
           r.due_at! <= cutoffIso
-      );
+      )
+      .slice(0, limit);
 
     const overdue = rows.map((r) => {
       const items = store.listRequestItems(r.id);

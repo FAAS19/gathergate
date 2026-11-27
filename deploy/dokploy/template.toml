@@ -1,5 +1,6 @@
 [variables]
 main_domain = "${domain}"
+master_key = "${hash:64}"
 
 [config]
 [[config.domains]]
@@ -9,5 +10,5 @@ host = "${main_domain}"
 
 [config.env]
 BASE_URL = "https://${main_domain}"
-MASTER_KEY = ""
+MASTER_KEY = "${master_key}"
 TZ = "UTC"

@@ -2,7 +2,6 @@ name: gathergate
 services:
   gathergate:
     image: ghcr.io/faas19/gathergate:latest
-    container_name: gathergate
     restart: unless-stopped
     ports:
       - target: 3080
@@ -15,15 +14,20 @@ services:
       DATA_DIR: /data
       # Set to a reachable LAN origin (http://<device-host>:3080) with TRUST_PROXY=false.
       # For HTTPS behind a trusted reverse proxy, restrict port 3080 to loopback/private network or firewall it to the proxy before setting TRUST_PROXY=true.
-      BASE_URL: ${BASE_URL:-http://casaos.local:3080}
+      BASE_URL: http://casaos.local:3080
       TRUST_PROXY: "false"
-      TZ: UTC
+      MASTER_KEY: ""
+      TZ: $TZ
     volumes:
       - type: bind
         source: /DATA/AppData/$AppID/data
         target: /data
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
     security_opt:
       - no-new-privileges:true
     read_only: true

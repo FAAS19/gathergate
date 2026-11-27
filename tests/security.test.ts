@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { Readable } from "node:stream";
 import { Hono } from "hono";
-import { MemoryEmailAdapter } from "../src/adapters/email.js";
+import { createEmailAdapterFromOptions, MemoryEmailAdapter } from "../src/adapters/email.js";
 import { createStorageAdapter } from "../src/adapters/storage.js";
 import { createApp, type RateLimitKey, type RateLimitRule } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
@@ -16,6 +17,7 @@ import { runPurgeSweep } from "../src/jobs/purge.js";
 import { dispatchCompletionWebhook } from "../src/jobs/webhook.js";
 import { createDecryptStream, decryptBuffer, encryptBuffer, hmacSha256Hex } from "../src/security/crypto.js";
 import { extractClientIp } from "../src/security/rate-limit.js";
+import { isNonPublicIp, validateWebhookEndpoint } from "../src/security/ssrf.js";
 
 function extractCookie(setCookieHeader: string | null, name: string): string {
   assert.ok(setCookieHeader, `Expected Set-Cookie containing ${name}`);
@@ -1365,5 +1367,142 @@ test("Security: pre-launch hardening (SMTP DNS SSRF, atomic batch upload rollbac
     }
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("Security: SSRF IPv6 & credentialed URL guards, Cache-Control no-store, audit trails, password rate-limit & config fail-closed", async () => {
+  // 1. SSRF IPv6 range coverage + fail-closed non-IP + credentialed webhook URLs
+  for (const blockedIp of ["2002:7f00:0001::", "fec0::1", "2001::1", "100::1", "not-an-ip"]) {
+    assert.equal(isNonPublicIp(blockedIp), true, `Expected isNonPublicIp("${blockedIp}") === true`);
+  }
+  assert.equal(isNonPublicIp("2606:4700:4700::1111"), false);
+  assert.ok(validateWebhookEndpoint("https://user:pass@hooks.example.com/in", false));
+  assert.ok(validateWebhookEndpoint("https://user:pass@hooks.example.com/in", true));
+
+  // 2. loadConfig fails closed on invalid backends/ports and supports PaaS BASE_URL fallbacks
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gathergate-cfg-"));
+  const validKey = crypto.randomBytes(32).toString("hex");
+  try {
+    assert.throws(
+      () => loadConfig({ DATA_DIR: tmpDir, MASTER_KEY: validKey, STORAGE_BACKEND: "r2" }),
+      /Invalid STORAGE_BACKEND/
+    );
+    assert.throws(
+      () => loadConfig({ DATA_DIR: tmpDir, MASTER_KEY: validKey, EMAIL_BACKEND: "resned" }),
+      /Invalid EMAIL_BACKEND/
+    );
+    assert.throws(
+      () => loadConfig({ DATA_DIR: tmpDir, MASTER_KEY: validKey, PORT: "99999" }),
+      /Invalid PORT/
+    );
+    assert.equal(
+      loadConfig({ DATA_DIR: tmpDir, MASTER_KEY: validKey, RENDER_EXTERNAL_URL: "https://gg.onrender.com/" }).baseUrl,
+      "https://gg.onrender.com"
+    );
+    assert.equal(
+      loadConfig({ DATA_DIR: tmpDir, MASTER_KEY: validKey, RAILWAY_PUBLIC_DOMAIN: "gg.up.railway.app" }).baseUrl,
+      "https://gg.up.railway.app"
+    );
+    assert.equal(
+      loadConfig({ DATA_DIR: tmpDir, MASTER_KEY: validKey, FLY_APP_NAME: "my-gathergate" }).baseUrl,
+      "https://my-gathergate.fly.dev"
+    );
+    assert.equal(
+      loadConfig({ DATA_DIR: tmpDir, MASTER_KEY: validKey, HOST: "127.0.0.1", PORT: "3080" }).baseUrl,
+      "http://127.0.0.1:3080"
+    );
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+
+  // 3. Cache-Control: no-store, webhook/account audit logs, and password-change rate limit
+  const ctx = await bootSecurityApp({
+    rateLimits: { loginAccount: { limit: 2, windowMs: 60_000 }, loginIp: { limit: 10, windowMs: 60_000 } },
+  });
+  try {
+    const setup = await ctx.app.request("/api/setup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workspaceName: "Audit Firm",
+        email: "ops@audit.test",
+        password: "correct-horse-battery",
+        loadDemo: false,
+      }),
+    });
+    const cookie = extractCookie(setup.headers.get("set-cookie"), "gg_session");
+
+    const settingsRes = await ctx.app.request("/api/settings", { headers: { cookie } });
+    assert.equal(settingsRes.headers.get("cache-control"), "no-store");
+
+    await ctx.app.request("/api/settings/webhook", {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ webhookUrl: "https://hooks.example.com/in", webhookSecret: "whsec_audit" }),
+    });
+    await ctx.app.request("/api/account", {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ displayName: "Operations Lead" }),
+    });
+    const actions = (
+      ctx.db.prepare("SELECT action FROM audit_events").all() as Array<{ action: string }>
+    ).map((r) => r.action);
+    assert.ok(actions.includes("settings.webhook_updated"));
+    assert.ok(actions.includes("account.profile_updated"));
+
+    for (let i = 0; i < 2; i++) {
+      const badPw = await ctx.app.request("/api/account/password", {
+        method: "PUT",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ currentPassword: "wrong-password", newPassword: "new-secure-password" }),
+      });
+      assert.equal(badPw.status, 400);
+    }
+    const pwLimited = await ctx.app.request("/api/account/password", {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ currentPassword: "wrong-password", newPassword: "new-secure-password" }),
+    });
+    assert.equal(pwLimited.status, 429);
+    assert.ok(Number(pwLimited.headers.get("retry-after")) >= 1);
+  } finally {
+    ctx.cleanup();
+  }
+
+  // 4. Pinned SMTP adapter connects strictly to pinned IP (falling back across address list) and preserves SNI
+  let receivedHello = Buffer.alloc(0);
+  const smtpProbe = net.createServer((socket) => {
+    socket.once("data", (chunk) => {
+      receivedHello = Buffer.concat([receivedHello, chunk]);
+      socket.destroy();
+    });
+  });
+  await new Promise<void>((resolve) => smtpProbe.listen(0, "127.0.0.1", () => resolve()));
+  const smtpPort = (smtpProbe.address() as net.AddressInfo).port;
+  try {
+    const adapter = createEmailAdapterFromOptions({
+      backend: "smtp",
+      from: "Practice <ops@pinned-smtp.invalid>",
+      smtp: { host: "mail.pinned-smtp.invalid.", port: smtpPort, secure: true, user: "", pass: "" },
+      pinnedAddresses: [{ address: "127.0.0.1", family: 4 }],
+    });
+    await assert.rejects(
+      () => adapter.send({ to: "client@example.com", subject: "Pin check", text: "hi" }),
+      /TLS|socket|ECONNRESET|disconnected|closed/i
+    );
+    assert.ok(receivedHello.byteLength > 20, "Expected TLS ClientHello on pinned SMTP socket");
+    assert.equal(
+      receivedHello.includes(Buffer.from("mail.pinned-smtp.invalid", "ascii")),
+      true,
+      "Expected normalized SNI without trailing dot on pinned SMTP TLS handshake"
+    );
+    assert.equal(
+      receivedHello.includes(Buffer.from("mail.pinned-smtp.invalid.", "ascii")),
+      false,
+      "Trailing dot must be stripped from SNI hostname"
+    );
+  } finally {
+    await new Promise<void>((resolve) => smtpProbe.close(() => resolve()));
   }
 });

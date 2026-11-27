@@ -1847,7 +1847,7 @@ export class Store {
     deliveredAt: string | null;
     nowIso: string;
   }): WebhookDeliveryRow | undefined {
-    this.db
+    const info = this.db
       .prepare(
         `UPDATE webhook_deliveries
          SET target_url = ?, status = ?, attempts = ?, last_status_code = ?,
@@ -1866,6 +1866,7 @@ export class Store {
         params.id,
         params.claimToken
       );
+    if (Number(info.changes ?? 0) === 0) return undefined;
     return this.getWebhookDeliveryById(params.id);
   }
 

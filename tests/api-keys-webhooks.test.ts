@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -11,6 +12,7 @@ import { loadConfig } from "../src/config.js";
 import { openDatabase } from "../src/db/client.js";
 import { runPurgeSweep } from "../src/jobs/purge.js";
 import {
+  postPinnedHttps,
   runOverdueSweep,
   runWebhookRetrySweep,
   WEBHOOK_RETRY_DELAYS_MS,
@@ -208,7 +210,7 @@ test("API keys: hashed at rest, granular scope enforcement, session-only boundar
     const uploadId = ((await upRes.json()) as { uploads: Array<{ id: string }> }).uploads[0].id;
 
     // 4. Granular scope matrix
-    // readKey: reads requests/detail (masked TFN only), clients, validators; blocked on write & templates
+    // readKey: reads requests/detail (masked TFN only, NO portal_url magic token!), clients, validators; blocked on write & templates
     const detailRes = await ctx.app.request(`/api/requests/${reqId}`, {
       headers: { authorization: `Bearer ${readKey.secret}` },
     });
@@ -216,8 +218,19 @@ test("API keys: hashed at rest, granular scope enforcement, session-only boundar
     const detailText = await detailRes.text();
     assert.equal(detailText.includes("876 543 210"), false);
     assert.equal(detailText.includes("****** 210"), true);
-    const detailJson = JSON.parse(detailText) as { auditEvents: Array<{ actor: string; action: string }> };
+    assert.equal(detailText.includes(magicToken), false, "requests:read key must never receive raw portal magic token");
+    const detailJson = JSON.parse(detailText) as {
+      portalUrl: string;
+      auditEvents: Array<{ actor: string; action: string }>;
+    };
+    assert.equal(detailJson.portalUrl, "");
     assert.ok(detailJson.auditEvents.some((e) => e.actor === "api_key" && e.action === "request.created"));
+
+    // Key holding both requests:read and requests:write still sees portal_url
+    const rwList = (await (
+      await ctx.app.request("/api/requests", { headers: { authorization: `Bearer ${allKey.secret}` } })
+    ).json()) as { requests: Array<{ id: string; portal_url: string }> };
+    assert.ok(rwList.requests.find((r) => r.id === reqId)?.portal_url.includes(`/c/${magicToken}`));
 
     assert.equal(
       (await ctx.app.request("/api/clients", { headers: { authorization: `Bearer ${readKey.secret}` } })).status,
@@ -244,6 +257,21 @@ test("API keys: hashed at rest, granular scope enforcement, session-only boundar
     });
     assert.equal(rateTripped.status, 429);
     assert.ok(Number(rateTripped.headers.get("retry-after")) >= 1);
+
+    // After window reset, GET /api/requests with requests:read also redacts portal_url and demoPortalUrl
+    ctx.advanceTime(61_000);
+    const readListRes = await ctx.app.request("/api/requests", {
+      headers: { authorization: `Bearer ${readKey.secret}` },
+    });
+    assert.equal(readListRes.status, 200);
+    const readListText = await readListRes.text();
+    assert.equal(readListText.includes(magicToken), false);
+    const readListJson = JSON.parse(readListText) as {
+      requests: Array<{ id: string; portal_url: string }>;
+      demoPortalUrl: string | null;
+    };
+    assert.equal(readListJson.requests.find((r) => r.id === reqId)?.portal_url, "");
+    assert.equal(readListJson.demoPortalUrl, null);
 
     // tplKey: reads templates, blocked on POST /api/templates and GET /api/requests
     assert.equal(
@@ -819,7 +847,58 @@ test("Webhooks: transient DNS stays retryable, concurrent claim prevents double 
     ]);
     assert.equal(s1.processed + s2.processed, 1);
     assert.equal(postCount, 1);
+
+    // Stale lease token cannot overwrite a reclaimed delivery row
+    const completedId = retryingRes.deliveries[0].id;
+    const staleWrite = ctx.store.completeWebhookDeliveryAttempt({
+      id: completedId,
+      claimToken: "stale-claim-token",
+      targetUrl: "https://hooks.example.com/in",
+      status: "dead_letter",
+      attempts: 99,
+      lastStatusCode: 500,
+      lastError: "stale overwrite",
+      nextAttemptAt: null,
+      deliveredAt: null,
+      nowIso: ctx.nowIso(),
+    });
+    assert.equal(staleWrite, undefined);
+    assert.equal(ctx.store.getWebhookDeliveryById(completedId)?.status, "delivered");
   } finally {
     ctx.cleanup();
+  }
+});
+
+test("Webhooks: postPinnedHttps connects strictly to pinned IP and preserves TLS SNI hostname", async () => {
+  let receivedClientHello = Buffer.alloc(0);
+  const server = net.createServer((socket) => {
+    socket.once("data", (chunk) => {
+      receivedClientHello = Buffer.concat([receivedClientHello, chunk]);
+      socket.destroy();
+    });
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const port = (server.address() as net.AddressInfo).port;
+  try {
+    await assert.rejects(
+      () =>
+        postPinnedHttps({
+          url: `https://pinned-sni.invalid:${port}/webhook`,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ event: "webhook.test" }),
+          resolvedAddresses: [{ address: "127.0.0.1", family: 4 }],
+          timeoutMs: 3_000,
+        }),
+      /socket hang up|ECONNRESET|TLS|disconnected/i
+    );
+    assert.ok(receivedClientHello.byteLength > 20, "Expected TLS ClientHello on pinned IP socket");
+    assert.equal(
+      receivedClientHello.includes(Buffer.from("pinned-sni.invalid", "ascii")),
+      true,
+      "Expected TLS SNI extension to carry original hostname"
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });

@@ -3,7 +3,7 @@ import type { AppConfig } from "../config.js";
 import type { Store } from "../db/queries.js";
 import { emailBrand, reminderEmail } from "../emails/templates.js";
 import { decryptField } from "../security/crypto.js";
-import { assertPublicHostname, type LookupAllFn } from "../security/ssrf.js";
+import { resolvePublicHostname, type LookupAllFn } from "../security/ssrf.js";
 
 export async function runReminderSweep(params: {
   store: Store;
@@ -66,6 +66,7 @@ export async function runReminderSweep(params: {
         const resolved = params.config
           ? resolveWorkspaceEmail(workspace, params.config, params.masterKey)
           : null;
+        let pinnedAddresses: Array<{ address: string; family: 4 | 6 }> | undefined;
         if (
           params.config?.multiTenant &&
           resolved &&
@@ -73,14 +74,15 @@ export async function runReminderSweep(params: {
           resolved.backend === "smtp" &&
           resolved.smtp?.host
         ) {
-          const dnsErr = await assertPublicHostname(resolved.smtp.host, params.lookupImpl);
-          if (dnsErr) {
+          const dnsRes = await resolvePublicHostname(resolved.smtp.host, params.lookupImpl);
+          if (!dnsRes.ok) {
             throw new Error("SMTP host must resolve to a public address in multi-tenant mode.");
           }
+          pinnedAddresses = dnsRes.addresses;
         }
         const adapter =
           resolved && resolved.source === "workspace"
-            ? createEmailAdapterFromOptions(resolved)
+            ? createEmailAdapterFromOptions({ ...resolved, pinnedAddresses })
             : params.email;
         await adapter.send({
           to: req.client_email,
