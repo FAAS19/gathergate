@@ -36,7 +36,7 @@ GatherGate ships three built-in CLI helpers (zero extra dependencies, works with
 # 1. Verify Node runtime, DATA_DIR, SQLite header, /healthz, and authenticated POST /mcp
 npx gathergate doctor --url https://intake.yourfirm.com.au
 
-# 2. Print (or with --write, safely merge) MCP client config for any supported tool
+# 2. Print MCP client config for any supported tool (add --write for JSON configs; claude-code prints a CLI command and codex prints TOML)
 npx gathergate setup --client claude-desktop --url https://intake.yourfirm.com.au --write
 
 # 3. Run the built-in stdio-to-HTTP MCP bridge (zero mcp-remote needed)
@@ -247,7 +247,7 @@ curl -sS -X POST https://intake.yourfirm.com.au/mcp \
 
 ## Reading GatherGate Docs from Agents
 
-Every page on `gathergate.tensorforge.dev/docs/` is also served as clean raw Markdown by appending `.md` to its slug, and the complete documentation is compiled into a single file:
+Every page on `gathergate.tensorforge.dev/docs/` is also served as clean raw Markdown by replacing its trailing `/` with `.md` (or fetching `/docs/index.md` for the overview), and the complete documentation is compiled into a single file:
 
 - Concise install index: `https://gathergate.tensorforge.dev/llms.txt`
 - Full agent documentation: `https://gathergate.tensorforge.dev/docs/llms-full.txt`

@@ -44,7 +44,7 @@ Follow these steps in order when helping a user install GatherGate:
      ```
      Built-in CLI helpers:
      - `npx gathergate doctor [--url <url>] [--json]` (read-only runtime, storage, SQLite header, `/healthz`, and `POST /mcp` check)
-     - `npx gathergate setup --client <name> --url <url> [--transport stdio|http] [--write]` (prints or safely merges MCP config for Antigravity, Claude Code, Claude Desktop, Cursor, Codex, VS Code, Windsurf, Cline, Zed)
+     - `npx gathergate setup --client <name> --url <url> [--transport stdio|http] [--write]` (prints MCP config for Antigravity, Claude Code, Claude Desktop, Cursor, Codex, VS Code, Windsurf, Cline, Zed; `--write` merges JSON configs only, while `claude-code` prints a CLI command and `codex` prints TOML)
      - `npx gathergate mcp [--url <url>]` (zero-dependency stdio-to-HTTP MCP bridge using `GATHERGATE_URL` and `GATHERGATE_API_KEY`)
    - **Option D: Native Node.js from source**
      ```bash
