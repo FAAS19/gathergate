@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router";
 import {
   ArrowClockwise,
@@ -82,11 +82,14 @@ export function SettingsPage({
   const [hasMoreDeliveries, setHasMoreDeliveries] = useState(false);
   const [loadingDeliveries, setLoadingDeliveries] = useState(false);
   const [replayingId, setReplayingId] = useState<string | null>(null);
+  const deliveryReqSeq = useRef(0);
 
   const loadDeliveries = useCallback(
     async (options?: { status?: "all" | "dead_letter" | "retrying" | "delivered"; offset?: number; append?: boolean }) => {
       const targetStatus = options?.status ?? deliveryFilter;
       const offset = options?.offset ?? 0;
+      const seq = ++deliveryReqSeq.current;
+      if (!options?.append) setDeliveries([]);
       setLoadingDeliveries(true);
       try {
         const qs = new URLSearchParams({ limit: "50", offset: String(offset) });
@@ -94,13 +97,15 @@ export function SettingsPage({
         const res = await apiJson<WebhookDeliveriesResponse>(
           `/api/settings/webhook/deliveries?${qs.toString()}`
         );
+        if (seq !== deliveryReqSeq.current) return;
         setDeliveries((prev) => (options?.append ? [...prev, ...res.deliveries] : res.deliveries));
         setDeadLetterCount(res.deadLetterCount ?? 0);
         setHasMoreDeliveries(Boolean(res.hasMore));
       } catch {
-        // Keep existing list if delivery log fails transiently.
+        if (seq !== deliveryReqSeq.current) return;
+        if (!options?.append) setDeliveries([]);
       } finally {
-        setLoadingDeliveries(false);
+        if (seq === deliveryReqSeq.current) setLoadingDeliveries(false);
       }
     },
     [deliveryFilter]
@@ -385,6 +390,7 @@ export function SettingsPage({
                           key={tab.id}
                           type="button"
                           size="sm"
+                          aria-pressed={deliveryFilter === tab.id}
                           variant={deliveryFilter === tab.id ? "secondary" : "outline"}
                           onClick={() => setDeliveryFilter(tab.id)}
                         >

@@ -1,4 +1,5 @@
 import https from "node:https";
+import net from "node:net";
 import type {
   RequestItemRow,
   RequestRow,
@@ -90,29 +91,31 @@ function safeLogAudit(
 }
 
 /**
- * Pins the HTTPS socket directly to the pre-validated public IP address while preserving
- * the original hostname for TLS SNI, certificate validation, and the HTTP Host header.
+ * Pins the HTTPS socket strictly to the pre-validated public IP address list while preserving
+ * the original hostname for TLS SNI (when DNS name), certificate checks, and the HTTP Host header.
  * Raw node:https never follows redirects.
  */
 function postPinnedHttps(params: {
   url: string;
   headers: Record<string, string>;
   body: string;
-  resolvedAddress: string;
-  family: 4 | 6;
+  resolvedAddresses: Array<{ address: string; family: 4 | 6 }>;
   timeoutMs: number;
 }): Promise<{ ok: boolean; status: number }> {
   return new Promise((resolve, reject) => {
     const parsed = new URL(params.url);
+    const unbracketedHost = parsed.hostname.replace(/^\[|\]$/g, "");
+    const isIpLiteral = net.isIP(unbracketedHost) !== 0;
     const bodyBuf = Buffer.from(params.body, "utf8");
+    const first = params.resolvedAddresses[0];
     const req = https.request(
       {
         protocol: "https:",
-        hostname: parsed.hostname,
+        hostname: unbracketedHost,
         port: parsed.port ? Number(parsed.port) : 443,
         path: `${parsed.pathname}${parsed.search}`,
         method: "POST",
-        servername: parsed.hostname,
+        ...(isIpLiteral ? {} : { servername: unbracketedHost }),
         headers: {
           ...params.headers,
           host: parsed.host,
@@ -120,9 +123,9 @@ function postPinnedHttps(params: {
         },
         lookup: ((_host: string, opts: unknown, cb: (...args: unknown[]) => void) => {
           if (opts && typeof opts === "object" && "all" in opts && (opts as { all?: boolean }).all) {
-            cb(null, [{ address: params.resolvedAddress, family: params.family }]);
+            cb(null, params.resolvedAddresses);
           } else {
-            cb(null, params.resolvedAddress, params.family);
+            cb(null, first.address, first.family);
           }
         }) as unknown as import("node:net").LookupFunction,
         signal: AbortSignal.timeout(params.timeoutMs),
@@ -143,18 +146,21 @@ async function postWebhookRequest(params: {
   headers: Record<string, string>;
   body: string;
   multiTenant: boolean;
-  resolvedAddress?: string;
-  family?: 4 | 6;
+  resolvedAddresses?: Array<{ address: string; family: 4 | 6 }>;
   fetchImpl?: typeof fetch;
 }): Promise<{ ok: boolean; status?: number; error?: string }> {
   try {
-    if (!params.fetchImpl && params.multiTenant && params.resolvedAddress && params.family) {
+    if (
+      !params.fetchImpl &&
+      params.multiTenant &&
+      params.resolvedAddresses &&
+      params.resolvedAddresses.length > 0
+    ) {
       const res = await postPinnedHttps({
         url: params.url,
         headers: params.headers,
         body: params.body,
-        resolvedAddress: params.resolvedAddress,
-        family: params.family,
+        resolvedAddresses: params.resolvedAddresses,
         timeoutMs: 10_000,
       });
       return res.ok
@@ -411,6 +417,7 @@ export async function attemptWebhookDelivery(params: {
       deliveredAt: null,
       nowIso,
     });
+    if (!updated) return { dispatched: false, skipped: true, delivery: priorDelivery };
     return { dispatched: false, error: "No webhook URL configured.", delivery: updated };
   }
 
@@ -420,13 +427,15 @@ export async function attemptWebhookDelivery(params: {
   });
   if (!resolved.ok) {
     if (resolved.kind === "transient_dns") {
+      const failNowMs = params.nowMs ?? Date.now();
+      const failNowIso = new Date(failNowMs).toISOString();
       const schedule = computeFailureSchedule({
         isReplay: Boolean(params.isReplay),
         priorStatus: priorDelivery.status,
         priorNextAttemptAt: priorDelivery.next_attempt_at,
         nextAttemptNumber,
         maxAttempts: priorDelivery.max_attempts,
-        nowMs,
+        nowMs: failNowMs,
       });
       const updated = params.store.completeWebhookDeliveryAttempt({
         id: priorDelivery.id,
@@ -438,8 +447,9 @@ export async function attemptWebhookDelivery(params: {
         lastError: resolved.error,
         nextAttemptAt: schedule.nextAttemptAt,
         deliveredAt: null,
-        nowIso,
+        nowIso: failNowIso,
       });
+      if (!updated) return { dispatched: false, skipped: true, delivery: priorDelivery };
       safeLogAudit(params.store, workspace.id, priorDelivery.request_id, "system", "webhook.failed", {
         deliveryId: priorDelivery.id,
         event: priorDelivery.event,
@@ -462,12 +472,23 @@ export async function attemptWebhookDelivery(params: {
       deliveredAt: null,
       nowIso,
     });
+    if (!updated) return { dispatched: false, skipped: true, delivery: priorDelivery };
     safeLogAudit(params.store, workspace.id, priorDelivery.request_id, "system", "webhook.blocked", {
       deliveryId: priorDelivery.id,
       event: priorDelivery.event,
       reason: resolved.error,
     });
     return { dispatched: false, error: resolved.error, delivery: updated };
+  }
+
+  // Re-verify claim ownership right before outbound POST so purged or reclaimed rows never send.
+  const ownedBeforeSend = params.store.getWebhookDeliveryById(priorDelivery.id);
+  if (!ownedBeforeSend || ownedBeforeSend.updated_at !== claimToken) {
+    return {
+      dispatched: false,
+      skipped: true,
+      delivery: ownedBeforeSend ?? priorDelivery,
+    };
   }
 
   const webhookSecret = resolveWebhookSecret(workspace, params.masterKey);
@@ -485,10 +506,12 @@ export async function attemptWebhookDelivery(params: {
     headers,
     body: priorDelivery.payload_json,
     multiTenant: Boolean(params.multiTenant),
-    resolvedAddress: resolved.resolvedAddress,
-    family: resolved.family,
+    resolvedAddresses: resolved.resolvedAddresses,
     fetchImpl: params.fetchImpl,
   });
+
+  const doneNowMs = params.nowMs ?? Date.now();
+  const doneNowIso = new Date(doneNowMs).toISOString();
 
   if (sendRes.ok) {
     const updated = params.store.completeWebhookDeliveryAttempt({
@@ -500,9 +523,10 @@ export async function attemptWebhookDelivery(params: {
       lastStatusCode: sendRes.status ?? 200,
       lastError: null,
       nextAttemptAt: null,
-      deliveredAt: nowIso,
-      nowIso,
+      deliveredAt: doneNowIso,
+      nowIso: doneNowIso,
     });
+    if (!updated) return { dispatched: true, status: sendRes.status, skipped: true, delivery: priorDelivery };
     safeLogAudit(params.store, workspace.id, priorDelivery.request_id, "system", "webhook.dispatched", {
       deliveryId: priorDelivery.id,
       event: priorDelivery.event,
@@ -519,7 +543,7 @@ export async function attemptWebhookDelivery(params: {
     priorNextAttemptAt: priorDelivery.next_attempt_at,
     nextAttemptNumber,
     maxAttempts: priorDelivery.max_attempts,
-    nowMs,
+    nowMs: doneNowMs,
   });
   const updated = params.store.completeWebhookDeliveryAttempt({
     id: priorDelivery.id,
@@ -531,8 +555,11 @@ export async function attemptWebhookDelivery(params: {
     lastError: sendRes.error ?? "Delivery failed",
     nextAttemptAt: schedule.nextAttemptAt,
     deliveredAt: null,
-    nowIso,
+    nowIso: doneNowIso,
   });
+  if (!updated) {
+    return { dispatched: false, skipped: true, status: sendRes.status, error: sendRes.error, delivery: priorDelivery };
+  }
   safeLogAudit(params.store, workspace.id, priorDelivery.request_id, "system", "webhook.failed", {
     deliveryId: priorDelivery.id,
     event: priorDelivery.event,
@@ -625,9 +652,9 @@ export async function runWebhookRetrySweep(params: {
   nowIso?: string;
   limit?: number;
 }): Promise<{ processed: number; delivered: number; retrying: number; deadLetter: number }> {
-  const nowIso = params.nowIso ?? new Date().toISOString();
-  const nowMs = Date.parse(nowIso);
-  const due = params.store.listDueWebhookDeliveries(nowIso, params.limit ?? 50);
+  const cutoffIso = params.nowIso ?? new Date().toISOString();
+  const fixedNowMs = params.nowIso ? Date.parse(params.nowIso) : undefined;
+  const due = params.store.listDueWebhookDeliveries(cutoffIso, params.limit ?? 50);
   let processed = 0;
   let delivered = 0;
   let retrying = 0;
@@ -641,7 +668,7 @@ export async function runWebhookRetrySweep(params: {
       multiTenant: params.multiTenant,
       fetchImpl: params.fetchImpl,
       lookupImpl: params.lookupImpl,
-      nowMs,
+      nowMs: fixedNowMs ?? Date.now(),
     });
     if (res.skipped) continue;
     processed += 1;
@@ -662,13 +689,15 @@ export async function runOverdueSweep(params: {
   lookupImpl?: LookupAllFn;
   nowIso?: string;
 }): Promise<number> {
-  const nowIso = params.nowIso ?? new Date().toISOString();
-  const nowMs = Date.parse(nowIso);
-  const overdue = params.store.listNewlyOverdueRequests(nowIso);
+  const cutoffIso = params.nowIso ?? new Date().toISOString();
+  const fixedNowMs = params.nowIso ? Date.parse(params.nowIso) : undefined;
+  const overdue = params.store.listNewlyOverdueRequests(cutoffIso);
   let notified = 0;
 
   for (const req of overdue) {
     if (!req.due_at) continue;
+    const itemNowMs = fixedNowMs ?? Date.now();
+    const itemNowIso = new Date(itemNowMs).toISOString();
     const workspace = params.store.getWorkspaceById(req.workspace_id);
     const targetUrl = workspace?.webhook_url?.trim() || "";
     const webhookDelivery =
@@ -682,7 +711,7 @@ export async function runOverdueSweep(params: {
               event: "request.overdue",
               masterKey: params.masterKey,
               baseUrl: params.baseUrl,
-              nowIso,
+              nowIso: itemNowIso,
             }),
             maxAttempts: MAX_WEBHOOK_ATTEMPTS,
           }
@@ -693,7 +722,7 @@ export async function runOverdueSweep(params: {
       requestId: req.id,
       workspaceId: req.workspace_id,
       expectedDueAt: req.due_at,
-      nowIso,
+      nowIso: itemNowIso,
       webhookDelivery,
     });
     if (!claimed.claimed) continue;
@@ -706,7 +735,7 @@ export async function runOverdueSweep(params: {
         multiTenant: params.multiTenant,
         fetchImpl: params.fetchImpl,
         lookupImpl: params.lookupImpl,
-        nowMs,
+        nowMs: itemNowMs,
         workspaceOverride: workspace,
       });
     }
@@ -784,8 +813,7 @@ export async function dispatchTestWebhook(params: {
     headers,
     body,
     multiTenant: Boolean(params.multiTenant),
-    resolvedAddress: resolved.resolvedAddress,
-    family: resolved.family,
+    resolvedAddresses: resolved.resolvedAddresses,
     fetchImpl: params.fetchImpl,
   });
 }

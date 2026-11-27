@@ -1331,9 +1331,14 @@ export class Store {
       payloadJson: string;
       maxAttempts: number;
     } | null
-  ): { delivery?: WebhookDeliveryRow } {
+  ): { finalized: boolean; delivery?: WebhookDeliveryRow } {
     return this.inTransaction(() => {
-      const req = this.db.prepare("SELECT * FROM requests WHERE id = ?").get(requestId) as unknown as RequestRow;
+      const req = this.db.prepare("SELECT * FROM requests WHERE id = ?").get(requestId) as unknown as
+        | RequestRow
+        | undefined;
+      if (!req || req.status === "purged") {
+        return { finalized: false };
+      }
       this.db
         .prepare(
           `UPDATE uploads
@@ -1369,7 +1374,7 @@ export class Store {
           nowIso,
         });
       }
-      return { delivery };
+      return { finalized: true, delivery };
     });
   }
 
@@ -1833,7 +1838,7 @@ export class Store {
     nextAttemptAt: string | null;
     deliveredAt: string | null;
     nowIso: string;
-  }): WebhookDeliveryRow {
+  }): WebhookDeliveryRow | undefined {
     this.db
       .prepare(
         `UPDATE webhook_deliveries
@@ -1853,7 +1858,7 @@ export class Store {
         params.id,
         params.claimToken
       );
-    return this.getWebhookDeliveryById(params.id)!;
+    return this.getWebhookDeliveryById(params.id);
   }
 
   listNewlyOverdueRequests(nowIso = new Date().toISOString()): RequestRow[] {

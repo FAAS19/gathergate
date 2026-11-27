@@ -165,17 +165,8 @@ export async function assertPublicHostname(
 }
 
 export type WebhookEndpointResolution =
-  | { ok: true; resolvedAddress?: string; family?: 4 | 6 }
+  | { ok: true; resolvedAddresses?: Array<{ address: string; family: 4 | 6 }> }
   | { ok: false; kind: "policy" | "transient_dns"; error: string };
-
-const TRANSIENT_DNS_CODES = new Set([
-  "EAI_AGAIN",
-  "ETIMEDOUT",
-  "ESERVFAIL",
-  "ECONNREFUSED",
-  "TIMEOUT",
-  "SERVFAIL",
-]);
 
 export async function resolveWebhookEndpointRuntime(
   rawUrl: string,
@@ -204,7 +195,7 @@ export async function resolveWebhookEndpointRuntime(
         error: "Webhook URL must target a public https endpoint in multi-tenant mode.",
       };
     }
-    return { ok: true, resolvedAddress: host, family: ipKind };
+    return { ok: true, resolvedAddresses: [{ address: host, family: ipKind }] };
   }
 
   try {
@@ -214,6 +205,7 @@ export async function resolveWebhookEndpointRuntime(
     if (!records || records.length === 0) {
       return { ok: false, kind: "transient_dns", error: "Webhook hostname could not be resolved." };
     }
+    const validated: Array<{ address: string; family: 4 | 6 }> = [];
     for (const rec of records) {
       if (isNonPublicIp(rec.address)) {
         return {
@@ -222,19 +214,17 @@ export async function resolveWebhookEndpointRuntime(
           error: "Webhook URL must target a public https endpoint in multi-tenant mode.",
         };
       }
+      const family: 4 | 6 = rec.family === 6 || net.isIP(rec.address) === 6 ? 6 : 4;
+      validated.push({ address: rec.address, family });
     }
-    const first = records[0];
-    const family: 4 | 6 = first.family === 6 || net.isIP(first.address) === 6 ? 6 : 4;
-    return { ok: true, resolvedAddress: first.address, family };
+    return { ok: true, resolvedAddresses: validated };
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException | undefined)?.code || "";
-    const isTransient = !code || TRANSIENT_DNS_CODES.has(code);
+    // Node dns.lookup can emit ENOTFOUND/EAI_AGAIN transiently (e.g. FD exhaustion); retry within budget.
+    const code = (err as NodeJS.ErrnoException | undefined)?.code || "lookup error";
     return {
       ok: false,
-      kind: isTransient ? "transient_dns" : "policy",
-      error: isTransient
-        ? `Webhook DNS lookup failed temporarily (${code || "lookup error"}).`
-        : "Webhook URL must target a public https endpoint in multi-tenant mode.",
+      kind: "transient_dns",
+      error: `Webhook DNS lookup failed (${code}).`,
     };
   }
 }

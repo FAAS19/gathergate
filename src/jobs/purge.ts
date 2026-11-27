@@ -56,7 +56,8 @@ export async function runPurgeSweep(params: {
           : null;
 
       // Atomically shred prior PII/deliveries, mark purged, and enqueue metadata-only request.purged.
-      const { delivery } = params.store.markRequestPurged(req.id, nowIso, purgedWebhook);
+      const { finalized, delivery } = params.store.markRequestPurged(req.id, nowIso, purgedWebhook);
+      if (!finalized) continue;
       requestsPurged += 1;
 
       if (delivery && params.masterKey && workspace) {

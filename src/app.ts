@@ -1965,9 +1965,10 @@ export function createApp(deps: GatherGateAppDeps) {
         ? (rawStatus as WebhookDeliveryStatus)
         : undefined;
     const rawLimit = Number(c.req.query("limit") ?? 50);
-    const limit = Number.isInteger(rawLimit) ? Math.min(100, Math.max(1, rawLimit)) : 50;
+    const limit = Number.isSafeInteger(rawLimit) ? Math.min(100, Math.max(1, rawLimit)) : 50;
     const rawOffset = Number(c.req.query("offset") ?? 0);
-    const offset = Number.isInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+    const offset =
+      Number.isSafeInteger(rawOffset) && rawOffset >= 0 ? Math.min(1_000_000, rawOffset) : 0;
 
     const deliveries = store
       .listWebhookDeliveries(auth.workspace.id, { status, limit, offset })
@@ -2380,27 +2381,32 @@ export function createApp(deps: GatherGateAppDeps) {
     const openNowMs = nowFn();
     const openNowIso = new Date(openNowMs).toISOString();
     const targetUrl = workspace.webhook_url?.trim() || "";
-    const { delivery: openDelivery } = store.touchRequestOpenedAndQueueWebhook(
-      request.id,
-      openNowIso,
-      targetUrl
-        ? (openedAt) => ({
-            workspaceId: workspace.id,
-            targetUrl,
-            payloadJson: buildWebhookEventPayload({
-              store,
-              workspace,
-              request,
-              event: "request.opened",
-              masterKey: config.masterKey,
-              baseUrl: config.baseUrl,
-              nowIso: openNowIso,
-              openedAt,
-            }),
-            maxAttempts: MAX_WEBHOOK_ATTEMPTS,
-          })
-        : undefined
-    );
+    let openDelivery: WebhookDeliveryRow | undefined;
+    try {
+      openDelivery = store.touchRequestOpenedAndQueueWebhook(
+        request.id,
+        openNowIso,
+        targetUrl
+          ? (openedAt) => ({
+              workspaceId: workspace.id,
+              targetUrl,
+              payloadJson: buildWebhookEventPayload({
+                store,
+                workspace,
+                request,
+                event: "request.opened",
+                masterKey: config.masterKey,
+                baseUrl: config.baseUrl,
+                nowIso: openNowIso,
+                openedAt,
+              }),
+              maxAttempts: MAX_WEBHOOK_ATTEMPTS,
+            })
+          : undefined
+      ).delivery;
+    } catch (err) {
+      console.error(`[GatherGate] failed to queue request.opened for ${request.id}:`, err);
+    }
     if (openDelivery) {
       try {
         await attemptWebhookDelivery({
