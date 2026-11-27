@@ -149,9 +149,10 @@ export function NewRequestPage({
           reminderIntervalDays: intervalDays,
           maxReminders: intervalDays === 0 ? 0 : Number(maxReminders),
           purgeAfterDays: Number(purgeAfterDays),
-          dueAt: dueAt ? new Date(`${dueAt}T17:00:00Z`).toISOString() : null,
+          dueAt: dueAt ? new Date(`${dueAt}T12:00:00Z`).toISOString() : null,
         }),
       });
+      void onSessionRefresh();
       toast.success(sendInvite ? "Checklist dispatched to client." : "Checklist created.");
       navigate(`/requests/${res.id}`);
     } catch (err) {

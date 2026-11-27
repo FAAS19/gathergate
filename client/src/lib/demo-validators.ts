@@ -117,7 +117,8 @@ function validateAuTfn(raw: string): DemoValidationResult {
 }
 
 function validateAuMedicare(raw: string): DemoValidationResult {
-  const digits = raw.replace(/[\s-]+/g, "");
+  const stripped = raw.trim().replace(/\s*\/\s*(?=\d\s*$)/, "");
+  const digits = stripped.replace(/[\s-]+/g, "");
   if (!/^\d{10,11}$/.test(digits)) {
     return { valid: false, error: "Medicare number must be 10 digits (+ optional 1-digit IRN)" };
   }
@@ -341,7 +342,7 @@ const VALIDATORS: Record<string, DemoValidatorDef> = {
   us_ein: { hint: "12-3456789", validate: validateUsEin },
   us_routing_aba: { hint: "021000021", validate: validateUsRoutingAba },
   us_ssn: { hint: "9 digits, stored masked", sensitive: true, validate: validateUsSsn },
-  eu_vat: { hint: "DE123456789 or FR40303265045", validate: validateEuVat },
+  eu_vat: { hint: "DE123456788 or FR40303265045", validate: validateEuVat },
 };
 
 export const SENSITIVE_VALIDATORS = new Set<string>(

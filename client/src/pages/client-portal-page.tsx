@@ -32,7 +32,12 @@ function scrollToItem(id: string) {
 
 function formatDue(iso: string | null | undefined, style: "short" | "long" = "short") {
   if (!iso) return null;
-  return new Date(iso).toLocaleDateString(undefined, style === "long" ? { weekday: "long", day: "numeric", month: "long" } : { day: "numeric", month: "short" });
+  return new Date(iso).toLocaleDateString("en-AU", {
+    ...(style === "long"
+      ? { weekday: "long", day: "numeric", month: "long" }
+      : { day: "numeric", month: "short" }),
+    timeZone: "UTC",
+  });
 }
 
 function FirmMark({ branding }: { branding: BrandingDto }) {
@@ -235,17 +240,20 @@ function ItemCard({
           {!item.client_na && (item.kind === "text" || item.kind === "textarea") && (
             <TextField item={item} token={token} locked={locked} onChanged={onChanged} />
           )}
-          {!item.client_na && item.kind === "checkbox" && (
-            <label className={cn("flex items-start gap-3 text-sm", locked ? "cursor-default" : "cursor-pointer")}>
-              <Checkbox
-                className="mt-0.5"
-                checked={item.currentValue === "confirmed"}
-                disabled={locked || savingCheck || item.currentValue === "confirmed"}
-                onCheckedChange={(c) => c === true && confirmDeclaration()}
-              />
-              <span>I confirm the above is true and correct</span>
-            </label>
-          )}
+          {!item.client_na && item.kind === "checkbox" && (() => {
+            const confirmed = item.currentValue === "confirmed" && item.status !== "rejected";
+            return (
+              <label className={cn("flex items-start gap-3 text-sm", locked ? "cursor-default" : "cursor-pointer")}>
+                <Checkbox
+                  className="mt-0.5"
+                  checked={confirmed}
+                  disabled={locked || savingCheck || confirmed}
+                  onCheckedChange={(c) => c === true && confirmDeclaration()}
+                />
+                <span>I confirm the above is true and correct</span>
+              </label>
+            );
+          })()}
 
           {item.kind !== "checkbox" && <ItemNote item={item} token={token} locked={locked} onChanged={onChanged} />}
         </div>
@@ -262,7 +270,11 @@ export function ClientPortalPage() {
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const load = useCallback(async () => {
-    if (!token) return;
+    if (!token) {
+      setLoadError("This link isn't working.");
+      setLoading(false);
+      return;
+    }
     try {
       setData(await apiJson<ClientPortalResponse>(`/api/client/${token}`));
       setLoadError(null);
@@ -338,7 +350,9 @@ export function ClientPortalPage() {
   const done = items.filter(isDone).length;
   const pct = items.length ? Math.round((done / items.length) * 100) : 0;
   const rejected = items.filter((i) => i.status === "rejected");
-  const requiredDone = items.filter((i) => i.required).every(isDone) && rejected.length === 0;
+  const requiredItems = items.filter((i) => i.required);
+  const checkSet = requiredItems.length > 0 ? requiredItems : items;
+  const requiredDone = checkSet.length > 0 && checkSet.every(isDone) && rejected.length === 0;
   const requestClosed = data.request.status === "completed";
   const due = formatDue(data.request.due_at, "long");
   const firstName = data.request.client_name.split(" ")[0];

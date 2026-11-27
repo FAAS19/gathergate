@@ -5,13 +5,17 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { Readable } from "node:stream";
+import { Hono } from "hono";
 import { MemoryEmailAdapter } from "../src/adapters/email.js";
 import { createStorageAdapter } from "../src/adapters/storage.js";
 import { createApp, type RateLimitKey, type RateLimitRule } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { openDatabase } from "../src/db/client.js";
+import { runReminderSweep } from "../src/jobs/chaser.js";
 import { runPurgeSweep } from "../src/jobs/purge.js";
+import { dispatchCompletionWebhook } from "../src/jobs/webhook.js";
 import { createDecryptStream, decryptBuffer, encryptBuffer, hmacSha256Hex } from "../src/security/crypto.js";
+import { extractClientIp } from "../src/security/rate-limit.js";
 
 function extractCookie(setCookieHeader: string | null, name: string): string {
   assert.ok(setCookieHeader, `Expected Set-Cookie containing ${name}`);
@@ -671,12 +675,19 @@ test("Security: expired/purged token rejection and HMAC webhook verification", a
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ value: "876543210" }),
     });
+    const noteRes = await ctx.app.request(`/api/client/${compToken}/items/${tfnItem.id}/note`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ note: "Sensitive note to shred on purge" }),
+    });
+    assert.equal(noteRes.status, 200);
     await ctx.app.request(`/api/requests/${compId}/approve-all-submitted`, {
       method: "POST",
       headers: { cookie: opCookie },
     });
 
     assert.equal(webhooks.length, 1);
+    assert.match(webhooks[0].headers["user-agent"] || "", /^GatherGate\/1\.0\b/);
     const sigHeader = webhooks[0].headers["x-gathergate-signature"];
     const m = sigHeader.match(/^t=(\d+),v1=([0-9a-f]{64})$/);
     assert.ok(m, `Unexpected signature header: ${sigHeader}`);
@@ -690,10 +701,35 @@ test("Security: expired/purged token rejection and HMAC webhook verification", a
       storage: ctx.storage,
       nowIso: new Date(Date.now() + 30 * 86400_000).toISOString(),
     });
+    const purgedItem = ctx.store.getRequestItem(compId, tfnItem.id)!;
+    assert.equal(purgedItem.value_encrypted, null);
+    assert.equal(purgedItem.client_note_encrypted, null);
+    assert.equal(
+      (ctx.db.prepare("SELECT COUNT(*) as c FROM outbox_emails WHERE request_id = ?").get(compId) as { c: number }).c,
+      0
+    );
+    assert.equal(
+      (ctx.db.prepare("SELECT COUNT(*) as c FROM otp_codes WHERE request_id = ?").get(compId) as { c: number }).c,
+      0
+    );
+    assert.equal(
+      (ctx.db.prepare("SELECT COUNT(*) as c FROM client_sessions WHERE request_id = ?").get(compId) as { c: number }).c,
+      0
+    );
+    const purgedReqRow = ctx.db.prepare("SELECT token_encrypted FROM requests WHERE id = ?").get(compId) as {
+      token_encrypted: string;
+    };
+    assert.equal(purgedReqRow.token_encrypted, "");
+
     const purgedPortal = await ctx.app.request(`/api/client/${compToken}`);
     assert.equal(purgedPortal.status, 200);
-    const purgedJson = (await purgedPortal.json()) as { request: { status: string }; items: unknown[] };
+    const purgedJson = (await purgedPortal.json()) as {
+      request: { status: string; client_name?: string; due_at?: string };
+      items: unknown[];
+    };
     assert.equal(purgedJson.request.status, "purged");
+    assert.equal(purgedJson.request.client_name, undefined);
+    assert.equal(purgedJson.request.due_at, undefined);
     assert.deepEqual(purgedJson.items, []);
     assert.equal((await ctx.app.request(`/api/client/${compToken}/otp/send`, { method: "POST" })).status, 404);
     assert.equal((await ctx.app.request(`/api/requests/${compId}/export.zip`, { headers: { cookie: opCookie } })).status, 404);
@@ -798,5 +834,362 @@ test("Security: 14-day default purge on sensitive packs, blob enc_version fail-c
   } finally {
     ctx.cleanup();
     fs.rmSync(prodDataDir, { recursive: true, force: true });
+  }
+});
+
+test("Security: multi-tenant webhook rejects private/loopback/link-local targets while self-hosted allows local", async () => {
+  const mt = await bootSecurityApp({ multiTenant: true });
+  const sh = await bootSecurityApp({ multiTenant: false });
+  try {
+    const mtReg = await mt.app.request("/api/setup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workspaceName: "Tenant A",
+        email: "ops@tenanta.test",
+        password: "correct-horse-battery",
+        loadDemo: false,
+      }),
+    });
+    const mtCookie = extractCookie(mtReg.headers.get("set-cookie"), "gg_session");
+
+    for (const badUrl of [
+      "http://hooks.example.com/in",
+      "http://127.0.0.1:5678/hook",
+      "http://169.254.169.254/latest/meta-data",
+      "https://[::1]/hook",
+      "https://[::ffff:127.0.0.1]/hook",
+      "https://localhost/hook",
+      "https://10.0.0.5/hook",
+    ]) {
+      const res = await mt.app.request("/api/settings/webhook", {
+        method: "PUT",
+        headers: { cookie: mtCookie, "content-type": "application/json" },
+        body: JSON.stringify({ webhookUrl: badUrl, webhookSecret: "whsec_test" }),
+      });
+      assert.equal(res.status, 400, `Expected 400 in multi-tenant mode for ${badUrl}`);
+    }
+
+    const okMt = await mt.app.request("/api/settings/webhook", {
+      method: "PUT",
+      headers: { cookie: mtCookie, "content-type": "application/json" },
+      body: JSON.stringify({ webhookUrl: "https://hooks.example.com/in", webhookSecret: "whsec_test" }),
+    });
+    assert.equal(okMt.status, 200);
+
+    const shSetup = await sh.app.request("/api/setup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workspaceName: "Local n8n Firm",
+        email: "ops@local.test",
+        password: "correct-horse-battery",
+        loadDemo: false,
+      }),
+    });
+    const shCookie = extractCookie(shSetup.headers.get("set-cookie"), "gg_session");
+    const okSh = await sh.app.request("/api/settings/webhook", {
+      method: "PUT",
+      headers: { cookie: shCookie, "content-type": "application/json" },
+      body: JSON.stringify({ webhookUrl: "http://127.0.0.1:5678/webhook/gathergate", webhookSecret: "whsec_local" }),
+    });
+    assert.equal(okSh.status, 200);
+
+    // Multi-tenant rejects single-label internal hostnames (e.g. redis)
+    const badSingleLabel = await mt.app.request("/api/settings/webhook", {
+      method: "PUT",
+      headers: { cookie: mtCookie, "content-type": "application/json" },
+      body: JSON.stringify({ webhookUrl: "https://redis/hook", webhookSecret: "whsec_test" }),
+    });
+    assert.equal(badSingleLabel.status, 400);
+
+    // Runtime dispatch enforces redirect: "error" and blocks hostnames resolving to loopback via DNS
+    const mtSetupReq = await mt.app.request("/api/requests", {
+      method: "POST",
+      headers: { cookie: mtCookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "SSRF Dispatch Test",
+        clientName: "SSRF Client",
+        clientEmail: "ssrf@example.com",
+        sendInvite: false,
+        items: [{ label: "Email", kind: "text", required: true, validator: "email" }],
+      }),
+    });
+    assert.equal(mtSetupReq.status, 201);
+    const { id: mtReqId } = (await mtSetupReq.json()) as { id: string };
+    const mtWsId = (mt.db.prepare("SELECT id FROM workspaces LIMIT 1").get() as { id: string }).id;
+    const wsMt = mt.store.getWorkspaceById(mtWsId)!;
+    const reqMt = mt.store.getRequestById(mtWsId, mtReqId)!;
+    let fetchCalled = false;
+    const dnsBlocked = await dispatchCompletionWebhook({
+      store: mt.store,
+      workspace: { ...wsMt, webhook_url: "https://rebind.example.com/hook" },
+      request: reqMt,
+      masterKey: mt.config.masterKey,
+      baseUrl: mt.config.baseUrl,
+      multiTenant: true,
+      lookupImpl: async () => [{ address: "127.0.0.1", family: 4 }],
+      fetchImpl: (async () => {
+        fetchCalled = true;
+        return new Response("ok", { status: 200 });
+      }) as typeof fetch,
+    });
+    assert.equal(dnsBlocked.dispatched, false);
+    assert.equal(fetchCalled, false);
+
+    let capturedRedirect: RequestRedirect | undefined;
+    const pubDispatched = await dispatchCompletionWebhook({
+      store: mt.store,
+      workspace: { ...wsMt, webhook_url: "https://hooks.example.com/in" },
+      request: reqMt,
+      masterKey: mt.config.masterKey,
+      baseUrl: mt.config.baseUrl,
+      multiTenant: true,
+      lookupImpl: async () => [{ address: "93.184.216.34", family: 4 }],
+      fetchImpl: (async (_url, init) => {
+        capturedRedirect = init?.redirect;
+        return new Response("ok", { status: 200 });
+      }) as typeof fetch,
+    });
+    assert.equal(pubDispatched.dispatched, true);
+    assert.equal(capturedRedirect, "error");
+  } finally {
+    mt.cleanup();
+    sh.cleanup();
+  }
+});
+
+test("Security: trustProxy IP extraction, optional-item state gating, corrupt blob 500s, single-file replace, and cron isolation", async () => {
+  const unproxied = await bootSecurityApp({
+    multiTenant: true,
+    trustProxy: false,
+    rateLimits: {
+      loginIp: { limit: 2, windowMs: 60_000 },
+      signupIp: { limit: 2, windowMs: 60_000 },
+    },
+  });
+  const proxied = await bootSecurityApp({
+    trustProxy: true,
+    rateLimits: { loginIp: { limit: 2, windowMs: 60_000 } },
+  });
+
+  try {
+    // 1. trustProxy=false ignores spoofed X-Forwarded-For & CF-Connecting-IP headers
+    for (const fakeIp of ["1.1.1.1", "2.2.2.2"]) {
+      const res = await unproxied.app.request("/api/signup", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-forwarded-for": fakeIp,
+          "cf-connecting-ip": fakeIp,
+        },
+        body: JSON.stringify({
+          workspaceName: `Firm ${fakeIp}`,
+          email: `ops-${fakeIp}@example.com`,
+          password: "correct-horse-battery",
+        }),
+      });
+      assert.equal(res.status, 200);
+    }
+    const thirdSignup = await unproxied.app.request("/api/signup", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": "9.9.9.9",
+        "cf-connecting-ip": "8.8.8.8",
+      },
+      body: JSON.stringify({
+        workspaceName: "Firm 3",
+        email: "ops-3@example.com",
+        password: "correct-horse-battery",
+      }),
+    });
+    assert.equal(thirdSignup.status, 429);
+
+    // trustProxy=true takes rightmost X-Forwarded-For entry; trustProxy=false ignores XFF
+    const ipProbe = new Hono();
+    ipProbe.get("/trusted", (c) => c.text(extractClientIp(c, true)));
+    ipProbe.get("/untrusted", (c) => c.text(extractClientIp(c, false)));
+    assert.equal(
+      await (await ipProbe.request("/trusted", { headers: { "x-forwarded-for": "203.0.113.10, 198.51.100.22" } })).text(),
+      "198.51.100.22"
+    );
+    assert.equal(
+      await (await ipProbe.request("/untrusted", { headers: { "x-forwarded-for": "203.0.113.10, 198.51.100.22" } })).text(),
+      "unknown"
+    );
+
+    // 2. Optional item gating, reopen clearing purge_at, single-file replacement, and corrupt blob handling
+    const setup = await proxied.app.request("/api/setup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workspaceName: "Hardening Vault",
+        email: "ops@hardening.test",
+        password: "correct-horse-battery",
+        loadDemo: false,
+      }),
+    });
+    assert.equal(setup.status, 200);
+    const cookie = extractCookie(setup.headers.get("set-cookie"), "gg_session");
+    const proxiedWsId = (proxied.db.prepare("SELECT id FROM workspaces LIMIT 1").get() as { id: string }).id;
+
+    const createRes = await proxied.app.request("/api/requests", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Optional Gating Pack",
+        clientName: "Alice",
+        clientEmail: "alice@example.com",
+        sendInvite: false,
+        items: [
+          { label: "Required Email", kind: "text", required: true, validator: "email" },
+          { label: "Optional File", kind: "file", required: false, multiple: false, allowedGroups: ["pdf"] },
+        ],
+      }),
+    });
+    const { id: reqId, portalUrl } = (await createRes.json()) as { id: string; portalUrl: string };
+    const token = portalUrl.split("/c/")[1];
+    const items = proxied.store.listRequestItems(reqId);
+    const reqEmailItem = items.find((i) => i.required === 1)!;
+    const optFileItem = items.find((i) => i.required === 0)!;
+
+    await proxied.app.request(`/api/client/${token}/items/${reqEmailItem.id}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ value: "alice@example.com" }),
+    });
+
+    // Reject multi-file batch on multiple:false item
+    const twoPdf = new FormData();
+    twoPdf.append("file", new File([Buffer.from("%PDF-1.4\n%%EOF\n")], "a.pdf", { type: "application/pdf" }));
+    twoPdf.append("file", new File([Buffer.from("%PDF-1.4\n%%EOF\n")], "b.pdf", { type: "application/pdf" }));
+    assert.equal(
+      (await proxied.app.request(`/api/client/${token}/items/${optFileItem.id}`, { method: "POST", body: twoPdf })).status,
+      400
+    );
+
+    // Upload 1st PDF then replace with 2nd PDF (single upload remains)
+    for (const name of ["first.pdf", "second.pdf"]) {
+      const fd = new FormData();
+      fd.append("file", new File([Buffer.from(`%PDF-1.4\n% ${name}\n%%EOF\n`)], name, { type: "application/pdf" }));
+      assert.equal(
+        (await proxied.app.request(`/api/client/${token}/items/${optFileItem.id}`, { method: "POST", body: fd })).status,
+        200
+      );
+    }
+    const uploadsAfterReplace = proxied.store.listUploadsForRequest(reqId);
+    assert.equal(uploadsAfterReplace.length, 1);
+    assert.equal(uploadsAfterReplace[0].original_name, "second.pdf");
+
+    // Approve required item while optional file is still submitted -> request stays in_review (not completed)
+    const partialApprove = await proxied.app.request(`/api/requests/${reqId}/items/${reqEmailItem.id}/review`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ decision: "approved" }),
+    });
+    assert.equal(partialApprove.status, 200);
+    assert.equal(((await partialApprove.json()) as { status: string }).status, "in_review");
+
+    // Reject optional file -> request is open (not completed)
+    const optReject = await proxied.app.request(`/api/requests/${reqId}/items/${optFileItem.id}/review`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ decision: "rejected", note: "Blurry scan" }),
+    });
+    assert.equal(optReject.status, 200);
+    assert.equal(((await optReject.json()) as { status: string }).status, "open");
+
+    // Complete cleanly then reopen -> clears purge_at and excludes from listPurgeDueRequests
+    assert.equal(
+      (
+        await proxied.app.request(`/api/requests/${reqId}/items/${optFileItem.id}/review`, {
+          method: "POST",
+          headers: { cookie, "content-type": "application/json" },
+          body: JSON.stringify({ decision: "approved" }),
+        })
+      ).status,
+      200
+    );
+    assert.ok(proxied.store.getRequestById(proxiedWsId, reqId)!.purge_at);
+    assert.equal(
+      (
+        await proxied.app.request(`/api/requests/${reqId}/items/${reqEmailItem.id}/review`, {
+          method: "POST",
+          headers: { cookie, "content-type": "application/json" },
+          body: JSON.stringify({ decision: "rejected", note: "Need update" }),
+        })
+      ).status,
+      200
+    );
+    const reopened = proxied.store.getRequestById(proxiedWsId, reqId)!;
+    assert.equal(reopened.status, "open");
+    assert.equal(reopened.purge_at, null);
+    assert.equal(reopened.completed_at, null);
+    assert.equal(
+      proxied.store.listPurgeDueRequests(new Date(Date.now() + 90 * 86400_000).toISOString()).length,
+      0
+    );
+
+    // Corrupt encrypted blob on disk -> clean HTTP 500 JSON (never crashes / never 200)
+    const upl = uploadsAfterReplace[0];
+    const blobPath = path.join(proxied.tmpDir, "blobs", upl.storage_key);
+    const rawBlob = fs.readFileSync(blobPath);
+    rawBlob[rawBlob.length - 1] ^= 0xff;
+    fs.writeFileSync(blobPath, rawBlob);
+
+    assert.equal((await proxied.app.request(`/api/uploads/${upl.id}/preview`, { headers: { cookie } })).status, 500);
+    assert.equal((await proxied.app.request(`/api/uploads/${upl.id}/download`, { headers: { cookie } })).status, 500);
+    assert.equal((await proxied.app.request(`/api/requests/${reqId}/export.zip`, { headers: { cookie } })).status, 500);
+
+    // 3. Cron reminder sweep skips is_demo=1 and isolates throwing email sends
+    const pastIso = new Date(Date.now() - 3600_000).toISOString();
+    const mkCronReq = async (clientEmail: string, isDemo: boolean) => {
+      const r = await proxied.app.request("/api/requests", {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({
+          title: `Cron ${clientEmail}`,
+          clientName: "Cron Client",
+          clientEmail,
+          sendInvite: false,
+          items: [{ label: "Email", kind: "text", required: true, validator: "email" }],
+        }),
+      });
+      const { id } = (await r.json()) as { id: string };
+      proxied.db
+        .prepare("UPDATE requests SET next_reminder_at = ?, is_demo = ? WHERE id = ?")
+        .run(pastIso, isDemo ? 1 : 0, id);
+      return id;
+    };
+    const demoReqId = await mkCronReq("demo-skip@example.com", true);
+    const failReqId = await mkCronReq("fail-send@example.com", false);
+    const okReqId = await mkCronReq("ok-send@example.com", false);
+
+    const sentRecipients: string[] = [];
+    const sentCount = await runReminderSweep({
+      store: proxied.store,
+      email: {
+        async send(msg) {
+          if (msg.to === "fail-send@example.com") {
+            throw new Error("Transient SMTP error");
+          }
+          sentRecipients.push(msg.to);
+        },
+      },
+      baseUrl: proxied.config.baseUrl,
+      masterKey: proxied.config.masterKey,
+    });
+    assert.equal(sentCount, 1);
+    assert.deepEqual(sentRecipients, ["ok-send@example.com"]);
+    assert.equal(proxied.store.getRequestById(proxiedWsId, demoReqId)!.reminders_sent, 0);
+    assert.equal(proxied.store.getRequestById(proxiedWsId, failReqId)!.reminders_sent, 0);
+    assert.ok(
+      proxied.store.listAuditEvents(failReqId).some((e) => e.action === "reminder.failed")
+    );
+    assert.equal(proxied.store.getRequestById(proxiedWsId, okReqId)!.reminders_sent, 1);
+  } finally {
+    unproxied.cleanup();
+    proxied.cleanup();
   }
 });

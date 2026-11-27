@@ -173,8 +173,11 @@ test("End-to-end JSON API lifecycle: setup, demo seed/clear, outbox, OTP, previe
     });
     assert.equal(demoPreviewRes.status, 200);
     assert.match(demoPreviewRes.headers.get("content-disposition") || "", /^inline;/);
-    assert.equal(demoPreviewRes.headers.get("x-frame-options"), null);
-    assert.equal(demoPreviewRes.headers.get("content-security-policy"), "default-src 'none'; sandbox");
+    assert.equal(demoPreviewRes.headers.get("x-frame-options"), "SAMEORIGIN");
+    assert.equal(
+      demoPreviewRes.headers.get("content-security-policy"),
+      "default-src 'none'; sandbox; frame-ancestors 'self'"
+    );
     const previewPdfBuf = Buffer.from(await demoPreviewRes.arrayBuffer());
     assert.equal(previewPdfBuf.subarray(0, 5).toString("ascii"), "%PDF-");
 

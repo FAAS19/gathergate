@@ -68,7 +68,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { apiJson, type SessionResponse } from "@/lib/api";
+import { apiJson, IS_DEMO, type SessionResponse } from "@/lib/api";
 import { getInitials, operatorDisplayName } from "@/lib/identity";
 
 function SidebarBrandHeader({ workspaceName }: { workspaceName?: string }) {
@@ -157,7 +157,12 @@ function AppShellInner({
         return;
       }
 
-      if (isEditable || e.metaKey || e.ctrlKey || e.altKey || document.querySelector('[role="dialog"]')) {
+      const hasOpenOverlay = Boolean(
+        document.querySelector(
+          '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot="popover-content"]'
+        )
+      );
+      if (isEditable || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || hasOpenOverlay) {
         return;
       }
 
@@ -174,9 +179,13 @@ function AppShellInner({
   }, [navigate, toggleSidebar]);
 
   async function handleLogout() {
-    await apiJson("/api/logout", { method: "POST" });
-    await onSessionRefresh();
-    navigate("/login");
+    try {
+      await apiJson("/api/logout", { method: "POST" });
+      await onSessionRefresh();
+      navigate("/login");
+    } catch {
+      toast.error("Could not sign out. Try again.");
+    }
   }
 
   async function handleClearDemo() {
@@ -369,7 +378,7 @@ function AppShellInner({
           </div>
         )}
 
-        {session.readiness.hasDemoData && (
+        {!IS_DEMO && session.readiness.hasDemoData && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-200 bg-amber-50/90 px-4 py-2 text-xs text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200 sm:px-6">
             <div className="flex items-center gap-2">
               <Info className="size-3.5 shrink-0 text-amber-700 dark:text-amber-300" />

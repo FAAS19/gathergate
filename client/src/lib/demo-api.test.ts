@@ -143,8 +143,8 @@ describe("demo-validators & demo-api", () => {
 
   it("handles operator approve, reject, status transitions, portal_url, and browser downloads", async () => {
     const list = await demoApiJson<RequestsListResponse>("/api/requests");
-    expect(list.requests.find((r) => r.id === "req_demo_bas")?.portal_url).toBe("./#/c/demo-bas");
-    expect(list.requests.find((r) => r.id === "req_demo_tax")?.portal_url).toBe("./#/c/demo-tax");
+    expect(list.requests.find((r) => r.id === "req_demo_bas")?.portal_url).toContain("#/c/demo-bas");
+    expect(list.requests.find((r) => r.id === "req_demo_tax")?.portal_url).toContain("#/c/demo-tax");
 
     const portal = await demoApiJson<ClientPortalResponse>("/api/client/demo-bas");
     const abnItem = portal.items!.find((i) => i.validator === "au_abn_mod89")!;
@@ -210,5 +210,80 @@ describe("demo-validators & demo-api", () => {
     expect(restored.requests).toHaveLength(3);
     const taxPortal = await demoApiJson<ClientPortalResponse>("/api/client/demo-tax");
     expect(taxPortal.requiresOtp).toBe(true);
+  });
+
+  it("exposes 6 templates, 16 validators, localStorage persistence, checkbox rejection reset, and export notes", async () => {
+    const tplRes = await demoApiJson<{ templates: Array<{ id: string; name: string }> }>("/api/templates");
+    expect(tplRes.templates).toHaveLength(6);
+    expect(tplRes.templates.some((t) => t.id === "tpl_kyc")).toBe(true);
+    expect(tplRes.templates.some((t) => t.id === "tpl_mortgage")).toBe(true);
+
+    const valRes = await demoApiJson<{ validators: Array<{ key: string }> }>("/api/validators");
+    expect(valRes.validators).toHaveLength(16);
+
+    const created = await demoApiJson<{ id: string }>("/api/requests", {
+      method: "POST",
+      body: JSON.stringify({
+        templateId: "tpl_kyc",
+        title: "Persisted KYC Pack",
+        clientName: "Alice Tester",
+        clientEmail: "alice@example.com.au",
+      }),
+    });
+    const stored = window.localStorage.getItem("gathergate-demo-state-v1");
+    expect(stored).toContain(created.id);
+    expect(stored).toContain("Persisted KYC Pack");
+
+    const portal = await demoApiJson<ClientPortalResponse>("/api/client/demo-bas");
+    const authItem = portal.items!.find((i) => i.kind === "checkbox")!;
+    await demoApiJson(`/api/client/demo-bas/items/${authItem.id}`, {
+      method: "POST",
+      body: JSON.stringify({ checked: true }),
+    });
+    await demoApiJson(`/api/requests/req_demo_bas/items/${authItem.id}/review`, {
+      method: "POST",
+      body: JSON.stringify({ decision: "rejected", note: "Sign updated mandate" }),
+    });
+    const afterReject = await demoApiJson<ClientPortalResponse>("/api/client/demo-bas");
+    const rejectedCheckbox = afterReject.items!.find((i) => i.id === authItem.id)!;
+    expect(rejectedCheckbox.status).toBe("rejected");
+    expect(rejectedCheckbox.currentValue).toBeNull();
+
+    const reconfirmed = await demoApiJson<{ item: { status: string; currentValue: string } }>(
+      `/api/client/demo-bas/items/${authItem.id}`,
+      {
+        method: "POST",
+        body: JSON.stringify({ checked: true }),
+      }
+    );
+    expect(reconfirmed.item.status).toBe("submitted");
+    expect(reconfirmed.item.currentValue).toBe("confirmed");
+
+    await demoApiJson(`/api/client/demo-bas/items/${authItem.id}/note`, {
+      method: "PUT",
+      body: JSON.stringify({ na: false, note: "Confirmed after AGM" }),
+    });
+    let exportedBlob: Blob | null = null;
+    const origCreateObjectUrl = URL.createObjectURL;
+    const origRevokeObjectUrl = URL.revokeObjectURL;
+    URL.createObjectURL = vi.fn((obj: Blob | MediaSource) => {
+      if (obj instanceof Blob) exportedBlob = obj;
+      return "blob:demo-export";
+    });
+    URL.revokeObjectURL = vi.fn();
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    try {
+      demoDownloadExport("req_demo_bas");
+    } finally {
+      clickSpy.mockRestore();
+      URL.createObjectURL = origCreateObjectUrl;
+      URL.revokeObjectURL = origRevokeObjectUrl;
+    }
+    expect(exportedBlob).not.toBeNull();
+    const manifest = JSON.parse(await exportedBlob!.text()) as {
+      items: Array<{ client_na: boolean; client_note: string | null }>;
+    };
+    expect(manifest.items.some((i) => i.client_note === "Confirmed after AGM")).toBe(true);
+    expect(manifest.items.every((i) => typeof i.client_na === "boolean")).toBe(true);
   });
 });

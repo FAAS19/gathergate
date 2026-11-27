@@ -227,3 +227,40 @@ test("Demo validators & presets stay in 1-to-1 parity with backend packs", () =>
     }
   }
 });
+
+test("AU Medicare /IRN slash normalisation and validator idempotency", () => {
+  for (const input of ["2123 45670 1 / 1", "2123 45670 1/1", "21234567011"]) {
+    const serverRes = validateTextValue("au_medicare_mod10", input);
+    const demoRes = demoValidateTextValue("au_medicare_mod10", input);
+    assert.deepEqual(serverRes, { valid: true, normalised: "2123 45670 1 / 1" });
+    assert.deepEqual(demoRes, serverRes);
+  }
+  assert.equal(validateTextValue("au_medicare_mod10", "2123 45670 1 / 0").valid, false);
+
+  const validSamples: Record<string, string> = {
+    email: "Ops@Example.COM.AU",
+    url: "https://example.com.au/intake",
+    phone_e164: "+61 412 345 678",
+    iban: "DE89 3704 0044 0532 0130 00",
+    au_phone_e164: "0412 345 678",
+    au_abn_mod89: "99 000 000 000",
+    au_bsb: "083170",
+    au_tfn_mod11: "876543210",
+    au_medicare_mod10: "2123 45670 1 / 1",
+    uk_utr_mod11: "11234-56789",
+    uk_nino: "aa 12 34 56 c",
+    uk_sort_code: "20 00 00",
+    us_ein: "12 3456789",
+    us_routing_aba: "110-000-000",
+    us_ssn: "123 45 6789",
+    eu_vat: "de123456788",
+  };
+  for (const [key, sample] of Object.entries(validSamples)) {
+    const first = validateTextValue(key, sample);
+    assert.equal(first.valid, true, `Expected ${key} sample to validate`);
+    assert.ok(first.normalised);
+    const second = validateTextValue(key, first.normalised);
+    assert.deepEqual(second, first, `Expected idempotency for ${key}`);
+    assert.deepEqual(demoValidateTextValue(key, sample), first, `Demo mismatch for ${key}`);
+  }
+});

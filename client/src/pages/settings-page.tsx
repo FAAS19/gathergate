@@ -30,7 +30,7 @@ import {
   type SessionResponse,
   type SettingsResponse,
 } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, copyText } from "@/lib/utils";
 
 type SettingsSection = "branding" | "email" | "account" | "webhooks" | "instance";
 
@@ -250,8 +250,9 @@ export function SettingsPage({
                             size="icon"
                             aria-label="Copy signing secret"
                             onClick={async () => {
-                              await navigator.clipboard.writeText(webhookSecret);
-                              toast.success("Secret copied.");
+                              const ok = await copyText(webhookSecret);
+                              if (ok) toast.success("Secret copied.");
+                              else toast.error("Could not copy signing secret.");
                             }}
                           >
                             <Copy className="size-3.5" />

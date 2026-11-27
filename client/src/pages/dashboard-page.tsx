@@ -56,6 +56,14 @@ import {
   type RequestsListResponse,
   type SessionResponse,
 } from "@/lib/api";
+import { copyText } from "@/lib/utils";
+
+function demoPortalPath(url: string): string {
+  const hashIdx = url.indexOf("#/c/");
+  if (hashIdx >= 0) return url.slice(hashIdx + 1);
+  const pathIdx = url.indexOf("/c/");
+  return pathIdx >= 0 ? url.slice(pathIdx) : "/";
+}
 
 type FilterTab = "all" | "active" | "awaiting_review" | "needs_revision" | "completed" | "purged";
 
@@ -121,8 +129,9 @@ export function DashboardPage({
   }
 
   async function handleCopyLink(url: string) {
-    await navigator.clipboard.writeText(url);
-    toast.success("Magic link copied to clipboard.");
+    const ok = await copyText(url);
+    if (ok) toast.success("Magic link copied to clipboard.");
+    else toast.error("Could not copy magic link.");
   }
 
   const handleBulkReminders = useCallback(
@@ -277,7 +286,7 @@ export function DashboardPage({
         cell: ({ row }) => {
           const r = row.original;
           return (
-            <div className="min-w-0">
+            <div className="min-w-0 max-w-[260px]">
               <div className="flex items-center gap-2">
                 <Link
                   to={`/requests/${r.id}`}
@@ -287,7 +296,7 @@ export function DashboardPage({
                   {r.title}
                 </Link>
                 {r.is_demo && (
-                  <Badge variant="secondary" className="px-1.5 py-0 text-[11px] font-normal">
+                  <Badge variant="secondary" className="shrink-0 px-1.5 py-0 text-[11px] font-normal">
                     Demo
                   </Badge>
                 )}
@@ -296,7 +305,12 @@ export function DashboardPage({
                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                   {r.due_at && (
                     <span className="tabular-nums">
-                      Due {new Date(r.due_at).toLocaleDateString("en-AU", { day: "numeric", month: "short" })}
+                      Due{" "}
+                      {new Date(r.due_at).toLocaleDateString("en-AU", {
+                        day: "numeric",
+                        month: "short",
+                        timeZone: "UTC",
+                      })}
                     </span>
                   )}
                   {r.due_at && r.last_opened_at && <span aria-hidden="true">·</span>}
@@ -313,9 +327,9 @@ export function DashboardPage({
         cell: ({ row }) => {
           const r = row.original;
           return (
-            <div>
-              <div className="font-medium text-foreground">{r.client_name}</div>
-              <div className="text-xs text-muted-foreground">{r.client_email}</div>
+            <div className="min-w-0 max-w-[210px]">
+              <div className="truncate font-medium text-foreground">{r.client_name}</div>
+              <div className="truncate text-xs text-muted-foreground">{r.client_email}</div>
             </div>
           );
         },
@@ -328,7 +342,7 @@ export function DashboardPage({
           const total = Math.max(1, r.total_items);
           const pct = Math.round((r.approved_items / total) * 100);
           return (
-            <div className="w-36 space-y-1.5">
+            <div className="w-32 space-y-1.5">
               <div className="flex items-center justify-between text-xs tabular-nums">
                 <span className="font-medium text-foreground">
                   {r.approved_items}/{r.total_items} verified
@@ -418,10 +432,17 @@ export function DashboardPage({
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-52">
                   <DropdownMenuItem asChild>
-                    <a href={r.portal_url} target="_blank" rel="noopener noreferrer">
-                      <ExternalLink className="size-3.5" />
-                      Open client portal
-                    </a>
+                    {IS_DEMO ? (
+                      <Link to={demoPortalPath(r.portal_url)}>
+                        <ExternalLink className="size-3.5" />
+                        Open client portal
+                      </Link>
+                    ) : (
+                      <a href={r.portal_url} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink className="size-3.5" />
+                        Open client portal
+                      </a>
+                    )}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => void handleCopyLink(r.portal_url)}>
                     <Copy className="size-3.5" />

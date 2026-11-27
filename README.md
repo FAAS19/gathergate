@@ -11,16 +11,18 @@ Self-hosted, open-source alternative to Content Snare and FileInvite. Collect cl
 </p>
 
 <p>
-  <a href=".github/workflows/ci.yml"><img src="https://img.shields.io/badge/CI-passing-2ea043?style=flat&logo=githubactions&logoColor=white" alt="CI passing" /></a>
+  <a href="https://github.com/FAAS19/gathergate/actions/workflows/ci.yml"><img src="https://github.com/FAAS19/gathergate/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/release-v1.0.0-007ec6?style=flat" alt="Release v1.0.0" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-dfb317?style=flat" alt="MIT Licence" /></a>
-  <a href=".github/workflows/ci.yml"><img src="https://img.shields.io/badge/tests-66%20passing-44cc11?style=flat" alt="66 tests passing" /></a>
+  <a href="SECURITY.md"><img src="https://img.shields.io/badge/telemetry-zero-2ea043?style=flat" alt="Zero telemetry" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/node-%3E%3D22.13-339933?style=flat&logo=nodedotjs&logoColor=white" alt="Node >= 22.13" /></a>
   <a href="Dockerfile"><img src="https://img.shields.io/badge/docker-amd64%20%7C%20arm64-2496ED?style=flat&logo=docker&logoColor=white" alt="Docker amd64 and arm64" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://img.shields.io/badge/WCAG%202.2-AA-7c3aed?style=flat" alt="WCAG 2.2 AA" /></a>
 </p>
 
 <p>
+  <a href="https://faas19.github.io/gathergate/demo/#/"><strong>Live Demo</strong></a> &middot;
+  <a href="https://faas19.github.io/gathergate/">Showcase</a> &middot;
   <a href="#why-gathergate">Why GatherGate</a> &middot;
   <a href="#validator-packs">Validator Packs</a> &middot;
   <a href="#compare">Compare</a> &middot;
@@ -42,7 +44,7 @@ Self-hosted, open-source alternative to Content Snare and FileInvite. Collect cl
 
 ## Quickstart
 
-Boot from source with Docker Compose:
+Explore the interactive static demo in your browser at **[faas19.github.io/gathergate/demo/](https://faas19.github.io/gathergate/demo/#/)**, or boot locally from source with Docker Compose:
 
 ```bash
 docker compose up -d --build
@@ -136,16 +138,16 @@ See [`.env.example`](.env.example) for the complete list of environment variable
 Stop the container so SQLite WAL frames checkpoint cleanly before archiving `gathergate.sqlite` and `blobs/` (keep `MASTER_KEY` in your secret manager, separate from backup archives):
 
 ```bash
-# Backup
+# Backup (volume name uses <project-dir>_gathergate_data)
 docker compose stop gathergate
 docker run --rm -v gathergate_gathergate_data:/data -v "$PWD:/backup" alpine \
-  tar -czf "/backup/gathergate-backup-$(date +%F).tar.gz" -C /data gathergate.sqlite blobs
+  sh -c 'cd /data && tar -czf "/backup/gathergate-backup-$(date +%F).tar.gz" gathergate.sqlite $([ -d blobs ] && echo blobs)'
 docker compose start gathergate
 
 # Restore
-docker volume create gathergate_gathergate_data
+docker compose up --no-start
 docker run --rm -v gathergate_gathergate_data:/data -v "$PWD:/backup" alpine \
-  tar -xzf /backup/gathergate-backup-YYYY-MM-DD.tar.gz -C /data
+  sh -c 'tar -xzf /backup/gathergate-backup-YYYY-MM-DD.tar.gz -C /data && chown -R 1000:1000 /data'
 docker compose up -d
 ```
 

@@ -261,7 +261,7 @@ export async function seedDemoWorkspace(params: {
     title: "Q3 BAS & Supplier Pack",
     clientSubject: "Q3 BAS records due in 2 days",
     clientName: "Harbourline Plumbing Pty Ltd",
-    clientEmail: "accounts@harbourline.com.au",
+    clientEmail: "accounts@harbourline.example.com.au",
     items: basItems,
     requireOtp: false,
     reminderIntervalDays: 3,

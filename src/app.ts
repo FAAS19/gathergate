@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { DatabaseSync } from "node:sqlite";
 import { ZipFile } from "yazl";
@@ -19,7 +20,15 @@ import {
   type AppConfig,
   type EmailBackend,
 } from "./config.js";
-import { slugify, Store, type UserRow, type WorkspaceRow } from "./db/queries.js";
+import {
+  ClientWriteConflictError,
+  SetupAlreadyCompletedError,
+  slugify,
+  Store,
+  type UploadRow,
+  type UserRow,
+  type WorkspaceRow,
+} from "./db/queries.js";
 import {
   emailBrand,
   inviteEmail,
@@ -34,14 +43,21 @@ import { seedDemoWorkspace } from "./jobs/demo.js";
 import { dispatchCompletionWebhook, dispatchTestWebhook } from "./jobs/webhook.js";
 import { generateOtpCode, hashPassword, verifyOtpCode, verifyPassword } from "./security/auth.js";
 import {
-  createDecryptStream,
+  decryptBuffer,
   decryptField,
   encryptBuffer,
   encryptField,
+  generateId,
   sha256Hex,
 } from "./security/crypto.js";
 import { detectFileSignature, resolveAllowedMimes } from "./security/magic-bytes.js";
 import { extractClientIp, RateLimiter } from "./security/rate-limit.js";
+import {
+  assertPublicHostname,
+  isPrivateOrLocalHost,
+  validateWebhookEndpoint,
+  type LookupAllFn,
+} from "./security/ssrf.js";
 import type { TemplateItemSpec } from "./templates/presets.js";
 import {
   getValidatorHint,
@@ -57,7 +73,45 @@ const CLIENT_COOKIE_PREFIX = "gg_c_";
 const MAX_LOGO_BYTES = 200 * 1024;
 const LOGO_MIMES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const MAX_CLIENT_NOTE_CHARS = 1000;
+const MAX_TEXT_ITEM_CHARS = 2000;
+const MAX_TEXTAREA_ITEM_CHARS = 20_000;
+const MAX_PASSWORD_CHARS = 256;
+const MAX_FILES_PER_UPLOAD = 10;
+const MAX_ITEM_FILE_MB = 50;
 const DEFAULT_MANUAL_REMINDER_COOLDOWN_MS = 15 * 60_000;
+const MULTI_TENANT_SMTP_PORTS = new Set([25, 465, 587, 2525]);
+
+function isValidEmailAddress(email: string): boolean {
+  return Boolean(email && !hasCrLf(email) && !/[,\s;<>]/.test(email) && validateTextValue("email", email).valid);
+}
+
+async function readStreamToBuffer(stream: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+async function decryptStoredUpload(
+  storage: StorageAdapter,
+  masterKey: Buffer,
+  upload: UploadRow
+): Promise<Buffer> {
+  const encStream = await storage.getStream(upload.storage_key);
+  const ciphertext = await readStreamToBuffer(encStream);
+  return decryptBuffer(
+    masterKey,
+    ciphertext,
+    {
+      version: upload.enc_version,
+      ivHex: upload.enc_iv,
+      tagHex: upload.enc_tag,
+      saltHex: upload.enc_salt,
+    },
+    upload.storage_key
+  );
+}
 
 interface AppEnv {
   Variables: {
@@ -72,7 +126,11 @@ export type RateLimitKey =
   | "otpVerifyIp"
   | "uploadToken"
   | "uploadIp"
-  | "loginIp";
+  | "loginIp"
+  | "loginAccount"
+  | "signupIp"
+  | "setupIp"
+  | "settingsTest";
 
 export interface RateLimitRule {
   limit: number;
@@ -87,6 +145,10 @@ const DEFAULT_RATE_LIMITS: Record<RateLimitKey, RateLimitRule> = {
   uploadToken: { limit: 30, windowMs: 15 * 60_000 },
   uploadIp: { limit: 60, windowMs: 15 * 60_000 },
   loginIp: { limit: 20, windowMs: 15 * 60_000 },
+  loginAccount: { limit: 20, windowMs: 15 * 60_000 },
+  signupIp: { limit: 5, windowMs: 15 * 60_000 },
+  setupIp: { limit: 10, windowMs: 15 * 60_000 },
+  settingsTest: { limit: 10, windowMs: 15 * 60_000 },
 };
 
 export interface GatherGateAppDeps {
@@ -95,6 +157,7 @@ export interface GatherGateAppDeps {
   storage: StorageAdapter;
   email: EmailAdapter;
   fetchImpl?: typeof fetch;
+  lookupImpl?: LookupAllFn;
   clientDistDir?: string;
   manualReminderCooldownMs?: number;
   now?: () => number;
@@ -175,7 +238,10 @@ function normalizeTemplateItems(raw: unknown): TemplateItemSpec[] {
       required: Boolean(item.required),
       validator,
       allowedGroups: Array.isArray(item.allowedGroups) ? item.allowedGroups : undefined,
-      maxFileMb: typeof item.maxFileMb === "number" && item.maxFileMb > 0 ? item.maxFileMb : 20,
+      maxFileMb:
+        typeof item.maxFileMb === "number" && item.maxFileMb > 0
+          ? Math.min(MAX_ITEM_FILE_MB, Math.max(1, Math.floor(item.maxFileMb)))
+          : 20,
       multiple: Boolean(item.multiple),
       slug: item.slug ? slugify(item.slug) : slugify(label, `item-${idx + 1}`),
     };
@@ -208,6 +274,32 @@ export function createApp(deps: GatherGateAppDeps) {
     return null;
   }
 
+  // Tiered request body limits before parsing JSON or multipart payloads.
+  const uploadLimit = bodyLimit({
+    maxSize: (MAX_ITEM_FILE_MB + 5) * 1024 * 1024,
+    onError: (c) => c.json({ error: "Request payload too large." }, 413),
+  });
+  const brandingLimit = bodyLimit({
+    maxSize: 512 * 1024,
+    onError: (c) => c.json({ error: "Branding payload too large." }, 413),
+  });
+  const defaultJsonLimit = bodyLimit({
+    maxSize: 256 * 1024,
+    onError: (c) => c.json({ error: "Request payload too large." }, 413),
+  });
+  app.use("/api/*", async (c, next) => {
+    if (c.req.method === "GET" || c.req.method === "HEAD" || c.req.method === "OPTIONS") {
+      return next();
+    }
+    if (/^\/api\/client\/[^/]+\/items\/[^/]+$/.test(c.req.path)) {
+      return uploadLimit(c, next);
+    }
+    if (c.req.path === "/api/settings/branding") {
+      return brandingLimit(c, next);
+    }
+    return defaultJsonLimit(c, next);
+  });
+
   // Hardened response headers; Referrer-Policy: no-referrer protects magic-link URLs.
   app.use("*", async (c, next) => {
     await next();
@@ -230,6 +322,24 @@ export function createApp(deps: GatherGateAppDeps) {
 
   function summarizeWorkspaceEmail(ws: WorkspaceRow) {
     const resolved = resolveWorkspaceEmail(ws, config, config.masterKey);
+    if (config.multiTenant && resolved.source === "env") {
+      return {
+        source: resolved.source,
+        backend: resolved.backend,
+        from: resolved.from,
+        replyTo: "",
+        smtp: {
+          host: "",
+          port: 587,
+          secure: false,
+          user: "",
+          hasPass: false,
+        },
+        resend: {
+          hasApiKey: false,
+        },
+      };
+    }
     return {
       source: resolved.source,
       backend: resolved.backend,
@@ -319,9 +429,14 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.post("/api/setup", async (c) => {
-    if (store.countUsers() > 0) {
-      return c.json({ error: "Setup has already been completed." }, 409);
-    }
+    const ip = extractClientIp(c, config.trustProxy);
+    const limited = enforceRateLimit(
+      c,
+      [{ bucket: "setupIp", key: ip }],
+      "Too many setup attempts. Please wait and try again."
+    );
+    if (limited) return limited;
+
     const body = (await c.req.json().catch(() => ({}))) as {
       workspaceName?: string;
       email?: string;
@@ -333,21 +448,36 @@ export function createApp(deps: GatherGateAppDeps) {
     const password = String(body.password || "");
     const loadDemo = body.loadDemo !== false;
 
-    if (!workspaceName || !userEmail.includes("@") || password.length < 10) {
+    if (
+      !workspaceName ||
+      hasCrLf(workspaceName) ||
+      !isValidEmailAddress(userEmail) ||
+      password.length < 10 ||
+      password.length > MAX_PASSWORD_CHARS
+    ) {
       return c.json(
-        { error: "Provide workspace name, valid email, and password (min 10 characters)." },
+        { error: "Provide workspace name, valid email, and password (10 to 256 characters)." },
         400
       );
     }
 
-    const { user, workspace } = store.createWorkspaceWithUser({
-      workspaceName,
-      email: userEmail,
-      passwordHash: hashPassword(password),
-      plan: config.multiTenant ? "pro" : "self_hosted",
-      maxActiveRequests: 0,
-      maxStorageBytes: 0,
-    });
+    let created: { user: UserRow; workspace: WorkspaceRow };
+    try {
+      created = store.createInitialWorkspaceWithUser({
+        workspaceName,
+        email: userEmail,
+        passwordHash: hashPassword(password),
+        plan: config.multiTenant ? "pro" : "self_hosted",
+        maxActiveRequests: 0,
+        maxStorageBytes: 0,
+      });
+    } catch (err) {
+      if (err instanceof SetupAlreadyCompletedError || String(err).includes("UNIQUE")) {
+        return c.json({ error: "Setup has already been completed." }, 409);
+      }
+      throw err;
+    }
+    const { user, workspace } = created;
 
     if (loadDemo) {
       await seedDemoWorkspace({
@@ -376,16 +506,27 @@ export function createApp(deps: GatherGateAppDeps) {
 
   app.post("/api/login", async (c) => {
     const ip = extractClientIp(c, config.trustProxy);
-    const limited = enforceRateLimit(
+    const ipLimited = enforceRateLimit(
       c,
       [{ bucket: "loginIp", key: ip }],
       "Too many sign-in attempts. Please wait and try again."
     );
-    if (limited) return limited;
+    if (ipLimited) return ipLimited;
 
     const body = (await c.req.json().catch(() => ({}))) as { email?: string; password?: string };
     const userEmail = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
+    if (password.length > MAX_PASSWORD_CHARS) {
+      return c.json({ error: "Invalid email or password." }, 401);
+    }
+    if (userEmail) {
+      const acctLimited = enforceRateLimit(
+        c,
+        [{ bucket: "loginAccount", key: userEmail }],
+        "Too many sign-in attempts. Please wait and try again."
+      );
+      if (acctLimited) return acctLimited;
+    }
     const user = store.getUserByEmail(userEmail);
 
     if (!user || !verifyPassword(password, user.password_hash)) {
@@ -412,6 +553,14 @@ export function createApp(deps: GatherGateAppDeps) {
     if (!config.multiTenant) {
       return c.json({ error: "Multi-tenant signup is disabled." }, 403);
     }
+    const ip = extractClientIp(c, config.trustProxy);
+    const limited = enforceRateLimit(
+      c,
+      [{ bucket: "signupIp", key: ip }],
+      "Too many signup attempts. Please wait and try again."
+    );
+    if (limited) return limited;
+
     const body = (await c.req.json().catch(() => ({}))) as {
       workspaceName?: string;
       email?: string;
@@ -421,9 +570,15 @@ export function createApp(deps: GatherGateAppDeps) {
     const userEmail = String(body.email || "").trim().toLowerCase();
     const password = String(body.password || "");
 
-    if (!workspaceName || !userEmail.includes("@") || password.length < 10) {
+    if (
+      !workspaceName ||
+      hasCrLf(workspaceName) ||
+      !isValidEmailAddress(userEmail) ||
+      password.length < 10 ||
+      password.length > MAX_PASSWORD_CHARS
+    ) {
       return c.json(
-        { error: "Provide workspace name, valid email, and password (min 10 characters)." },
+        { error: "Provide workspace name, valid email, and password (10 to 256 characters)." },
         400
       );
     }
@@ -431,14 +586,23 @@ export function createApp(deps: GatherGateAppDeps) {
       return c.json({ error: "An account with this email already exists." }, 409);
     }
 
-    const { user, workspace } = store.createWorkspaceWithUser({
-      workspaceName,
-      email: userEmail,
-      passwordHash: hashPassword(password),
-      plan: "free",
-      maxActiveRequests: config.freeMaxActiveRequests,
-      maxStorageBytes: config.freeMaxStorageBytes,
-    });
+    let created: { user: UserRow; workspace: WorkspaceRow };
+    try {
+      created = store.createWorkspaceWithUser({
+        workspaceName,
+        email: userEmail,
+        passwordHash: hashPassword(password),
+        plan: "free",
+        maxActiveRequests: config.freeMaxActiveRequests,
+        maxStorageBytes: config.freeMaxStorageBytes,
+      });
+    } catch (err) {
+      if (String(err).includes("UNIQUE")) {
+        return c.json({ error: "An account with this email already exists." }, 409);
+      }
+      throw err;
+    }
+    const { user, workspace } = created;
     const sessionToken = store.createSession(user.id);
     setCookie(c, SESSION_COOKIE, sessionToken, {
       httpOnly: true,
@@ -476,7 +640,10 @@ export function createApp(deps: GatherGateAppDeps) {
 
     const rows = store.listRequests(auth.workspace.id);
     const enriched = rows.map((r) => {
-      const magicToken = decryptField(config.masterKey, r.token_encrypted, r.id);
+      const magicToken =
+        r.status === "purged" || !r.token_encrypted
+          ? ""
+          : decryptField(config.masterKey, r.token_encrypted, r.id);
       return {
         id: r.id,
         title: r.title,
@@ -497,7 +664,7 @@ export function createApp(deps: GatherGateAppDeps) {
         approved_items: Number(r.approved_items || 0),
         submitted_items: Number(r.submitted_items || 0),
         rejected_items: Number(r.rejected_items || 0),
-        portal_url: `${config.baseUrl}/c/${magicToken}`,
+        portal_url: magicToken ? `${config.baseUrl}/c/${magicToken}` : "",
       };
     });
 
@@ -561,14 +728,33 @@ export function createApp(deps: GatherGateAppDeps) {
     const clientEmail = String(body.clientEmail || "").trim().toLowerCase();
     const requireOtp = Boolean(body.requireOtp);
     const sendInvite = body.sendInvite !== false;
-    const reminderIntervalDays = Math.max(0, Number(body.reminderIntervalDays ?? 3) || 0);
-    const maxReminders = Math.max(0, Number(body.maxReminders ?? 4) || 0);
-    const dueAt = body.dueAt ? String(body.dueAt) : null;
+    const rawInterval = Number(body.reminderIntervalDays ?? 3);
+    const reminderIntervalDays = Number.isFinite(rawInterval)
+      ? Math.min(90, Math.max(0, Math.floor(rawInterval)))
+      : 3;
+    const rawMaxRem = Number(body.maxReminders ?? 4);
+    const maxReminders = Number.isFinite(rawMaxRem) ? Math.min(20, Math.max(0, Math.floor(rawMaxRem))) : 4;
+    let dueAt: string | null = null;
+    if (body.dueAt !== undefined && body.dueAt !== null && String(body.dueAt).trim() !== "") {
+      const parsedDue = new Date(String(body.dueAt));
+      if (Number.isNaN(parsedDue.getTime())) {
+        return c.json({ error: "Invalid due date." }, 400);
+      }
+      dueAt = parsedDue.toISOString();
+    }
     const clientSubject = body.clientSubject ? String(body.clientSubject).trim() : null;
     const welcomeNote = body.welcomeNote ? String(body.welcomeNote).trim() : null;
 
     const template = templateId ? store.getTemplate(auth.workspace.id, templateId) : undefined;
-    if ((!template && !body.items) || !title || !clientName || !clientEmail.includes("@")) {
+    if (
+      (!template && !body.items) ||
+      !title ||
+      hasCrLf(title) ||
+      !clientName ||
+      hasCrLf(clientName) ||
+      (clientSubject && hasCrLf(clientSubject)) ||
+      !isValidEmailAddress(clientEmail)
+    ) {
       return c.json(
         { error: "Select a template and fill in title, client name, and valid client email." },
         400
@@ -643,8 +829,11 @@ export function createApp(deps: GatherGateAppDeps) {
     const request = store.getRequestById(auth.workspace.id, c.req.param("id"));
     if (!request) return c.json({ error: "Not found" }, 404);
 
-    const magicToken = decryptField(config.masterKey, request.token_encrypted, request.id);
-    const portalUrl = `${config.baseUrl}/c/${magicToken}`;
+    const magicToken =
+      request.status === "purged" || !request.token_encrypted
+        ? ""
+        : decryptField(config.masterKey, request.token_encrypted, request.id);
+    const portalUrl = magicToken ? `${config.baseUrl}/c/${magicToken}` : "";
     const rawItems = store.listRequestItems(request.id);
     const allUploads = store.listUploadsForRequest(request.id);
 
@@ -749,6 +938,9 @@ export function createApp(deps: GatherGateAppDeps) {
     if (!auth) return c.json({ error: "Unauthorized" }, 401);
     const req = store.getRequestById(auth.workspace.id, c.req.param("id"));
     if (!req) return c.json({ error: "Not found" }, 404);
+    if (req.status === "completed" || req.status === "purged" || req.status === "expired") {
+      return c.json({ error: "Checklist is closed." }, 409);
+    }
     const paused = req.reminders_paused === 0;
     store.toggleRemindersPaused(auth.workspace.id, req.id, paused);
     return c.json({ ok: true, reminders_paused: paused });
@@ -764,8 +956,10 @@ export function createApp(deps: GatherGateAppDeps) {
     }
 
     const items = store.listRequestItems(req.id);
+    const requiredItems = items.filter((i) => i.required === 1);
+    const checkSet = new Set((requiredItems.length > 0 ? requiredItems : items).map((i) => i.id));
     const outstanding = items.filter(
-      (i) => (i.required === 1 || i.status === "rejected") && (i.status === "pending" || i.status === "rejected")
+      (i) => (checkSet.has(i.id) || i.status === "rejected") && (i.status === "pending" || i.status === "rejected")
     );
     if (outstanding.length === 0) {
       return c.json({ error: "No outstanding items to remind the client about." }, 400);
@@ -903,15 +1097,24 @@ export function createApp(deps: GatherGateAppDeps) {
     const requestId = c.req.param("id");
     const itemId = c.req.param("itemId");
     const body = (await c.req.json().catch(() => ({}))) as {
-      decision?: "approved" | "rejected";
+      decision?: unknown;
       note?: string;
     };
-    const decision = body.decision === "approved" ? "approved" : "rejected";
+    if (body.decision !== "approved" && body.decision !== "rejected") {
+      return c.json({ error: "Decision must be 'approved' or 'rejected'." }, 400);
+    }
+    const decision = body.decision;
     const note = String(body.note || "").trim();
 
     const item = store.getRequestItem(requestId, itemId);
     const reqBefore = store.getRequestById(auth.workspace.id, requestId);
     if (!reqBefore || !item) return c.json({ error: "Not found" }, 404);
+    if (reqBefore.status === "purged" || reqBefore.status === "expired") {
+      return c.json({ error: "Checklist is closed." }, 409);
+    }
+    if (decision === "approved" && item.status === "pending") {
+      return c.json({ error: "Cannot approve an item that has not been submitted." }, 409);
+    }
 
     const { justCompleted, request } = store.reviewItem({
       workspaceId: auth.workspace.id,
@@ -948,7 +1151,9 @@ export function createApp(deps: GatherGateAppDeps) {
         request,
         masterKey: config.masterKey,
         baseUrl: config.baseUrl,
+        multiTenant: config.multiTenant,
         fetchImpl: deps.fetchImpl,
+        lookupImpl: deps.lookupImpl,
       });
     }
 
@@ -961,6 +1166,9 @@ export function createApp(deps: GatherGateAppDeps) {
     const requestId = c.req.param("id");
     const existing = store.getRequestById(auth.workspace.id, requestId);
     if (!existing) return c.json({ error: "Not found" }, 404);
+    if (existing.status === "purged" || existing.status === "expired") {
+      return c.json({ error: "Checklist is closed." }, 409);
+    }
 
     const { approvedCount, justCompleted, request } = store.approveAllSubmitted(
       auth.workspace.id,
@@ -974,7 +1182,9 @@ export function createApp(deps: GatherGateAppDeps) {
         request,
         masterKey: config.masterKey,
         baseUrl: config.baseUrl,
+        multiTenant: config.multiTenant,
         fetchImpl: deps.fetchImpl,
+        lookupImpl: deps.lookupImpl,
       });
     }
 
@@ -991,18 +1201,13 @@ export function createApp(deps: GatherGateAppDeps) {
     const upload = store.getUploadForWorkspace(auth.workspace.id, uploadId);
     if (!upload) return c.json({ error: "Not found" }, 404);
 
-    const encStream = await storage.getStream(upload.storage_key);
-    const decStream = createDecryptStream(
-      config.masterKey,
-      encStream,
-      {
-        version: upload.enc_version,
-        ivHex: upload.enc_iv,
-        tagHex: upload.enc_tag,
-        saltHex: upload.enc_salt,
-      },
-      upload.storage_key
-    );
+    let plaintext: Buffer;
+    try {
+      plaintext = await decryptStoredUpload(storage, config.masterKey, upload);
+    } catch {
+      return c.json({ error: "Could not decrypt file." }, 500);
+    }
+
     store.logAudit(
       auth.workspace.id,
       upload.request_id,
@@ -1011,7 +1216,6 @@ export function createApp(deps: GatherGateAppDeps) {
       { uploadId: upload.id, canonicalName: upload.canonical_name }
     );
 
-    const webStream = Readable.toWeb(decStream) as unknown as ReadableStream;
     const headers: Record<string, string> = {
       "content-type": upload.detected_mime,
       "content-disposition": `${inline ? "inline" : "attachment"}; filename="${upload.canonical_name}"`,
@@ -1019,9 +1223,10 @@ export function createApp(deps: GatherGateAppDeps) {
       "cache-control": "private, no-store",
     };
     if (inline) {
-      headers["content-security-policy"] = "default-src 'none'; sandbox";
+      headers["content-security-policy"] = "default-src 'none'; sandbox; frame-ancestors 'self'";
+      headers["x-frame-options"] = "SAMEORIGIN";
     }
-    return new Response(webStream, { status: 200, headers });
+    return new Response(new Uint8Array(plaintext), { status: 200, headers });
   }
 
   app.get("/api/uploads/:uploadId/download", (c) =>
@@ -1040,6 +1245,24 @@ export function createApp(deps: GatherGateAppDeps) {
     const items = store.listRequestItems(request.id);
     const uploads = store.listUploadsForRequest(request.id);
 
+    const decryptedFiles: Array<{ entryName: string; data: Buffer }> = [];
+    const usedNames = new Set<string>();
+    try {
+      for (const u of uploads) {
+        const data = await decryptStoredUpload(storage, config.masterKey, u);
+        let entryName = `files/${u.canonical_name}`;
+        if (usedNames.has(entryName)) {
+          const ext = path.extname(u.canonical_name);
+          const stem = u.canonical_name.slice(0, u.canonical_name.length - ext.length);
+          entryName = `files/${stem}_${u.id.slice(-4)}${ext}`;
+        }
+        usedNames.add(entryName);
+        decryptedFiles.push({ entryName, data });
+      }
+    } catch {
+      return c.json({ error: "Could not decrypt one or more pack files." }, 500);
+    }
+
     const zip = new ZipFile();
     const manifest = {
       request_id: request.id,
@@ -1057,6 +1280,10 @@ export function createApp(deps: GatherGateAppDeps) {
         value: it.value_encrypted
           ? decryptField(config.masterKey, it.value_encrypted, it.id)
           : null,
+        client_na: it.client_na === 1,
+        client_note: it.client_note_encrypted
+          ? decryptField(config.masterKey, it.client_note_encrypted, `${it.id}:note`)
+          : null,
         files: uploads
           .filter((u) => u.request_item_id === it.id)
           .map((u) => ({ canonical_name: u.canonical_name, sha256: u.sha256, mime: u.detected_mime })),
@@ -1064,20 +1291,8 @@ export function createApp(deps: GatherGateAppDeps) {
     };
     zip.addBuffer(Buffer.from(JSON.stringify(manifest, null, 2), "utf8"), "summary.json");
 
-    for (const u of uploads) {
-      const encStream = await storage.getStream(u.storage_key);
-      const decStream = createDecryptStream(
-        config.masterKey,
-        encStream,
-        {
-          version: u.enc_version,
-          ivHex: u.enc_iv,
-          tagHex: u.enc_tag,
-          saltHex: u.enc_salt,
-        },
-        u.storage_key
-      );
-      zip.addReadStream(decStream, `files/${u.canonical_name}`, { compress: false });
+    for (const file of decryptedFiles) {
+      zip.addBuffer(file.data, file.entryName, { compress: false });
     }
     zip.end();
 
@@ -1093,6 +1308,7 @@ export function createApp(deps: GatherGateAppDeps) {
         "content-type": "application/zip",
         "content-disposition": `attachment; filename="${filename}"`,
         "x-content-type-options": "nosniff",
+        "cache-control": "private, no-store",
       },
     });
   });
@@ -1315,14 +1531,8 @@ export function createApp(deps: GatherGateAppDeps) {
     const webhookSecret = String(body.webhookSecret || "").trim();
 
     if (webhookUrl) {
-      try {
-        const parsed = new URL(webhookUrl);
-        if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-          throw new Error("Invalid protocol");
-        }
-      } catch {
-        return c.json({ error: "Webhook URL must be valid http or https." }, 400);
-      }
+      const urlErr = validateWebhookEndpoint(webhookUrl, config.multiTenant);
+      if (urlErr) return c.json({ error: urlErr }, 400);
     }
 
     store.updateWorkspaceWebhook(auth.workspace.id, webhookUrl || null, webhookSecret || null);
@@ -1332,9 +1542,23 @@ export function createApp(deps: GatherGateAppDeps) {
   app.post("/api/settings/webhook/test", async (c) => {
     const auth = requireAuth(c);
     if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const limited = enforceRateLimit(
+      c,
+      [{ bucket: "settingsTest", key: auth.workspace.id }],
+      "Too many webhook test requests. Please wait and try again."
+    );
+    if (limited) return limited;
+
+    const savedUrl = auth.workspace.webhook_url?.trim();
+    if (savedUrl) {
+      const urlErr = validateWebhookEndpoint(savedUrl, config.multiTenant);
+      if (urlErr) return c.json({ ok: false, error: urlErr }, 400);
+    }
     const result = await dispatchTestWebhook({
       workspace: auth.workspace,
+      multiTenant: config.multiTenant,
       fetchImpl: deps.fetchImpl,
+      lookupImpl: deps.lookupImpl,
     });
     if (!result.ok) {
       return c.json(
@@ -1388,6 +1612,7 @@ export function createApp(deps: GatherGateAppDeps) {
     }
 
     const existing = resolveWorkspaceEmail(auth.workspace, config, config.masterKey);
+    const existingWorkspace = existing.source === "workspace" ? existing : null;
     let encryptedSecrets: string | null = null;
 
     if (backend === "smtp") {
@@ -1401,12 +1626,30 @@ export function createApp(deps: GatherGateAppDeps) {
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
         return c.json({ error: "SMTP port must be between 1 and 65535." }, 400);
       }
+      if (config.multiTenant && (isPrivateOrLocalHost(host) || !MULTI_TENANT_SMTP_PORTS.has(port))) {
+        return c.json(
+          { error: "SMTP host must be a public hostname on a standard port (25, 465, 587, 2525) in multi-tenant mode." },
+          400
+        );
+      }
       if (hasCrLf(user)) {
         return c.json({ error: "SMTP username cannot contain line breaks." }, 400);
       }
       const clearPass = body.smtp?.clearPass === true;
       const rawPass = typeof body.smtp?.pass === "string" ? body.smtp.pass : "";
-      const pass = clearPass ? "" : rawPass.length > 0 ? rawPass : existing.smtp?.pass || "";
+      const sameSmtpIdentity = Boolean(
+        existingWorkspace?.smtp &&
+          existingWorkspace.smtp.host === host &&
+          existingWorkspace.smtp.port === port &&
+          existingWorkspace.smtp.user === user
+      );
+      const pass = clearPass
+        ? ""
+        : rawPass.length > 0
+          ? rawPass
+          : sameSmtpIdentity
+            ? existingWorkspace?.smtp?.pass || ""
+            : "";
       const secrets: WorkspaceEmailSecrets = {
         smtpHost: host,
         smtpPort: port,
@@ -1421,7 +1664,7 @@ export function createApp(deps: GatherGateAppDeps) {
       );
     } else if (backend === "resend") {
       const rawKey = typeof body.resend?.apiKey === "string" ? body.resend.apiKey.trim() : "";
-      const apiKey = rawKey || existing.resendApiKey || "";
+      const apiKey = rawKey || existingWorkspace?.resendApiKey || "";
       if (!apiKey) {
         return c.json({ error: "Resend API key is required." }, 400);
       }
@@ -1453,6 +1696,13 @@ export function createApp(deps: GatherGateAppDeps) {
   app.post("/api/settings/email/test", async (c) => {
     const auth = requireAuth(c);
     if (!auth) return c.json({ error: "Unauthorized" }, 401);
+    const limited = enforceRateLimit(
+      c,
+      [{ bucket: "settingsTest", key: auth.workspace.id }],
+      "Too many test email requests. Please wait and try again."
+    );
+    if (limited) return limited;
+
     const body = (await c.req.json().catch(() => ({}))) as { to?: string };
     const to = String(body.to || auth.user.email).trim();
     if (!to || hasCrLf(to) || !validateTextValue("email", to).valid) {
@@ -1461,6 +1711,15 @@ export function createApp(deps: GatherGateAppDeps) {
     const resolved = resolveWorkspaceEmail(auth.workspace, config, config.masterKey);
     if (resolved.backend === "smtp" && !resolved.smtp?.host) {
       return c.json({ error: "Configure an SMTP host before sending a test email." }, 400);
+    }
+    if (resolved.backend === "smtp" && resolved.source === "workspace" && config.multiTenant) {
+      const dnsErr = await assertPublicHostname(resolved.smtp!.host, deps.lookupImpl);
+      if (dnsErr) {
+        return c.json(
+          { ok: false, error: "SMTP host must resolve to a public address in multi-tenant mode." },
+          400
+        );
+      }
     }
     if (resolved.backend === "resend" && !resolved.resendApiKey) {
       return c.json({ error: "Configure a Resend API key before sending a test email." }, 400);
@@ -1486,10 +1745,13 @@ export function createApp(deps: GatherGateAppDeps) {
       });
       return c.json({ ok: true, backend: resolved.backend, to });
     } catch (err) {
-      return c.json(
-        { ok: false, error: err instanceof Error ? err.message : "Email send failed" },
-        400
-      );
+      const detail =
+        config.multiTenant && resolved.backend === "smtp"
+          ? "Email delivery failed. Check your SMTP host, port, credentials, and TLS settings."
+          : err instanceof Error
+            ? err.message
+            : "Email send failed";
+      return c.json({ ok: false, error: detail }, 400);
     }
   });
 
@@ -1557,11 +1819,11 @@ export function createApp(deps: GatherGateAppDeps) {
     };
     const currentPassword = String(body.currentPassword || "");
     const newPassword = String(body.newPassword || "");
-    if (!verifyPassword(currentPassword, auth.user.password_hash)) {
+    if (currentPassword.length > MAX_PASSWORD_CHARS || !verifyPassword(currentPassword, auth.user.password_hash)) {
       return c.json({ error: "Current password is incorrect." }, 400);
     }
-    if (newPassword.length < 10) {
-      return c.json({ error: "New password must be at least 10 characters." }, 400);
+    if (newPassword.length < 10 || newPassword.length > MAX_PASSWORD_CHARS) {
+      return c.json({ error: "New password must be between 10 and 256 characters." }, 400);
     }
     store.updateUserPassword(auth.user.id, hashPassword(newPassword));
     const currentToken = getCookie(c, SESSION_COOKIE) || "";
@@ -1638,9 +1900,7 @@ export function createApp(deps: GatherGateAppDeps) {
         request: {
           id: request.id,
           title: request.title,
-          client_name: request.client_name,
           status: request.status,
-          due_at: request.due_at,
           purge_at: request.purge_at,
         },
         items: [],
@@ -1850,11 +2110,18 @@ export function createApp(deps: GatherGateAppDeps) {
       if (!isChecked) {
         return c.json({ error: "Please confirm the declaration checkbox." }, 400);
       }
-      store.saveTextOrCheckboxSubmission(
-        item.id,
-        request.id,
-        encryptField(config.masterKey, "confirmed", item.id)
-      );
+      try {
+        store.saveTextOrCheckboxSubmission(
+          item.id,
+          request.id,
+          encryptField(config.masterKey, "confirmed", item.id)
+        );
+      } catch (err) {
+        if (err instanceof ClientWriteConflictError) {
+          return c.json({ error: err.message }, err.statusCode);
+        }
+        throw err;
+      }
       store.logAudit(request.workspace_id, request.id, "client", "item.submitted", {
         itemId: item.id,
         kind: "checkbox",
@@ -1871,15 +2138,26 @@ export function createApp(deps: GatherGateAppDeps) {
     if (item.kind === "text" || item.kind === "textarea") {
       const body = (await c.req.json().catch(() => ({}))) as { value?: string };
       const rawValue = String(body.value || "");
+      const maxChars = item.kind === "textarea" ? MAX_TEXTAREA_ITEM_CHARS : MAX_TEXT_ITEM_CHARS;
+      if (rawValue.length > maxChars) {
+        return c.json({ error: `Value exceeds maximum length of ${maxChars} characters.` }, 400);
+      }
       const check = validateTextValue(item.validator, rawValue);
       if (!check.valid || !check.normalised) {
         return c.json({ error: check.error || "Invalid value" }, 400);
       }
-      store.saveTextOrCheckboxSubmission(
-        item.id,
-        request.id,
-        encryptField(config.masterKey, check.normalised, item.id)
-      );
+      try {
+        store.saveTextOrCheckboxSubmission(
+          item.id,
+          request.id,
+          encryptField(config.masterKey, check.normalised, item.id)
+        );
+      } catch (err) {
+        if (err instanceof ClientWriteConflictError) {
+          return c.json({ error: err.message }, err.statusCode);
+        }
+        throw err;
+      }
       store.logAudit(request.workspace_id, request.id, "client", "item.submitted", {
         itemId: item.id,
         kind: item.kind,
@@ -1925,24 +2203,38 @@ export function createApp(deps: GatherGateAppDeps) {
     const cfg = JSON.parse(item.config_json) as {
       allowedGroups?: string[];
       maxFileMb?: number;
+      multiple?: boolean;
       slug?: string;
     };
-    const maxBytes = (cfg.maxFileMb ?? 20) * 1024 * 1024;
+    if (!cfg.multiple && rawFiles.length > 1) {
+      return c.json({ error: "This item only accepts one file at a time." }, 400);
+    }
+    if (rawFiles.length > MAX_FILES_PER_UPLOAD) {
+      return c.json({ error: `Upload up to ${MAX_FILES_PER_UPLOAD} files at a time.` }, 400);
+    }
+
+    const maxFileMb = Math.min(MAX_ITEM_FILE_MB, Math.max(1, cfg.maxFileMb ?? 20));
+    const maxBytes = maxFileMb * 1024 * 1024;
     const allowedMimes = resolveAllowedMimes(cfg.allowedGroups);
     const currentStorage = store.getWorkspaceStorageBytes(workspace.id);
-    let addedBytes = 0;
-    const savedUploads = [];
 
+    // Pass 1: validate every file's size, workspace quota, and magic bytes before persisting anything.
+    let pendingBytes = 0;
+    const preparedFiles: Array<{
+      name: string;
+      buf: Buffer;
+      detected: { mime: string; ext: string };
+    }> = [];
     for (const file of rawFiles) {
       if (file.size > maxBytes) {
         return c.json(
-          { error: `"${file.name}" exceeds max size of ${cfg.maxFileMb ?? 20} MB.` },
+          { error: `"${file.name}" exceeds max size of ${maxFileMb} MB.` },
           400
         );
       }
       if (
         workspace.max_storage_bytes > 0 &&
-        currentStorage + addedBytes + file.size > workspace.max_storage_bytes
+        currentStorage + pendingBytes + file.size > workspace.max_storage_bytes
       ) {
         return c.json({ error: "Workspace storage limit reached." }, 403);
       }
@@ -1950,9 +2242,15 @@ export function createApp(deps: GatherGateAppDeps) {
       const buf = Buffer.from(await file.arrayBuffer());
       if (buf.byteLength > maxBytes) {
         return c.json(
-          { error: `"${file.name}" exceeds max size of ${cfg.maxFileMb ?? 20} MB.` },
+          { error: `"${file.name}" exceeds max size of ${maxFileMb} MB.` },
           400
         );
+      }
+      if (
+        workspace.max_storage_bytes > 0 &&
+        currentStorage + pendingBytes + buf.byteLength > workspace.max_storage_bytes
+      ) {
+        return c.json({ error: "Workspace storage limit reached." }, 403);
       }
       const detected = detectFileSignature(buf, file.name);
       if (!detected || !allowedMimes.includes(detected.mime)) {
@@ -1963,44 +2261,72 @@ export function createApp(deps: GatherGateAppDeps) {
           400
         );
       }
+      pendingBytes += buf.byteLength;
+      preparedFiles.push({ name: file.name, buf, detected });
+    }
 
-      const seq = store.countUploadsForItem(item.id) + 1;
-      const clientSlug = slugify(request.client_name, "client");
-      const itemSlug = slugify(cfg.slug || item.label, "doc");
-      const canonicalName = `${clientSlug}_${itemSlug}_${String(seq).padStart(2, "0")}.${detected.ext}`;
-      const storageKey = `${workspace.id}/${request.id}/${item.id}/${Date.now()}_${canonicalName}.enc`;
+    // Pass 2: encrypt and persist; roll back written blobs if a concurrent request lock occurs.
+    const savedUploads = [];
+    const writtenStorageKeys: string[] = [];
+    const clientSlug = slugify(request.client_name, "client");
+    const itemSlug = slugify(cfg.slug || item.label, "doc");
+    let seq = store.nextUploadSeqForItem(item.id);
 
-      const { ciphertext, meta } = encryptBuffer(config.masterKey, buf, storageKey);
-      await storage.put(storageKey, ciphertext);
+    try {
+      for (const pf of preparedFiles) {
+        const uploadId = generateId("upl");
+        const canonicalName = `${clientSlug}_${itemSlug}_${String(seq).padStart(2, "0")}.${pf.detected.ext}`;
+        seq += 1;
+        const storageKey = `${workspace.id}/${request.id}/${item.id}/${uploadId}_${canonicalName}.enc`;
 
-      const uploadRow = store.addUpload({
-        itemId: item.id,
-        requestId: request.id,
-        originalName: file.name.slice(0, 200),
-        canonicalName,
-        detectedMime: detected.mime,
-        sizeBytes: meta.sizeBytes,
-        storageKey,
-        encVersion: meta.version,
-        ivHex: meta.ivHex,
-        tagHex: meta.tagHex,
-        saltHex: meta.saltHex,
-        sha256Hex: meta.sha256Hex,
-      });
-      savedUploads.push({
-        id: uploadRow.id,
-        original_name: uploadRow.original_name,
-        canonical_name: uploadRow.canonical_name,
-        detected_mime: uploadRow.detected_mime,
-        size_bytes: uploadRow.size_bytes,
-        created_at: uploadRow.created_at,
-      });
-      addedBytes += meta.sizeBytes;
+        const { ciphertext, meta } = encryptBuffer(config.masterKey, pf.buf, storageKey);
+        await storage.put(storageKey, ciphertext);
+        writtenStorageKeys.push(storageKey);
+
+        const uploadRow = store.addUpload({
+          id: uploadId,
+          itemId: item.id,
+          requestId: request.id,
+          originalName: pf.name.slice(0, 200),
+          canonicalName,
+          detectedMime: pf.detected.mime,
+          sizeBytes: meta.sizeBytes,
+          storageKey,
+          encVersion: meta.version,
+          ivHex: meta.ivHex,
+          tagHex: meta.tagHex,
+          saltHex: meta.saltHex,
+          sha256Hex: meta.sha256Hex,
+        });
+        savedUploads.push({
+          id: uploadRow.id,
+          original_name: uploadRow.original_name,
+          canonical_name: uploadRow.canonical_name,
+          detected_mime: uploadRow.detected_mime,
+          size_bytes: uploadRow.size_bytes,
+          created_at: uploadRow.created_at,
+        });
+      }
+    } catch (err) {
+      for (const k of writtenStorageKeys) {
+        await storage.delete(k).catch(() => {});
+      }
+      if (err instanceof ClientWriteConflictError) {
+        return c.json({ error: err.message }, err.statusCode);
+      }
+      throw err;
+    }
+
+    if (!cfg.multiple && savedUploads.length > 0) {
+      const oldKeys = store.deleteOtherUploadsForItem(request.id, item.id, savedUploads[0].id);
+      for (const oldKey of oldKeys) {
+        await storage.delete(oldKey).catch(() => {});
+      }
     }
 
     store.logAudit(request.workspace_id, request.id, "client", "item.files_uploaded", {
       itemId: item.id,
-      count: rawFiles.length,
+      count: savedUploads.length,
     });
     const reqAfter = store.getRequestById(request.workspace_id, request.id)!;
     return c.json({
@@ -2045,12 +2371,19 @@ export function createApp(deps: GatherGateAppDeps) {
     if (notApplicable && !note) {
       return c.json({ error: "Tell us briefly why this does not apply." }, 400);
     }
-    store.setClientNote(
-      item.id,
-      request.id,
-      note ? encryptField(config.masterKey, note, `${item.id}:note`) : null,
-      notApplicable
-    );
+    try {
+      store.setClientNote(
+        item.id,
+        request.id,
+        note ? encryptField(config.masterKey, note, `${item.id}:note`) : null,
+        notApplicable
+      );
+    } catch (err) {
+      if (err instanceof ClientWriteConflictError) {
+        return c.json({ error: err.message }, err.statusCode);
+      }
+      throw err;
+    }
     store.logAudit(request.workspace_id, request.id, "client", notApplicable ? "item.marked_na" : "item.note_saved", {
       itemId: item.id,
     });
@@ -2077,7 +2410,15 @@ export function createApp(deps: GatherGateAppDeps) {
     const resolved = resolveClientWrite(c, upload.request_item_id);
     if (resolved.error) return resolved.error;
 
-    const removed = store.deleteUpload(request.id, upload.id);
+    let removed: { storageKey: string; itemId: string } | null;
+    try {
+      removed = store.deleteUpload(request.id, upload.id);
+    } catch (err) {
+      if (err instanceof ClientWriteConflictError) {
+        return c.json({ error: err.message }, err.statusCode);
+      }
+      throw err;
+    }
     if (removed) await storage.delete(removed.storageKey);
     store.logAudit(request.workspace_id, request.id, "client", "item.file_removed", {
       itemId: upload.request_item_id,

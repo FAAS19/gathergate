@@ -120,7 +120,7 @@ function formatDue(dueAt: string | null | undefined): string | null {
   if (!dueAt) return null;
   const d = new Date(dueAt);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long" });
+  return d.toLocaleDateString("en-AU", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
 }
 
 export function inviteEmail(params: {

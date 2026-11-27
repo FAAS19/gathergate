@@ -26,6 +26,7 @@ export default defineConfig({
     {
       name: "desktop",
       testMatch: /.*\.spec\.ts/,
+      testIgnore: /pages\.spec\.ts/,
       dependencies: ["setup"],
       use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 }, storageState: "e2e/.auth/operator.json" },
     },

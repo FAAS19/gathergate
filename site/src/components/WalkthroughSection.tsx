@@ -160,7 +160,7 @@ export function WalkthroughSection() {
                     aria-hidden="true"
                   />
                   <span className="truncate font-mono text-xs text-[var(--ink-muted)]">
-                    portal.practice.com.au/c/demo-bas
+                    portal.practice.example.com.au/c/demo-bas
                   </span>
                 </div>
                 <img

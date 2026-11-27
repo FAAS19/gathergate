@@ -1,12 +1,13 @@
 import type { RequestRow, Store, WorkspaceRow } from "../db/queries.js";
 import { decryptField, hmacSha256Hex } from "../security/crypto.js";
+import { validateWebhookEndpointRuntime, type LookupAllFn } from "../security/ssrf.js";
 import { maskSensitiveValue, SENSITIVE_VALIDATORS } from "../validators/index.js";
 
 function buildSignedHeaders(secret: string | null, event: string, body: string): Record<string, string> {
   const ts = Math.floor(Date.now() / 1000).toString();
   const headers: Record<string, string> = {
     "content-type": "application/json",
-    "user-agent": "GatherGate/0.1 (TensorForge; contact@tensorforge.dev)",
+    "user-agent": "GatherGate/1.0 (TensorForge; contact@tensorforge.dev)",
     "x-gathergate-event": event,
     "x-gathergate-timestamp": ts,
   };
@@ -23,15 +24,28 @@ export async function dispatchCompletionWebhook(params: {
   request: RequestRow;
   masterKey: Buffer;
   baseUrl: string;
+  multiTenant?: boolean;
   fetchImpl?: typeof fetch;
+  lookupImpl?: LookupAllFn;
 }): Promise<{ dispatched: boolean; status?: number }> {
   const url = params.workspace.webhook_url?.trim();
   if (!url) return { dispatched: false };
 
+  const ssrfErr = await validateWebhookEndpointRuntime(url, Boolean(params.multiTenant), {
+    skipDns: Boolean(params.fetchImpl) && !params.lookupImpl,
+    lookupImpl: params.lookupImpl,
+  });
+  if (ssrfErr) {
+    params.store.logAudit(params.workspace.id, params.request.id, "system", "webhook.blocked", {
+      reason: ssrfErr,
+    });
+    return { dispatched: false };
+  }
+
   const items = params.store.listRequestItems(params.request.id);
   const uploads = params.store.listUploadsForRequest(params.request.id);
 
-  // Never emit raw TFN or Medicare numbers over third-party webhooks; mask sensitive fields.
+  // Never emit raw sensitive national IDs over third-party webhooks; mask sensitive fields.
   const payload = {
     event: "request.completed",
     timestamp: new Date().toISOString(),
@@ -53,6 +67,9 @@ export async function dispatchCompletionWebhook(params: {
           ? maskSensitiveValue(item.validator, plain)
           : plain;
       }
+      const client_note = item.client_note_encrypted
+        ? decryptField(params.masterKey, item.client_note_encrypted, `${item.id}:note`)
+        : null;
       const itemFiles = uploads
         .filter((u) => u.request_item_id === item.id)
         .map((u) => ({
@@ -70,6 +87,8 @@ export async function dispatchCompletionWebhook(params: {
         validator: item.validator,
         status: item.status,
         value,
+        client_na: item.client_na === 1,
+        client_note,
         files: itemFiles,
       };
     }),
@@ -84,6 +103,7 @@ export async function dispatchCompletionWebhook(params: {
       method: "POST",
       headers,
       body,
+      redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
     params.store.logAudit(params.workspace.id, params.request.id, "system", "webhook.dispatched", {
@@ -101,10 +121,18 @@ export async function dispatchCompletionWebhook(params: {
 
 export async function dispatchTestWebhook(params: {
   workspace: WorkspaceRow;
+  multiTenant?: boolean;
   fetchImpl?: typeof fetch;
+  lookupImpl?: LookupAllFn;
 }): Promise<{ ok: boolean; status?: number; error?: string }> {
   const url = params.workspace.webhook_url?.trim();
   if (!url) return { ok: false, error: "No webhook URL configured" };
+
+  const ssrfErr = await validateWebhookEndpointRuntime(url, Boolean(params.multiTenant), {
+    skipDns: Boolean(params.fetchImpl) && !params.lookupImpl,
+    lookupImpl: params.lookupImpl,
+  });
+  if (ssrfErr) return { ok: false, error: ssrfErr };
 
   const body = JSON.stringify({
     event: "webhook.test",
@@ -119,6 +147,7 @@ export async function dispatchTestWebhook(params: {
       method: "POST",
       headers,
       body,
+      redirect: "error",
       signal: AbortSignal.timeout(10_000),
     });
     return { ok: res.ok, status: res.status };

@@ -44,7 +44,8 @@ export function validateAuTfn(raw: string): ValidationResult {
 }
 
 export function validateAuMedicare(raw: string): ValidationResult {
-  const digits = raw.replace(/[\s-]+/g, "");
+  const stripped = raw.trim().replace(/\s*\/\s*(?=\d\s*$)/, "");
+  const digits = stripped.replace(/[\s-]+/g, "");
   if (!/^\d{10,11}$/.test(digits)) {
     return { valid: false, error: "Medicare number must be 10 digits (+ optional 1-digit IRN)" };
   }

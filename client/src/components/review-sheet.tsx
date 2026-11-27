@@ -30,6 +30,7 @@ import {
   type RequestItemDto,
   type UploadDto,
 } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 export interface ReviewDoc {
   item: RequestItemDto;
@@ -55,6 +56,7 @@ export function ReviewSheet({
   docs,
   activeUploadId,
   requestStatus,
+  overlayOpen = false,
   onSelectUpload,
   onApproveAndNext,
   onRequestRevision,
@@ -62,6 +64,7 @@ export function ReviewSheet({
   docs: ReviewDoc[];
   activeUploadId: string | null;
   requestStatus: RequestDetailResponse["request"]["status"];
+  overlayOpen?: boolean;
   onSelectUpload: (uploadId: string | null) => void;
   onApproveAndNext: (item: RequestItemDto, nextUploadId: string | null) => void;
   onRequestRevision: (item: RequestItemDto) => void;
@@ -218,7 +221,7 @@ export function ReviewSheet({
               </div>
             )}
 
-            <div className="flex-1 overflow-auto bg-muted/50 p-5">
+            <div className="min-h-0 flex-1 overflow-auto bg-muted/50 p-4 sm:p-5">
               {previewLoading ? (
                 <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                   Decrypting file stream...
@@ -233,12 +236,12 @@ export function ReviewSheet({
                   </pre>
                 </div>
               ) : previewUrl && current.upload.detected_mime === "application/pdf" ? (
-                <div className="h-full overflow-hidden rounded-lg border border-border bg-card shadow-xs">
+                <div className="relative isolate h-full overflow-hidden rounded-lg border border-border bg-card shadow-xs">
                   <iframe
                     key={`${current.upload.id}-${zoomPct}`}
                     src={`${previewUrl}#zoom=${zoomPct}`}
                     title={current.upload.canonical_name}
-                    className="h-full w-full bg-white"
+                    className={cn("h-full w-full bg-white", overlayOpen && "invisible")}
                   />
                 </div>
               ) : previewUrl && current.upload.detected_mime.startsWith("image/") ? (
@@ -258,7 +261,7 @@ export function ReviewSheet({
               )}
             </div>
 
-            <SheetFooter className="mt-0 flex-row items-center justify-between gap-3 border-t border-border bg-card px-5 py-3">
+            <SheetFooter className="mt-0 shrink-0 flex-row flex-wrap items-center justify-between gap-2 border-t border-border bg-card px-4 py-3 sm:gap-3 sm:px-5">
               <div className="flex items-center gap-3">
                 {IS_DEMO ? (
                   <Button

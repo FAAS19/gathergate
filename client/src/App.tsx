@@ -102,12 +102,16 @@ function AppRoutes({ onReset }: { onReset: () => void }) {
   const isClientPortal = location.pathname.startsWith("/c/");
   const { theme, toggleTheme } = useTheme(!isClientPortal);
   const [session, setSession] = useState<SessionResponse | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!isClientPortal);
 
   const refreshSession = useCallback(async () => {
+    setSessionError(null);
     try {
       const res = await apiJson<SessionResponse>("/api/session");
       setSession(res);
+    } catch (err) {
+      setSessionError(err instanceof Error ? err.message : "Could not reach GatherGate.");
     } finally {
       setLoading(false);
     }
@@ -125,12 +129,34 @@ function AppRoutes({ onReset }: { onReset: () => void }) {
     content = (
       <Routes>
         <Route path="/c/:token" element={<ClientPortalPage />} />
+        <Route path="*" element={<ClientPortalPage />} />
       </Routes>
     );
-  } else if (loading || !session) {
+  } else if (loading) {
     content = (
       <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">
         Loading GatherGate...
+      </div>
+    );
+  } else if (sessionError || !session) {
+    content = (
+      <div className="flex min-h-screen items-center justify-center bg-background px-4 text-center">
+        <div className="max-w-sm space-y-3">
+          <h1 className="text-base font-semibold text-foreground">Unable to connect to GatherGate</h1>
+          <p className="text-sm text-muted-foreground">
+            {sessionError || "The server did not respond. Check that GatherGate is running and try again."}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setLoading(true);
+              void refreshSession();
+            }}
+            className="inline-flex h-9 cursor-pointer items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90"
+          >
+            Retry
+          </button>
+        </div>
       </div>
     );
   } else if (session.needsSetup) {
@@ -238,9 +264,9 @@ function AppRoutes({ onReset }: { onReset: () => void }) {
   if (!IS_DEMO) return <>{content}</>;
 
   return (
-    <div className="min-h-screen">
+    <div className="flex min-h-screen flex-col">
       <DemoBar onReset={onReset} />
-      <div className="md:[&_[data-slot=sidebar-container]]:top-10 md:[&_[data-slot=sidebar-container]]:h-[calc(100svh-2.5rem)] md:[&_.sticky.top-0]:top-10">
+      <div className="min-h-0 flex-1 md:[&_[data-slot=sidebar-wrapper]]:min-h-[calc(100svh-2.5rem)] md:[&_[data-slot=sidebar-container]]:top-10 md:[&_[data-slot=sidebar-container]]:h-[calc(100svh-2.5rem)] md:[&_.sticky.top-0]:top-10">
         {content}
       </div>
     </div>

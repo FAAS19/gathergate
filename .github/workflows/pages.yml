@@ -1,6 +1,6 @@
 name: Deploy GitHub Pages
 
-# Re-add `push: branches: [main]` once GitHub Pages is enabled for public launch.
+# Re-add `push: branches: [main]` once FAAS19/gathergate is public and GitHub Pages is enabled.
 on:
   workflow_dispatch:
 
@@ -40,7 +40,7 @@ jobs:
         run: npm run build:pages
 
       - name: Upload Pages artefact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site/dist
 

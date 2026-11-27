@@ -5,16 +5,26 @@ on:
     tags:
       - "v*.*.*"
 
-permissions:
-  contents: write
-  packages: write
-
 jobs:
   publish-container:
     name: Build & publish multi-arch image
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
     steps:
       - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Verify release tag matches package.json & README hygiene
+        run: |
+          node -e "const v = require('./package.json').version; const tag = process.env.GITHUB_REF_NAME; if (tag !== 'v' + v) { console.error('Tag', tag, 'does not match package.json v' + v); process.exit(1); }"
+          node e2e/verify-readme.mjs
 
       - uses: docker/setup-qemu-action@v4
 
@@ -42,6 +52,8 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          sbom: true
+          provenance: mode=max
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -51,9 +63,12 @@ jobs:
     name: Create GitHub Release
     needs: publish-container
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
 
       - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

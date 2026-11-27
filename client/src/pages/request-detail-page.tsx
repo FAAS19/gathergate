@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { useParams } from "react-router";
+import { Link, useNavigate, useParams } from "react-router";
 import {
   ArrowSquareOut as ExternalLink,
   CalendarBlank as Calendar,
@@ -65,6 +65,14 @@ import {
   type SessionResponse,
   type ValidatorKey,
 } from "@/lib/api";
+import { copyText } from "@/lib/utils";
+
+function demoPortalPath(url: string): string {
+  const hashIdx = url.indexOf("#/c/");
+  if (hashIdx >= 0) return url.slice(hashIdx + 1);
+  const pathIdx = url.indexOf("/c/");
+  return pathIdx >= 0 ? url.slice(pathIdx) : "/";
+}
 
 type ItemFilter = "all" | "submitted" | "rejected" | "approved" | "pending";
 
@@ -148,7 +156,8 @@ function computeOptimisticRequestStatus(
     checkSet.length > 0 &&
     checkSet.every((i) => i.status === "submitted" || i.status === "approved");
   const hasRejected = items.some((i) => i.status === "rejected");
-  if (allApproved) return "completed";
+  const hasSubmitted = items.some((i) => i.status === "submitted");
+  if (allApproved && !hasRejected && !hasSubmitted) return "completed";
   if (allSubmittedOrApproved && !hasRejected) return "in_review";
   return "open";
 }
@@ -165,8 +174,11 @@ export function RequestDetailPage({
   onToggleTheme: () => void;
 }) {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [data, setData] = useState<RequestDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("checklist");
   const [filter, setFilter] = useState<ItemFilter>("all");
   const [compact, setCompact] = useState(false);
   const [revealedValues, setRevealedValues] = useState<Record<string, string>>({});
@@ -208,8 +220,12 @@ export function RequestDetailPage({
       try {
         const res = await apiJson<RequestDetailResponse>(`/api/requests/${id}`);
         setData(res);
-      } catch {
-        if (!opts?.silent) toast.error("Request not found.");
+        setLoadError(null);
+      } catch (err) {
+        if (!opts?.silent) {
+          setLoadError(err instanceof ApiError ? err.message : "Request not found.");
+          toast.error("Request not found.");
+        }
       } finally {
         setLoading(false);
       }
@@ -336,10 +352,11 @@ export function RequestDetailPage({
         inFlightReviewsRef.current -= 1;
         if (inFlightReviewsRef.current === 0) {
           void loadDetail({ silent: true });
+          void onSessionRefresh();
         }
       }
     },
-    [id, loadDetail]
+    [id, loadDetail, onSessionRefresh]
   );
 
   // Keyboard-first triage across list and continuous document preview
@@ -359,7 +376,11 @@ export function RequestDetailPage({
         Boolean(reviseTarget) ||
         addItemOpen ||
         duePopoverOpen ||
-        Boolean(document.querySelector('[data-slot="dialog-content"]'));
+        Boolean(
+          document.querySelector(
+            '[data-slot="dialog-content"], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot="popover-content"]'
+          )
+        );
 
       if (e.key === "?") {
         if (shortcutsOpen || !modalOpen) {
@@ -374,6 +395,7 @@ export function RequestDetailPage({
       const key = e.key.toLowerCase();
 
       if (previewUploadId) {
+        if (e.shiftKey && e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
         const idx = reviewDocs.findIndex((d) => d.upload.id === previewUploadId);
         if (idx < 0) return;
         const current = reviewDocs[idx];
@@ -414,7 +436,7 @@ export function RequestDetailPage({
         return;
       }
 
-      if (visibleItems.length === 0) return;
+      if (activeTab !== "checklist" || e.shiftKey || visibleItems.length === 0) return;
 
       if (key === "j") {
         e.preventDefault();
@@ -482,6 +504,7 @@ export function RequestDetailPage({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     activeItemId,
+    activeTab,
     addItemOpen,
     data?.request.status,
     duePopoverOpen,
@@ -510,6 +533,7 @@ export function RequestDetailPage({
       setRevealedValues((prev) => ({ ...prev, [itemId]: res.value }));
       toast.info("Sensitive value revealed and recorded in audit trail.");
       await loadDetail({ silent: true });
+      void onSessionRefresh();
     } catch {
       toast.error("Failed to reveal field.");
     }
@@ -529,6 +553,7 @@ export function RequestDetailPage({
           : `Approved ${res.approvedCount} submitted items.`
       );
       await loadDetail({ silent: true });
+      void onSessionRefresh();
     } catch {
       toast.error("Batch approve failed.");
     } finally {
@@ -585,6 +610,7 @@ export function RequestDetailPage({
       );
       toast.success("Reminder email sent to client.");
       void loadDetail({ silent: true });
+      void onSessionRefresh();
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : "Could not send reminder.");
       if (err instanceof ApiError && err.status === 429) {
@@ -598,7 +624,7 @@ export function RequestDetailPage({
   async function handleSaveDueDate(nextDateStr: string) {
     if (!id || !data) return;
     const prevDue = data.request.due_at;
-    const iso = nextDateStr ? new Date(`${nextDateStr}T17:00:00Z`).toISOString() : null;
+    const iso = nextDateStr ? new Date(`${nextDateStr}T12:00:00Z`).toISOString() : null;
     setSavingDue(true);
     setDuePopoverOpen(false);
     setData((cur) => (cur ? { ...cur, request: { ...cur.request, due_at: iso } } : cur));
@@ -684,7 +710,7 @@ export function RequestDetailPage({
     }
   }
 
-  if (loading || !data) {
+  if (loading) {
     return (
       <AppShell
         session={session}
@@ -715,6 +741,30 @@ export function RequestDetailPage({
     );
   }
 
+  if (loadError || !data) {
+    return (
+      <AppShell
+        session={session}
+        breadcrumbs={[{ label: "Requests", to: "/" }, { label: "Not found" }]}
+        onSessionRefresh={onSessionRefresh}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
+      >
+        <Card className="paper-shadow">
+          <CardContent className="flex flex-col items-center py-14 text-center">
+            <h1 className="text-lg font-semibold text-foreground">Request not found</h1>
+            <p className="mt-1.5 max-w-md text-sm text-muted-foreground">
+              {loadError || "This checklist does not exist or may have been cleared."}
+            </p>
+            <Button asChild className="mt-5">
+              <Link to="/">Back to requests</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      </AppShell>
+    );
+  }
+
   const { request } = data;
   const validatorLabel = (key: string) =>
     VALIDATOR_OPTIONS.find((v) => v.value === key)?.short ?? key;
@@ -729,6 +779,11 @@ export function RequestDetailPage({
       session={session}
       breadcrumbs={[{ label: "Requests", to: "/" }, { label: request.title }]}
       onSessionRefresh={onSessionRefresh}
+      onDemoChanged={async () => {
+        const res = await apiJson<RequestDetailResponse>(`/api/requests/${id}`).catch(() => null);
+        if (!res) navigate("/");
+        else setData(res);
+      }}
       theme={theme}
       onToggleTheme={onToggleTheme}
     >
@@ -898,26 +953,37 @@ export function RequestDetailPage({
               <Button
                 size="sm"
                 variant="outline"
+                disabled={!data.portalUrl}
                 onClick={async () => {
-                  await navigator.clipboard.writeText(data.portalUrl);
-                  toast.success("Magic link copied.");
+                  const ok = await copyText(data.portalUrl);
+                  if (ok) toast.success("Magic link copied.");
+                  else toast.error("Could not copy magic link.");
                 }}
               >
                 <Copy className="mr-1.5 size-3.5" />
                 Copy link
               </Button>
-              <Button asChild size="sm" variant="secondary">
-                <a href={data.portalUrl} target="_blank" rel="noopener noreferrer">
-                  Preview as client
-                  <ExternalLink className="ml-1.5 size-3.5" />
-                </a>
-              </Button>
+              {data.portalUrl && (
+                <Button asChild size="sm" variant="secondary">
+                  {IS_DEMO ? (
+                    <Link to={demoPortalPath(data.portalUrl)}>
+                      Preview as client
+                      <ExternalLink className="ml-1.5 size-3.5" />
+                    </Link>
+                  ) : (
+                    <a href={data.portalUrl} target="_blank" rel="noopener noreferrer">
+                      Preview as client
+                      <ExternalLink className="ml-1.5 size-3.5" />
+                    </a>
+                  )}
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>
 
         {/* Tabs: Checklist Items vs Audit Timeline */}
-        <Tabs defaultValue="checklist" className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <TabsList>
               <TabsTrigger value="checklist">
@@ -1262,6 +1328,7 @@ export function RequestDetailPage({
         docs={reviewDocs}
         activeUploadId={previewUploadId}
         requestStatus={request.status}
+        overlayOpen={Boolean(reviseTarget) || shortcutsOpen}
         onSelectUpload={setPreviewUploadId}
         onApproveAndNext={(item, nextUploadId) =>
           void handleReview(item, "approved", undefined, {

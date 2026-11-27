@@ -125,11 +125,12 @@ test("Clients directory aggregates repeat requests by email, exposes awaitingRev
       items: Array<{ id: string }>;
     };
     const token2 = pack2.portalUrl.split("/c/")[1];
-    await ctx.app.request(`/api/client/${token2}/items/${d2.items[0].id}`, {
+    const sub2 = await ctx.app.request(`/api/client/${token2}/items/${d2.items[0].id}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ confirmed: true }),
+      body: JSON.stringify({ checked: true }),
     });
+    assert.equal(sub2.status, 200);
     const app2 = await ctx.req(ctx.cookieA, "POST", `/api/requests/${pack2.id}/items/${d2.items[0].id}/review`, {
       decision: "approved",
     });

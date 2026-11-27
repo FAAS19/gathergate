@@ -407,7 +407,7 @@ export const VALIDATOR_OPTIONS: Array<{
   { value: "us_ein", label: "IRS EIN (9-digit XX-XXXXXXX)", short: "US EIN", hint: "12-3456789" },
   { value: "us_routing_aba", label: "US ABA Routing Number (mod-10)", short: "ABA Routing", hint: "021000021" },
   { value: "us_ssn", label: "US SSN (SSA rules, masked)", short: "US SSN", hint: "9 digits, stored masked", sensitive: true },
-  { value: "eu_vat", label: "EU VAT Number (country format + checksum)", short: "EU VAT", hint: "DE123456789 or FR40303265045" },
+  { value: "eu_vat", label: "EU VAT Number (country format + checksum)", short: "EU VAT", hint: "DE123456788 or FR40303265045" },
 ];
 
 export const SENSITIVE_VALIDATOR_KEYS = new Set(

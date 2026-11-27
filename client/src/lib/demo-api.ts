@@ -1,5 +1,6 @@
 import {
   ApiError,
+  VALIDATOR_OPTIONS,
   type AuditEventDto,
   type BrandingDto,
   type ClientPortalResponse,
@@ -333,6 +334,122 @@ const BUILTIN_TEMPLATE_SPECS: Array<{
         required: true,
         validator: "none",
         slug: "clinical-consent",
+      },
+    ],
+  },
+  {
+    id: "tpl_kyc",
+    name: "Legal / KYC Client Onboarding",
+    description:
+      "Know-your-client intake pack with verified E.164 phone, IBAN banking, photo ID upload, and compliance sign-off.",
+    items: [
+      {
+        section: "Contact & Identity",
+        label: "Authorised Signatory Email",
+        helpText: "Email address for engagement letters and compliance notices.",
+        kind: "text",
+        required: true,
+        validator: "email",
+        slug: "signatory-email",
+      },
+      {
+        section: "Contact & Identity",
+        label: "Primary Mobile or Direct Phone",
+        helpText: "International format starting with + and country code.",
+        kind: "text",
+        required: true,
+        validator: "phone_e164",
+        slug: "primary-phone",
+      },
+      {
+        section: "Banking & AML",
+        label: "Settlement IBAN",
+        helpText: "International Bank Account Number verified via mod-97.",
+        kind: "text",
+        required: true,
+        validator: "iban",
+        slug: "settlement-iban",
+      },
+      {
+        section: "Verification Documents",
+        label: "Certified Photo ID (Passport or Driver Licence)",
+        helpText: "Upload clear PDF or image scans of current government-issued ID.",
+        kind: "file",
+        required: true,
+        validator: "none",
+        allowedGroups: ["pdf", "image"],
+        maxFileMb: 15,
+        multiple: true,
+        slug: "photo-id",
+      },
+      {
+        section: "Declaration",
+        label: "KYC & AML Confirmation",
+        helpText:
+          "I confirm all identity and banking details provided are accurate and belong to the named client.",
+        kind: "checkbox",
+        required: true,
+        validator: "none",
+        slug: "kyc-confirmation",
+      },
+    ],
+  },
+  {
+    id: "tpl_mortgage",
+    name: "Mortgage & Loan Document Pack",
+    description:
+      "Borrowing assessment pack with contact email, optional US ABA routing verification, bank statement and payslip uploads, and borrower declaration.",
+    items: [
+      {
+        section: "Borrower Details",
+        label: "Borrower Email Address",
+        helpText: "Primary email for lending updates and settlement notices.",
+        kind: "text",
+        required: true,
+        validator: "email",
+        slug: "borrower-email",
+      },
+      {
+        section: "Borrower Details",
+        label: "US Servicing Bank ABA Routing Number",
+        helpText: "Optional 9-digit US ABA routing number for direct debit verification.",
+        kind: "text",
+        required: false,
+        validator: "us_routing_aba",
+        slug: "aba-routing",
+      },
+      {
+        section: "Financial Records",
+        label: "Recent Bank Statements (3 Months)",
+        helpText: "Official PDF statements showing income deposits and regular expenses.",
+        kind: "file",
+        required: true,
+        validator: "none",
+        allowedGroups: ["pdf"],
+        maxFileMb: 25,
+        multiple: true,
+        slug: "bank-statements",
+      },
+      {
+        section: "Financial Records",
+        label: "Recent Payslips or Income Verification",
+        helpText: "Upload your last two payslips or latest tax assessment PDFs.",
+        kind: "file",
+        required: true,
+        validator: "none",
+        allowedGroups: ["pdf"],
+        maxFileMb: 20,
+        multiple: true,
+        slug: "payslips",
+      },
+      {
+        section: "Declaration",
+        label: "Borrower Accuracy Declaration",
+        helpText: "I declare all financial statements and income documents supplied are true and unaltered.",
+        kind: "checkbox",
+        required: true,
+        validator: "none",
+        slug: "loan-declaration",
       },
     ],
   },
@@ -781,7 +898,7 @@ function makeSeedRequestsAndOutbox(nowMs: number, templates: TemplateDto[], blob
     magicToken: "demo-bas",
     title: "Q3 BAS & Supplier Pack",
     client_name: "Harbourline Plumbing Pty Ltd",
-    client_email: "accounts@harbourline.com.au",
+    client_email: "accounts@harbourline.example.com.au",
     client_subject: "Q3 BAS records due in 2 days",
     welcome_note: null,
     status: "open",
@@ -813,7 +930,7 @@ function makeSeedRequestsAndOutbox(nowMs: number, templates: TemplateDto[], blob
         actor: "operator",
         action: "request.created",
         meta_json: JSON.stringify({
-          clientEmail: "accounts@harbourline.com.au",
+          clientEmail: "accounts@harbourline.example.com.au",
           itemCount: r2Items.length,
           requireOtp: false,
           isDemo: true,
@@ -947,7 +1064,7 @@ function makeSeedRequestsAndOutbox(nowMs: number, templates: TemplateDto[], blob
     {
       id: "eml_demo_3",
       request_id: "req_demo_bas",
-      recipient: "accounts@harbourline.com.au",
+      recipient: "accounts@harbourline.example.com.au",
       subject: "Reminder: 2 items left for Q3 BAS & Supplier Pack",
       text_body: [
         "Hi Harbourline Plumbing Pty Ltd,",
@@ -1049,7 +1166,7 @@ function createInitialState(): DemoState {
     loggedIn: true,
     user: {
       id: "usr_demo",
-      email: "ops@harbouradvisory.com.au",
+      email: "ops@harbouradvisory.example.com.au",
       displayName: "Practice Operations",
     },
     workspace: {
@@ -1063,7 +1180,7 @@ function createInitialState(): DemoState {
       has_webhook_secret: false,
       brand_color: "#0F5243",
       has_logo: false,
-      support_email: "help@harbouradvisory.com.au",
+      support_email: "help@harbouradvisory.example.com.au",
       support_phone: "+61 3 9000 4120",
       created_at: baseCreated,
     },
@@ -1072,8 +1189,8 @@ function createInitialState(): DemoState {
     email: {
       source: "env",
       backend: "console",
-      from: "Harbour Advisory <noreply@harbouradvisory.com.au>",
-      replyTo: "help@harbouradvisory.com.au",
+      from: "Harbour Advisory <noreply@harbouradvisory.example.com.au>",
+      replyTo: "help@harbouradvisory.example.com.au",
       smtp: { host: "", port: 587, secure: false, user: "", hasPass: false },
       resend: { hasApiKey: false },
     },
@@ -1085,9 +1202,95 @@ function createInitialState(): DemoState {
   };
 }
 
-let state: DemoState = createInitialState();
+const DEMO_STORAGE_KEY = "gathergate-demo-state-v1";
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 1) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+const uploadedBlobData = new Map<string, { type: string; b64: string }>();
+
+function persistDemoState(): void {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    const payload = {
+      seq: state.seq,
+      loggedIn: state.loggedIn,
+      user: state.user,
+      workspace: state.workspace,
+      logoDataUrl: state.logoDataUrl,
+      webhookSecret: state.webhookSecret,
+      email: state.email,
+      templates: state.templates,
+      requests: state.requests,
+      outbox: state.outbox,
+      otpVerifiedRequestIds: [...state.otpVerifiedRequestIds],
+      uploadedBlobs: [...uploadedBlobData.entries()],
+    };
+    window.localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // Ignore storage quota or SecurityError in restricted environments
+  }
+}
+
+function loadDemoState(): DemoState {
+  const fresh = createInitialState();
+  if (typeof window === "undefined" || !window.localStorage) return fresh;
+  try {
+    const raw = window.localStorage.getItem(DEMO_STORAGE_KEY);
+    if (!raw) return fresh;
+    const saved = JSON.parse(raw) as Partial<DemoState> & {
+      otpVerifiedRequestIds?: string[];
+      uploadedBlobs?: Array<[string, { type: string; b64: string }]>;
+    };
+    if (!Array.isArray(saved.requests) || !Array.isArray(saved.templates)) return fresh;
+    const blobs = new Map<string, Blob>(fresh.blobs);
+    uploadedBlobData.clear();
+    for (const [id, entry] of saved.uploadedBlobs ?? []) {
+      const bytes = base64ToBytes(entry.b64);
+      blobs.set(id, new Blob([bytes.buffer as ArrayBuffer], { type: entry.type }));
+      uploadedBlobData.set(id, entry);
+    }
+    return {
+      ...fresh,
+      seq: typeof saved.seq === "number" ? saved.seq : fresh.seq,
+      loggedIn: typeof saved.loggedIn === "boolean" ? saved.loggedIn : fresh.loggedIn,
+      user: saved.user ?? fresh.user,
+      workspace: saved.workspace ?? fresh.workspace,
+      logoDataUrl: saved.logoDataUrl !== undefined ? saved.logoDataUrl : fresh.logoDataUrl,
+      webhookSecret: typeof saved.webhookSecret === "string" ? saved.webhookSecret : fresh.webhookSecret,
+      email: saved.email ?? fresh.email,
+      templates: saved.templates,
+      requests: saved.requests,
+      outbox: Array.isArray(saved.outbox) ? saved.outbox : fresh.outbox,
+      blobs,
+      otpVerifiedRequestIds: new Set(saved.otpVerifiedRequestIds ?? []),
+    };
+  } catch {
+    return fresh;
+  }
+}
+
+let state: DemoState = loadDemoState();
 
 export function resetDemoState(): void {
+  uploadedBlobData.clear();
+  if (typeof window !== "undefined" && window.localStorage) {
+    try {
+      window.localStorage.removeItem(DEMO_STORAGE_KEY);
+    } catch {
+      // Ignore storage errors
+    }
+  }
   state = createInitialState();
 }
 
@@ -1171,18 +1374,22 @@ function recomputeRequestStatus(req: DemoRequestRecord, nowIso = new Date().toIS
     checkSet.length > 0 &&
     checkSet.every((i) => i.status === "submitted" || i.status === "approved");
   const hasRejected = req.items.some((i) => i.status === "rejected");
+  const hasSubmitted = req.items.some((i) => i.status === "submitted");
 
-  if (allApproved) {
+  if (allApproved && !hasRejected && !hasSubmitted) {
     req.status = "completed";
     req.completed_at = req.completed_at || nowIso;
-    req.purge_at = req.purge_at || addDaysIso(req.completed_at, req.purge_after_days);
+    req.purge_at = addDaysIso(req.completed_at, req.purge_after_days);
     req.next_reminder_at = null;
   } else if (allSubmittedOrApproved && !hasRejected) {
     req.status = "in_review";
+    req.completed_at = null;
+    req.purge_at = null;
     req.next_reminder_at = null;
   } else {
     req.status = "open";
     req.completed_at = null;
+    req.purge_at = null;
     req.next_reminder_at =
       req.next_reminder_at ||
       (req.reminders_sent < req.max_reminders && req.reminder_interval_days > 0
@@ -1277,7 +1484,7 @@ function summarizeRequest(r: DemoRequestRecord): RequestSummaryDto {
     approved_items: r.items.filter((i) => i.status === "approved").length,
     submitted_items: r.items.filter((i) => i.status === "submitted").length,
     rejected_items: r.items.filter((i) => i.status === "rejected").length,
-    portal_url: portalHref(r.magicToken),
+    portal_url: outboxPortalUrl(r.magicToken),
   };
 }
 
@@ -1410,6 +1617,15 @@ function triggerBrowserDownload(blob: Blob, filename: string): void {
 }
 
 export async function demoApiJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method || "GET").toUpperCase();
+  const res = await handleDemoApiJson<T>(url, init);
+  if (method !== "GET") {
+    persistDemoState();
+  }
+  return res;
+}
+
+async function handleDemoApiJson<T>(url: string, init?: RequestInit): Promise<T> {
   const method = (init?.method || "GET").toUpperCase();
   const [pathname] = url.split("?");
 
@@ -1823,7 +2039,6 @@ export async function demoApiJson<T>(url: string, init?: RequestInit): Promise<T
       isDemo: false,
     });
 
-    const portalUrl = portalHref(magicToken);
     const outboxUrl = outboxPortalUrl(magicToken);
     if (body.sendInvite !== false) {
       addOutboxEmail({
@@ -1852,7 +2067,7 @@ export async function demoApiJson<T>(url: string, init?: RequestInit): Promise<T
     }
 
     state.requests.unshift(reqRecord);
-    return { id: reqId, portalUrl } as T;
+    return { id: reqId, portalUrl: outboxPortalUrl(magicToken) } as T;
   }
 
   if (method === "POST" && pathname === "/api/requests/bulk-reminders") {
@@ -1888,7 +2103,7 @@ export async function demoApiJson<T>(url: string, init?: RequestInit): Promise<T
     const { items, auditEvents, magicToken, ...rest } = req;
     return {
       request: rest,
-      portalUrl: portalHref(magicToken),
+      portalUrl: outboxPortalUrl(magicToken),
       items: items.map(formatItemForOperator),
       auditEvents: [...auditEvents],
     } satisfies RequestDetailResponse as T;
@@ -2060,14 +2275,28 @@ export async function demoApiJson<T>(url: string, init?: RequestInit): Promise<T
     const req = state.requests.find((r) => r.id === decodeURIComponent(reviewMatch[1]));
     const item = req?.items.find((i) => i.id === decodeURIComponent(reviewMatch[2]));
     if (!req || !item) throw new ApiError("Not found", 404);
-    const body = parseJsonBody<{ decision?: "approved" | "rejected"; note?: string }>(init);
-    const decision = body.decision === "approved" ? "approved" : "rejected";
+    if (req.status === "purged" || req.status === "expired") {
+      throw new ApiError("Checklist is closed.", 409);
+    }
+    const body = parseJsonBody<{ decision?: unknown; note?: string }>(init);
+    if (body.decision !== "approved" && body.decision !== "rejected") {
+      throw new ApiError("Decision must be 'approved' or 'rejected'.", 400);
+    }
+    const decision = body.decision;
+    if (decision === "approved" && item.status === "pending") {
+      throw new ApiError("Cannot approve an item that has not been submitted.", 409);
+    }
     const note = String(body.note || "").trim();
     const prevStatus = req.status;
     const nowIso = new Date().toISOString();
 
     item.status = decision;
-    item.review_note = decision === "rejected" ? note || "Please review and re-upload." : null;
+    if (decision === "rejected" && item.kind === "checkbox") {
+      item.rawValue = null;
+      item.review_note = note || "Please review and confirm.";
+    } else {
+      item.review_note = decision === "rejected" ? note || "Please review and re-upload." : null;
+    }
     item.updated_at = nowIso;
     logAudit(req, "operator", `item.${decision}`, {
       itemId: item.id,
@@ -2252,6 +2481,18 @@ export async function demoApiJson<T>(url: string, init?: RequestInit): Promise<T
     return { ok: true } as T;
   }
 
+  if (method === "GET" && pathname === "/api/validators") {
+    return {
+      validators: VALIDATOR_OPTIONS.filter((v) => v.value !== "none").map((v) => ({
+        key: v.value,
+        label: v.label,
+        short: v.short,
+        hint: v.hint,
+        sensitive: Boolean(v.sensitive),
+      })),
+    } as T;
+  }
+
   if (method === "GET" && pathname === "/api/settings") {
     return buildSettingsResponse() as T;
   }
@@ -2281,11 +2522,15 @@ export async function demoApiJson<T>(url: string, init?: RequestInit): Promise<T
     } else if (typeof body.logoDataUrl === "string") {
       const m = body.logoDataUrl.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/);
       if (!m) throw new ApiError("Logo must be a PNG, JPEG or WebP data URL.", 400);
-      const approxBytes = Math.floor((m[2].length * 3) / 4);
-      if (approxBytes > MAX_LOGO_BYTES) {
+      const bytes = base64ToBytes(m[2]);
+      if (bytes.byteLength > MAX_LOGO_BYTES) {
         throw new ApiError("Logo must be 200 KB or smaller.", 400);
       }
-      state.logoDataUrl = body.logoDataUrl;
+      const detected = detectFileBytes(bytes, "logo");
+      if (!detected || !["image/png", "image/jpeg", "image/webp"].includes(detected.mime)) {
+        throw new ApiError("Logo must be a PNG, JPEG or WebP image.", 400);
+      }
+      state.logoDataUrl = `data:${detected.mime};base64,${m[2]}`;
       state.workspace.has_logo = true;
     }
     state.workspace.brand_color = brandColor;
@@ -2326,7 +2571,7 @@ export async function demoApiJson<T>(url: string, init?: RequestInit): Promise<T
       backend?: string;
       from?: string;
       replyTo?: string;
-      smtp?: { host?: string; port?: number; secure?: boolean; user?: string; pass?: string };
+      smtp?: { host?: string; port?: number; secure?: boolean; user?: string; pass?: string; clearPass?: boolean };
       resend?: { apiKey?: string };
     }>(init);
     const backend = body.backend;
@@ -2335,22 +2580,40 @@ export async function demoApiJson<T>(url: string, init?: RequestInit): Promise<T
     }
     const from = String(body.from || "").trim();
     const replyTo = String(body.replyTo || "").trim();
-    if (backend !== "console" && !from) {
+    if (/[\r\n]/.test(from) || /[\r\n]/.test(replyTo)) {
+      throw new ApiError("Email headers cannot contain line breaks.", 400);
+    }
+    const fromAddr = from.replace(/^[^<>]*<([^<>]+)>$/, "$1").trim();
+    if (backend !== "console" && (!from || !validateTextValue("email", fromAddr).valid)) {
       throw new ApiError("Enter a valid sender email (e.g. Practice <hello@domain.com>).", 400);
+    }
+    if (backend === "console" && from && !validateTextValue("email", fromAddr).valid) {
+      throw new ApiError("Sender email format is invalid.", 400);
+    }
+    if (replyTo && !validateTextValue("email", replyTo.replace(/^[^<>]*<([^<>]+)>$/, "$1").trim()).valid) {
+      throw new ApiError("Reply-to address is invalid.", 400);
     }
     if (backend === "smtp") {
       const host = String(body.smtp?.host || "").trim();
       const port = Number(body.smtp?.port ?? 587);
+      const user = String(body.smtp?.user || "").trim();
       if (!host || /\s/.test(host)) throw new ApiError("Enter a valid SMTP host.", 400);
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
         throw new ApiError("SMTP port must be between 1 and 65535.", 400);
       }
+      const sameIdentity =
+        state.email.smtp.host === host &&
+        state.email.smtp.port === port &&
+        state.email.smtp.user === user;
+      const clearPass = body.smtp?.clearPass === true;
       state.email.smtp = {
         host,
         port,
         secure: Boolean(body.smtp?.secure),
-        user: String(body.smtp?.user || "").trim(),
-        hasPass: Boolean(body.smtp?.pass) || state.email.smtp.hasPass,
+        user,
+        hasPass: clearPass
+          ? false
+          : Boolean(body.smtp?.pass) || (sameIdentity && state.email.smtp.hasPass),
       };
     } else if (backend === "resend") {
       const apiKey = String(body.resend?.apiKey || "").trim();
@@ -2361,7 +2624,7 @@ export async function demoApiJson<T>(url: string, init?: RequestInit): Promise<T
     }
     state.email.source = "workspace";
     state.email.backend = backend;
-    if (from) state.email.from = from;
+    state.email.from = from || "Harbour Advisory <noreply@harbouradvisory.example.com.au>";
     state.email.replyTo = replyTo;
     return { ok: true, email: { ...state.email } } as T;
   }
@@ -2444,6 +2707,7 @@ export async function demoApiJson<T>(url: string, init?: RequestInit): Promise<T
     const { requests, outbox } = makeSeedRequestsAndOutbox(Date.now(), state.templates, state.blobs);
     state.requests.push(...requests);
     state.outbox.push(...outbox);
+    state.outbox.sort((a, b) => b.created_at.localeCompare(a.created_at));
     state.otpVerifiedRequestIds.delete("req_demo_tax");
     return { ok: true, seeded: true } as T;
   }
@@ -2521,6 +2785,9 @@ export async function demoApiUpload<T>(url: string, formData: FormData): Promise
     const uploadId = nextId("upl");
     const blob = new Blob([bytes], { type: detected.mime });
     state.blobs.set(uploadId, blob);
+    if (bytes.byteLength <= 256 * 1024) {
+      uploadedBlobData.set(uploadId, { type: detected.mime, b64: bytesToBase64(bytes) });
+    }
 
     const uploadRow: UploadDto = {
       id: uploadId,
@@ -2541,6 +2808,7 @@ export async function demoApiUpload<T>(url: string, formData: FormData): Promise
   item.updated_at = nowIso;
   recomputeRequestStatus(req, nowIso);
   logAudit(req, "client", "item.files_uploaded", { itemId: item.id, count: rawFiles.length });
+  persistDemoState();
 
   return {
     ok: true,
@@ -2602,6 +2870,8 @@ export function demoDownloadExport(requestId: string): void {
             ? maskSensitiveValue(it.validator, it.rawValue)
             : it.rawValue
           : null,
+      client_na: it.client_na,
+      client_note: it.client_note,
       files: it.uploads.map((u) => ({
         canonical_name: u.canonical_name,
         sha256: u.sha256,

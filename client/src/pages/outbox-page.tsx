@@ -10,9 +10,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   apiJson,
   formatRelativeTime,
+  IS_DEMO,
   type OutboxEmailDto,
   type SessionResponse,
 } from "@/lib/api";
+
+function demoPortalPath(url: string): string {
+  const hashIdx = url.indexOf("#/c/");
+  if (hashIdx >= 0) return url.slice(hashIdx + 1);
+  const pathIdx = url.indexOf("/c/");
+  return pathIdx >= 0 ? url.slice(pathIdx) : "/";
+}
 
 function extractMagicUrl(text: string): string | null {
   const m = text.match(/https?:\/\/[^\s]+\/c\/[A-Za-z0-9_-]+/);
@@ -52,12 +60,13 @@ export function OutboxPage({
           prev && res.emails.some((m) => m.id === prev) ? prev : res.emails[0].id
         );
       }
+      void onSessionRefresh();
     } catch {
       toast.error("Failed to load Local Email Outbox.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onSessionRefresh]);
 
   useEffect(() => {
     loadOutbox();
@@ -109,7 +118,7 @@ export function OutboxPage({
           </Card>
         ) : (
           <div className="grid gap-4 lg:grid-cols-12">
-            <Card className="paper-shadow gap-0 overflow-hidden py-0 lg:col-span-5">
+            <Card className="paper-shadow gap-0 overflow-hidden py-0 lg:col-span-5 lg:self-start">
               <div className="max-h-[560px] divide-y divide-border overflow-y-auto">
                 {outbox.map((msg) => {
                   const active = activeEmail?.id === msg.id;
@@ -160,10 +169,17 @@ export function OutboxPage({
                       )}
                       {activeMagicUrl && (
                         <Button asChild size="sm">
-                          <a href={activeMagicUrl} target="_blank" rel="noopener noreferrer">
-                            Open magic link
-                            <ArrowSquareOut className="ml-1.5 size-3.5" />
-                          </a>
+                          {IS_DEMO ? (
+                            <Link to={demoPortalPath(activeMagicUrl)}>
+                              Open magic link
+                              <ArrowSquareOut className="ml-1.5 size-3.5" />
+                            </Link>
+                          ) : (
+                            <a href={activeMagicUrl} target="_blank" rel="noopener noreferrer">
+                              Open magic link
+                              <ArrowSquareOut className="ml-1.5 size-3.5" />
+                            </a>
+                          )}
                         </Button>
                       )}
                     </div>

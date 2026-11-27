@@ -80,7 +80,7 @@ export const euPack: ValidatorPack = {
     eu_vat: {
       label: "EU VAT Number (country format + checksum)",
       short: "EU VAT",
-      hint: "DE123456789 or FR40303265045",
+      hint: "DE123456788 or FR40303265045",
       validate: validateEuVat,
     },
   },

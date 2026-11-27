@@ -78,6 +78,7 @@ export function TextField({
 
   const common = {
     value,
+    "aria-labelledby": `label-${item.id}`,
     "aria-describedby": hintId,
     "aria-invalid": state === "error" || undefined,
     onChange: (e: { target: { value: string } }) => {

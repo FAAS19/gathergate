@@ -10,7 +10,11 @@ import { createApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 import { openDatabase } from "../src/db/client.js";
 
-async function bootApp(options?: { multiTenant?: boolean; fetchImpl?: typeof fetch }) {
+async function bootApp(options?: {
+  multiTenant?: boolean;
+  fetchImpl?: typeof fetch;
+  envOverrides?: Record<string, string>;
+}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gathergate-settings-"));
   const config = loadConfig({
     NODE_ENV: "test",
@@ -20,6 +24,7 @@ async function bootApp(options?: { multiTenant?: boolean; fetchImpl?: typeof fet
     EMAIL_BACKEND: "console",
     STORAGE_BACKEND: "local",
     MULTI_TENANT: options?.multiTenant ? "true" : "false",
+    ...options?.envOverrides,
   });
   const db = openDatabase(path.join(tmpDir, "test.sqlite"));
   const email = new MemoryEmailAdapter();
@@ -121,7 +126,21 @@ test("Workspace email config: encrypts secrets, hides them on GET, preserves omi
     assert.equal(settingsJson.readiness.emailBackend, "smtp");
     assert.equal(settingsJson.readiness.emailFrom, "Harbour Advisory <portal@harbour.test>");
 
-    // 4. Updating SMTP host without re-sending password preserves existing password
+    // 4. Updating secure/from on the same SMTP identity preserves password; changing host clears it
+    const updateSameHost = await ctx.json("PUT", "/api/settings/email", {
+      backend: "smtp",
+      from: "Harbour Advisory <billing@harbour.test>",
+      smtp: {
+        host: "smtp.gmail.com",
+        port: 465,
+        secure: false,
+        user: "portal@harbour.test",
+      },
+    });
+    assert.equal(updateSameHost.status, 200);
+    const sameHostBody = (await updateSameHost.json()) as { email: { smtp: { hasPass: boolean } } };
+    assert.equal(sameHostBody.email.smtp.hasPass, true);
+
     const updateHost = await ctx.json("PUT", "/api/settings/email", {
       backend: "smtp",
       from: "Harbour Advisory <portal@harbour.test>",
@@ -135,7 +154,7 @@ test("Workspace email config: encrypts secrets, hides them on GET, preserves omi
     assert.equal(updateHost.status, 200);
     const afterUpdate = (await updateHost.json()) as { email: { smtp: { host: string; hasPass: boolean } } };
     assert.equal(afterUpdate.email.smtp.host, "smtp.fastmail.com");
-    assert.equal(afterUpdate.email.smtp.hasPass, true);
+    assert.equal(afterUpdate.email.smtp.hasPass, false);
 
     // 5. Rejects CRLF header injection and invalid ports
     const crlf = await ctx.json("PUT", "/api/settings/email", {
@@ -284,6 +303,71 @@ test("Account profile and password change: validates input, updates profile, rev
       body: JSON.stringify({ email: "sarah@harbour.test", password: "brand-new-secure-password" }),
     });
     assert.equal(relogin.status, 200);
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("Multi-tenant email isolation: hides host env SMTP secrets, blocks secret inheritance, and enforces public SMTP host/port", async () => {
+  const ctx = await bootApp({
+    multiTenant: true,
+    envOverrides: {
+      EMAIL_BACKEND: "smtp",
+      SMTP_HOST: "smtp.host.internal",
+      SMTP_PORT: "587",
+      SMTP_USER: "host-mailer",
+      SMTP_PASS: "host-super-secret",
+      SMTP_FROM: "Platform <platform@host.test>",
+      RESEND_API_KEY: "re_host_secret_key",
+    },
+  });
+  try {
+    const getRes = await ctx.json("GET", "/api/settings");
+    assert.equal(getRes.status, 200);
+    const getJson = (await getRes.json()) as {
+      email: {
+        source: string;
+        smtp: { host: string; user: string; hasPass: boolean };
+        resend: { hasApiKey: boolean };
+      };
+    };
+    assert.equal(getJson.email.smtp.host, "");
+    assert.equal(getJson.email.smtp.user, "");
+    assert.equal(getJson.email.smtp.hasPass, false);
+    assert.equal(getJson.email.resend.hasApiKey, false);
+
+    // Rejects private/loopback/single-label SMTP hosts and non-standard ports
+    for (const [host, port] of [
+      ["127.0.0.1", 587],
+      ["localhost", 587],
+      ["redis", 587],
+      ["smtp.example.com", 8080],
+    ] as const) {
+      const bad = await ctx.json("PUT", "/api/settings/email", {
+        backend: "smtp",
+        from: "Tenant <mail@tenant.example.com>",
+        smtp: { host, port, secure: false, user: "u", pass: "p" },
+      });
+      assert.equal(bad.status, 400, `Expected 400 for multi-tenant SMTP ${host}:${port}`);
+    }
+
+    // Saving public SMTP without pass never inherits host SMTP_PASS
+    const okSave = await ctx.json("PUT", "/api/settings/email", {
+      backend: "smtp",
+      from: "Tenant <mail@tenant.example.com>",
+      smtp: { host: "smtp.example.com", port: 587, secure: false, user: "tenant-user" },
+    });
+    assert.equal(okSave.status, 200);
+    const okBody = (await okSave.json()) as { email: { smtp: { hasPass: boolean; host: string } } };
+    assert.equal(okBody.email.smtp.host, "smtp.example.com");
+    assert.equal(okBody.email.smtp.hasPass, false);
+
+    // Switching to Resend without apiKey never inherits host RESEND_API_KEY
+    const noResendInherit = await ctx.json("PUT", "/api/settings/email", {
+      backend: "resend",
+      from: "Tenant <mail@tenant.example.com>",
+    });
+    assert.equal(noResendInherit.status, 400);
   } finally {
     ctx.cleanup();
   }

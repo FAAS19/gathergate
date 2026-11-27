@@ -61,8 +61,9 @@ class ResendEmailAdapter implements EmailAdapter {
       headers: {
         authorization: `Bearer ${this.apiKey}`,
         "content-type": "application/json",
-        "user-agent": "GatherGate/0.1 (TensorForge; contact@tensorforge.dev)",
+        "user-agent": "GatherGate/1.0 (TensorForge; contact@tensorforge.dev)",
       },
+      signal: AbortSignal.timeout(10_000),
       body: JSON.stringify({
         from: this.from,
         to: [msg.to],
@@ -90,6 +91,9 @@ class SmtpEmailAdapter implements EmailAdapter {
       port: smtp.port,
       secure: smtp.secure,
       auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
+      connectionTimeout: 8_000,
+      greetingTimeout: 8_000,
+      socketTimeout: 10_000,
     });
   }
 

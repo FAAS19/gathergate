@@ -3,6 +3,21 @@ import { encryptField, generateId, generateMagicToken, sha256Hex } from "../secu
 import { BUILTIN_TEMPLATES, type ItemKind, type TemplateItemSpec } from "../templates/presets.js";
 import type { ValidatorKey } from "../validators/index.js";
 
+export class SetupAlreadyCompletedError extends Error {
+  constructor() {
+    super("Setup has already been completed.");
+  }
+}
+
+export class ClientWriteConflictError extends Error {
+  constructor(
+    message: string,
+    public readonly statusCode: 403 | 404 | 409
+  ) {
+    super(message);
+  }
+}
+
 export interface WorkspaceRow {
   id: string;
   name: string;
@@ -169,11 +184,66 @@ export function addDaysIso(fromIso: string, days: number): string {
 }
 
 export class Store {
+  private txDepth = 0;
+
   constructor(private readonly db: DatabaseSync) {}
+
+  private inTransaction<T>(fn: () => T): T {
+    if (this.txDepth > 0) return fn();
+    this.db.exec("BEGIN IMMEDIATE");
+    this.txDepth += 1;
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (err) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // Ignore rollback error if transaction already aborted
+      }
+      throw err;
+    } finally {
+      this.txDepth -= 1;
+    }
+  }
+
+  private assertClientWriteOpenAndUnlocked(requestId: string, itemId: string): RequestItemRow {
+    const req = this.db.prepare("SELECT status FROM requests WHERE id = ?").get(requestId) as
+      | { status: string }
+      | undefined;
+    if (!req || req.status === "purged" || req.status === "completed" || req.status === "expired") {
+      throw new ClientWriteConflictError("Checklist is closed.", 403);
+    }
+    const item = this.getRequestItem(requestId, itemId);
+    if (!item) {
+      throw new ClientWriteConflictError("Item not found", 404);
+    }
+    if (item.status === "approved") {
+      throw new ClientWriteConflictError("Approved items are locked and cannot be modified.", 409);
+    }
+    return item;
+  }
 
   countUsers(): number {
     const row = this.db.prepare("SELECT COUNT(*) as c FROM users").get() as { c: number };
     return Number(row.c);
+  }
+
+  createInitialWorkspaceWithUser(params: {
+    workspaceName: string;
+    email: string;
+    passwordHash: string;
+    plan: "self_hosted" | "free" | "pro";
+    maxActiveRequests: number;
+    maxStorageBytes: number;
+  }): { workspace: WorkspaceRow; user: UserRow } {
+    return this.inTransaction(() => {
+      if (this.countUsers() > 0) {
+        throw new SetupAlreadyCompletedError();
+      }
+      return this.createWorkspaceWithUser(params);
+    });
   }
 
   createWorkspaceWithUser(params: {
@@ -184,38 +254,40 @@ export class Store {
     maxActiveRequests: number;
     maxStorageBytes: number;
   }): { workspace: WorkspaceRow; user: UserRow } {
-    const now = new Date().toISOString();
-    const wsId = generateId("ws");
-    const slug = `${slugify(params.workspaceName, "workspace")}-${wsId.slice(-4).toLowerCase()}`;
-    const userId = generateId("usr");
+    return this.inTransaction(() => {
+      const now = new Date().toISOString();
+      const wsId = generateId("ws");
+      const slug = `${slugify(params.workspaceName, "workspace")}-${wsId.slice(-4).toLowerCase()}`;
+      const userId = generateId("usr");
 
-    this.db
-      .prepare(
-        `INSERT INTO workspaces (id, name, slug, plan, max_active_requests, max_storage_bytes, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        wsId,
-        params.workspaceName.trim(),
-        slug,
-        params.plan,
-        params.maxActiveRequests,
-        params.maxStorageBytes,
-        now
-      );
+      this.db
+        .prepare(
+          `INSERT INTO workspaces (id, name, slug, plan, max_active_requests, max_storage_bytes, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          wsId,
+          params.workspaceName.trim(),
+          slug,
+          params.plan,
+          params.maxActiveRequests,
+          params.maxStorageBytes,
+          now
+        );
 
-    this.db
-      .prepare(
-        `INSERT INTO users (id, workspace_id, email, password_hash, created_at)
-         VALUES (?, ?, ?, ?, ?)`
-      )
-      .run(userId, wsId, params.email.trim().toLowerCase(), params.passwordHash, now);
+      this.db
+        .prepare(
+          `INSERT INTO users (id, workspace_id, email, password_hash, created_at)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+        .run(userId, wsId, params.email.trim().toLowerCase(), params.passwordHash, now);
 
-    this.seedBuiltinTemplates(wsId);
+      this.seedBuiltinTemplates(wsId);
 
-    const workspace = this.getWorkspaceById(wsId)!;
-    const user = this.getUserById(userId)!;
-    return { workspace, user };
+      const workspace = this.getWorkspaceById(wsId)!;
+      const user = this.getUserById(userId)!;
+      return { workspace, user };
+    });
   }
 
   seedBuiltinTemplates(workspaceId: string): void {
@@ -459,84 +531,86 @@ export class Store {
     remindersSent?: number;
     lastOpenedAt?: string | null;
   }): { request: RequestRow; magicToken: string } {
-    const id = generateId("req");
-    const magicToken = generateMagicToken();
-    const now = new Date().toISOString();
-    const remindersSent = params.remindersSent ?? 0;
-    const nextReminderAt =
-      remindersSent < params.maxReminders && params.reminderIntervalDays > 0
-        ? addDaysIso(now, params.reminderIntervalDays)
-        : null;
+    return this.inTransaction(() => {
+      const id = generateId("req");
+      const magicToken = generateMagicToken();
+      const now = new Date().toISOString();
+      const remindersSent = params.remindersSent ?? 0;
+      const nextReminderAt =
+        remindersSent < params.maxReminders && params.reminderIntervalDays > 0
+          ? addDaysIso(now, params.reminderIntervalDays)
+          : null;
 
-    this.db
-      .prepare(
-        `INSERT INTO requests (
-           id, workspace_id, template_id, title, client_name, client_email,
-           token_hash, token_encrypted, require_otp, status,
-           reminder_interval_days, max_reminders, reminders_sent, reminders_paused,
-           next_reminder_at, purge_after_days, is_demo, due_at, client_subject,
-           welcome_note, last_opened_at, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        id,
-        params.workspaceId,
-        params.templateId,
-        params.title.trim(),
-        params.clientName.trim(),
-        params.clientEmail.trim().toLowerCase(),
-        sha256Hex(magicToken),
-        encryptField(params.masterKey, magicToken, id),
-        params.requireOtp ? 1 : 0,
-        params.reminderIntervalDays,
-        params.maxReminders,
-        remindersSent,
-        nextReminderAt,
-        params.purgeAfterDays,
-        params.isDemo ? 1 : 0,
-        params.dueAt || null,
-        params.clientSubject?.trim() || null,
-        params.welcomeNote?.trim() || null,
-        params.lastOpenedAt || null,
-        now
+      this.db
+        .prepare(
+          `INSERT INTO requests (
+             id, workspace_id, template_id, title, client_name, client_email,
+             token_hash, token_encrypted, require_otp, status,
+             reminder_interval_days, max_reminders, reminders_sent, reminders_paused,
+             next_reminder_at, purge_after_days, is_demo, due_at, client_subject,
+             welcome_note, last_opened_at, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          id,
+          params.workspaceId,
+          params.templateId,
+          params.title.trim(),
+          params.clientName.trim(),
+          params.clientEmail.trim().toLowerCase(),
+          sha256Hex(magicToken),
+          encryptField(params.masterKey, magicToken, id),
+          params.requireOtp ? 1 : 0,
+          params.reminderIntervalDays,
+          params.maxReminders,
+          remindersSent,
+          nextReminderAt,
+          params.purgeAfterDays,
+          params.isDemo ? 1 : 0,
+          params.dueAt || null,
+          params.clientSubject?.trim() || null,
+          params.welcomeNote?.trim() || null,
+          params.lastOpenedAt || null,
+          now
+        );
+
+      const itemStmt = this.db.prepare(
+        `INSERT INTO request_items (
+           id, request_id, position, section, label, help_text, kind,
+           required, validator, config_json, status, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
       );
 
-    const itemStmt = this.db.prepare(
-      `INSERT INTO request_items (
-         id, request_id, position, section, label, help_text, kind,
-         required, validator, config_json, status, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`
-    );
+      params.items.forEach((item, idx) => {
+        itemStmt.run(
+          generateId("itm"),
+          id,
+          idx,
+          item.section || "General",
+          item.label,
+          item.helpText || "",
+          item.kind,
+          item.required ? 1 : 0,
+          item.validator || "none",
+          JSON.stringify({
+            allowedGroups: item.allowedGroups,
+            maxFileMb: item.maxFileMb ?? 20,
+            multiple: item.multiple ?? false,
+            slug: item.slug || slugify(item.label, `item-${idx + 1}`),
+          }),
+          now
+        );
+      });
 
-    params.items.forEach((item, idx) => {
-      itemStmt.run(
-        generateId("itm"),
-        id,
-        idx,
-        item.section || "General",
-        item.label,
-        item.helpText || "",
-        item.kind,
-        item.required ? 1 : 0,
-        item.validator || "none",
-        JSON.stringify({
-          allowedGroups: item.allowedGroups,
-          maxFileMb: item.maxFileMb ?? 20,
-          multiple: item.multiple ?? false,
-          slug: item.slug || slugify(item.label, `item-${idx + 1}`),
-        }),
-        now
-      );
+      this.logAudit(params.workspaceId, id, "operator", "request.created", {
+        clientEmail: params.clientEmail.trim().toLowerCase(),
+        itemCount: params.items.length,
+        requireOtp: params.requireOtp,
+        isDemo: Boolean(params.isDemo),
+      });
+
+      return { request: this.getRequestById(params.workspaceId, id)!, magicToken };
     });
-
-    this.logAudit(params.workspaceId, id, "operator", "request.created", {
-      clientEmail: params.clientEmail.trim().toLowerCase(),
-      itemCount: params.items.length,
-      requireOtp: params.requireOtp,
-      isDemo: Boolean(params.isDemo),
-    });
-
-    return { request: this.getRequestById(params.workspaceId, id)!, magicToken };
   }
 
   listRequests(
@@ -632,50 +706,70 @@ export class Store {
     return Number(row.c);
   }
 
+  nextUploadSeqForItem(itemId: string): number {
+    const rows = this.db
+      .prepare("SELECT canonical_name FROM uploads WHERE request_item_id = ? AND purged_at IS NULL")
+      .all(itemId) as Array<{ canonical_name: string }>;
+    let maxSeq = rows.length;
+    for (const r of rows) {
+      const m = r.canonical_name.match(/_(\d+)\.[^.]+$/);
+      if (m) {
+        const n = Number(m[1]);
+        if (Number.isFinite(n) && n > maxSeq) maxSeq = n;
+      }
+    }
+    return maxSeq + 1;
+  }
+
   saveTextOrCheckboxSubmission(itemId: string, requestId: string, encryptedValue: string): void {
-    const now = new Date().toISOString();
-    this.db
-      .prepare(
-        `UPDATE request_items
-         SET value_encrypted = ?, status = 'submitted', review_note = NULL, client_na = 0, updated_at = ?
-         WHERE id = ? AND request_id = ?`
-      )
-      .run(encryptedValue, now, itemId, requestId);
-    this.recomputeRequestStatus(requestId);
+    this.inTransaction(() => {
+      this.assertClientWriteOpenAndUnlocked(requestId, itemId);
+      const now = new Date().toISOString();
+      this.db
+        .prepare(
+          `UPDATE request_items
+           SET value_encrypted = ?, status = 'submitted', review_note = NULL, client_na = 0, updated_at = ?
+           WHERE id = ? AND request_id = ?`
+        )
+        .run(encryptedValue, now, itemId, requestId);
+      this.recomputeRequestStatus(requestId);
+    });
   }
 
   /** Client note on an item; notApplicable submits the item for review with the note as reason. */
   setClientNote(itemId: string, requestId: string, noteEncrypted: string | null, notApplicable: boolean): void {
-    const now = new Date().toISOString();
-    if (notApplicable) {
-      this.db
-        .prepare(
-          `UPDATE request_items
-           SET client_note_encrypted = ?, client_na = 1, status = 'submitted', review_note = NULL, updated_at = ?
-           WHERE id = ? AND request_id = ?`
-        )
-        .run(noteEncrypted, now, itemId, requestId);
-    } else {
-      const before = this.getRequestItem(requestId, itemId);
-      this.db
-        .prepare(
-          `UPDATE request_items SET client_note_encrypted = ?, client_na = 0, updated_at = ?
-           WHERE id = ? AND request_id = ?`
-        )
-        .run(noteEncrypted, now, itemId, requestId);
-      // Undoing N/A with nothing else provided returns the item to pending.
-      if (
-        before?.client_na === 1 &&
-        before.status === "submitted" &&
-        !before.value_encrypted &&
-        this.countUploadsForItem(itemId) === 0
-      ) {
+    this.inTransaction(() => {
+      const before = this.assertClientWriteOpenAndUnlocked(requestId, itemId);
+      const now = new Date().toISOString();
+      if (notApplicable) {
         this.db
-          .prepare("UPDATE request_items SET status = 'pending' WHERE id = ? AND request_id = ?")
-          .run(itemId, requestId);
+          .prepare(
+            `UPDATE request_items
+             SET client_note_encrypted = ?, client_na = 1, status = 'submitted', review_note = NULL, updated_at = ?
+             WHERE id = ? AND request_id = ?`
+          )
+          .run(noteEncrypted, now, itemId, requestId);
+      } else {
+        this.db
+          .prepare(
+            `UPDATE request_items SET client_note_encrypted = ?, client_na = 0, updated_at = ?
+             WHERE id = ? AND request_id = ?`
+          )
+          .run(noteEncrypted, now, itemId, requestId);
+        // Undoing N/A with nothing else provided returns the item to pending.
+        if (
+          before.client_na === 1 &&
+          before.status === "submitted" &&
+          !before.value_encrypted &&
+          this.countUploadsForItem(itemId) === 0
+        ) {
+          this.db
+            .prepare("UPDATE request_items SET status = 'pending' WHERE id = ? AND request_id = ?")
+            .run(itemId, requestId);
+        }
       }
-    }
-    this.recomputeRequestStatus(requestId);
+      this.recomputeRequestStatus(requestId);
+    });
   }
 
   getUploadForRequest(requestId: string, uploadId: string): (UploadRow & { request_id: string }) | undefined {
@@ -690,20 +784,42 @@ export class Store {
 
   /** Deletes the upload row; caller deletes the blob. Item falls back to pending when its last file goes. */
   deleteUpload(requestId: string, uploadId: string): { storageKey: string; itemId: string } | null {
-    const upload = this.getUploadForRequest(requestId, uploadId);
-    if (!upload) return null;
-    this.db.prepare("DELETE FROM uploads WHERE id = ?").run(uploadId);
-    const item = this.getRequestItem(requestId, upload.request_item_id);
-    if (item && item.status === "submitted" && item.client_na === 0 && this.countUploadsForItem(item.id) === 0) {
-      this.db
-        .prepare("UPDATE request_items SET status = 'pending', updated_at = ? WHERE id = ?")
-        .run(new Date().toISOString(), item.id);
-    }
-    this.recomputeRequestStatus(requestId);
-    return { storageKey: upload.storage_key, itemId: upload.request_item_id };
+    return this.inTransaction(() => {
+      const upload = this.getUploadForRequest(requestId, uploadId);
+      if (!upload) return null;
+      this.assertClientWriteOpenAndUnlocked(requestId, upload.request_item_id);
+      this.db.prepare("DELETE FROM uploads WHERE id = ?").run(uploadId);
+      const item = this.getRequestItem(requestId, upload.request_item_id);
+      if (item && item.status === "submitted" && item.client_na === 0 && this.countUploadsForItem(item.id) === 0) {
+        this.db
+          .prepare("UPDATE request_items SET status = 'pending', updated_at = ? WHERE id = ?")
+          .run(new Date().toISOString(), item.id);
+      }
+      this.recomputeRequestStatus(requestId);
+      return { storageKey: upload.storage_key, itemId: upload.request_item_id };
+    });
+  }
+
+  deleteOtherUploadsForItem(requestId: string, itemId: string, keepUploadId: string): string[] {
+    return this.inTransaction(() => {
+      const rows = this.db
+        .prepare(
+          `SELECT u.id, u.storage_key FROM uploads u
+           JOIN request_items ri ON ri.id = u.request_item_id
+           WHERE u.request_item_id = ? AND ri.request_id = ? AND u.id != ? AND u.purged_at IS NULL`
+        )
+        .all(itemId, requestId, keepUploadId) as Array<{ id: string; storage_key: string }>;
+      if (rows.length === 0) return [];
+      const del = this.db.prepare("DELETE FROM uploads WHERE id = ?");
+      for (const row of rows) {
+        del.run(row.id);
+      }
+      return rows.map((r) => r.storage_key);
+    });
   }
 
   addUpload(params: {
+    id?: string;
     itemId: string;
     requestId: string;
     originalName: string;
@@ -717,41 +833,44 @@ export class Store {
     saltHex: string;
     sha256Hex: string;
   }): UploadRow {
-    const id = generateId("upl");
-    const now = new Date().toISOString();
-    this.db
-      .prepare(
-        `INSERT INTO uploads (
-           id, request_item_id, original_name, canonical_name, detected_mime,
-           size_bytes, storage_key, enc_version, enc_iv, enc_tag, enc_salt, sha256, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        id,
-        params.itemId,
-        params.originalName,
-        params.canonicalName,
-        params.detectedMime,
-        params.sizeBytes,
-        params.storageKey,
-        params.encVersion ?? "v1",
-        params.ivHex,
-        params.tagHex,
-        params.saltHex,
-        params.sha256Hex,
-        now
-      );
+    return this.inTransaction(() => {
+      this.assertClientWriteOpenAndUnlocked(params.requestId, params.itemId);
+      const id = params.id ?? generateId("upl");
+      const now = new Date().toISOString();
+      this.db
+        .prepare(
+          `INSERT INTO uploads (
+             id, request_item_id, original_name, canonical_name, detected_mime,
+             size_bytes, storage_key, enc_version, enc_iv, enc_tag, enc_salt, sha256, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          id,
+          params.itemId,
+          params.originalName,
+          params.canonicalName,
+          params.detectedMime,
+          params.sizeBytes,
+          params.storageKey,
+          params.encVersion ?? "v1",
+          params.ivHex,
+          params.tagHex,
+          params.saltHex,
+          params.sha256Hex,
+          now
+        );
 
-    this.db
-      .prepare(
-        `UPDATE request_items
-         SET status = 'submitted', review_note = NULL, client_na = 0, updated_at = ?
-         WHERE id = ? AND request_id = ?`
-      )
-      .run(now, params.itemId, params.requestId);
+      this.db
+        .prepare(
+          `UPDATE request_items
+           SET status = 'submitted', review_note = NULL, client_na = 0, updated_at = ?
+           WHERE id = ? AND request_id = ?`
+        )
+        .run(now, params.itemId, params.requestId);
 
-    this.recomputeRequestStatus(params.requestId);
-    return this.db.prepare("SELECT * FROM uploads WHERE id = ?").get(id) as unknown as UploadRow;
+      this.recomputeRequestStatus(params.requestId);
+      return this.db.prepare("SELECT * FROM uploads WHERE id = ?").get(id) as unknown as UploadRow;
+    });
   }
 
   reviewItem(params: {
@@ -761,65 +880,86 @@ export class Store {
     decision: "approved" | "rejected";
     note?: string;
   }): { justCompleted: boolean; request: RequestRow } {
-    const now = new Date().toISOString();
-    const before = this.getRequestById(params.workspaceId, params.requestId);
-    if (!before) throw new Error("Request not found");
+    return this.inTransaction(() => {
+      const now = new Date().toISOString();
+      const before = this.getRequestById(params.workspaceId, params.requestId);
+      if (!before) throw new Error("Request not found");
+      const targetItem = this.getRequestItem(params.requestId, params.itemId);
+      if (!targetItem) throw new Error("Item not found");
 
-    this.db
-      .prepare(
-        `UPDATE request_items
-         SET status = ?, review_note = ?, updated_at = ?
-         WHERE id = ? AND request_id = ?`
-      )
-      .run(
-        params.decision,
-        params.decision === "rejected" ? (params.note || "Please review and re-upload.").trim() : null,
-        now,
-        params.itemId,
-        params.requestId
-      );
+      if (params.decision === "rejected" && targetItem.kind === "checkbox") {
+        this.db
+          .prepare(
+            `UPDATE request_items
+             SET status = 'rejected', review_note = ?, value_encrypted = NULL, updated_at = ?
+             WHERE id = ? AND request_id = ?`
+          )
+          .run(
+            (params.note || "Please review and confirm.").trim(),
+            now,
+            params.itemId,
+            params.requestId
+          );
+      } else {
+        this.db
+          .prepare(
+            `UPDATE request_items
+             SET status = ?, review_note = ?, updated_at = ?
+             WHERE id = ? AND request_id = ?`
+          )
+          .run(
+            params.decision,
+            params.decision === "rejected" ? (params.note || "Please review and re-upload.").trim() : null,
+            now,
+            params.itemId,
+            params.requestId
+          );
+      }
 
-    this.logAudit(params.workspaceId, params.requestId, "operator", `item.${params.decision}`, {
-      itemId: params.itemId,
-      note: params.decision === "rejected" ? params.note || "" : undefined,
+      this.logAudit(params.workspaceId, params.requestId, "operator", `item.${params.decision}`, {
+        itemId: params.itemId,
+        note: params.decision === "rejected" ? params.note || "" : undefined,
+      });
+
+      const after = this.recomputeRequestStatus(params.requestId);
+      return {
+        justCompleted: before.status !== "completed" && after.status === "completed",
+        request: after,
+      };
     });
-
-    const after = this.recomputeRequestStatus(params.requestId);
-    return {
-      justCompleted: before.status !== "completed" && after.status === "completed",
-      request: after,
-    };
   }
 
   approveAllSubmitted(
     workspaceId: string,
     requestId: string
   ): { approvedCount: number; justCompleted: boolean; request: RequestRow } {
-    const now = new Date().toISOString();
-    const before = this.getRequestById(workspaceId, requestId);
-    if (!before) throw new Error("Request not found");
+    return this.inTransaction(() => {
+      const now = new Date().toISOString();
+      const before = this.getRequestById(workspaceId, requestId);
+      if (!before) throw new Error("Request not found");
 
-    const info = this.db
-      .prepare(
-        `UPDATE request_items
-         SET status = 'approved', review_note = NULL, updated_at = ?
-         WHERE request_id = ? AND status = 'submitted'`
-      )
-      .run(now, requestId);
+      const info = this.db
+        .prepare(
+          `UPDATE request_items
+           SET status = 'approved', review_note = NULL, updated_at = ?
+           WHERE request_id = ? AND status = 'submitted'`
+        )
+        .run(now, requestId);
 
-    const approvedCount = Number(info.changes ?? 0);
-    if (approvedCount > 0) {
-      this.logAudit(workspaceId, requestId, "operator", "request.approved_all_submitted", {
-        count: approvedCount,
-      });
-    }
+      const approvedCount = Number(info.changes ?? 0);
+      if (approvedCount > 0) {
+        this.logAudit(workspaceId, requestId, "operator", "request.approved_all_submitted", {
+          count: approvedCount,
+        });
+      }
 
-    const after = this.recomputeRequestStatus(requestId);
-    return {
-      approvedCount,
-      justCompleted: before.status !== "completed" && after.status === "completed",
-      request: after,
-    };
+      const after = this.recomputeRequestStatus(requestId);
+      return {
+        approvedCount,
+        justCompleted: before.status !== "completed" && after.status === "completed",
+        request: after,
+      };
+    });
   }
 
   recomputeRequestStatus(requestId: string): RequestRow {
@@ -834,11 +974,12 @@ export class Store {
       checkSet.length > 0 &&
       checkSet.every((i) => i.status === "submitted" || i.status === "approved");
     const hasRejected = items.some((i) => i.status === "rejected");
+    const hasSubmitted = items.some((i) => i.status === "submitted");
 
     const now = new Date().toISOString();
-    if (allApproved) {
+    if (allApproved && !hasRejected && !hasSubmitted) {
       const completedAt = req.completed_at || now;
-      const purgeAt = req.purge_at || addDaysIso(completedAt, req.purge_after_days);
+      const purgeAt = addDaysIso(completedAt, req.purge_after_days);
       this.db
         .prepare(
           `UPDATE requests
@@ -848,7 +989,9 @@ export class Store {
         .run(completedAt, purgeAt, requestId);
     } else if (allSubmittedOrApproved && !hasRejected) {
       this.db
-        .prepare("UPDATE requests SET status = 'in_review', next_reminder_at = NULL WHERE id = ?")
+        .prepare(
+          "UPDATE requests SET status = 'in_review', completed_at = NULL, purge_at = NULL, next_reminder_at = NULL WHERE id = ?"
+        )
         .run(requestId);
     } else {
       const nextReminder =
@@ -858,7 +1001,7 @@ export class Store {
           : null);
       this.db
         .prepare(
-          "UPDATE requests SET status = 'open', completed_at = NULL, next_reminder_at = ? WHERE id = ?"
+          "UPDATE requests SET status = 'open', completed_at = NULL, purge_at = NULL, next_reminder_at = ? WHERE id = ?"
         )
         .run(nextReminder, requestId);
     }
@@ -884,12 +1027,25 @@ export class Store {
       .prepare(
         `SELECT * FROM requests
          WHERE status = 'open'
+           AND is_demo = 0
            AND reminders_paused = 0
            AND reminders_sent < max_reminders
            AND next_reminder_at IS NOT NULL
            AND next_reminder_at <= ?`
       )
       .all(nowIso) as unknown as RequestRow[];
+  }
+
+  deferReminderAfterError(requestId: string, nextReminderIso: string): void {
+    this.db
+      .prepare("UPDATE requests SET next_reminder_at = ? WHERE id = ?")
+      .run(nextReminderIso, requestId);
+  }
+
+  clearNextReminder(requestId: string): void {
+    this.db
+      .prepare("UPDATE requests SET next_reminder_at = NULL WHERE id = ?")
+      .run(requestId);
   }
 
   recordReminderSent(requestId: string, nowIso = new Date().toISOString()): void {
@@ -1022,29 +1178,48 @@ export class Store {
     return this.db
       .prepare(
         `SELECT * FROM requests
-         WHERE status != 'purged'
+         WHERE status IN ('completed', 'expired')
            AND purge_at IS NOT NULL
            AND purge_at <= ?`
       )
       .all(nowIso) as unknown as RequestRow[];
   }
 
-  markRequestPurged(requestId: string, nowIso = new Date().toISOString()): void {
-    const req = this.db.prepare("SELECT * FROM requests WHERE id = ?").get(requestId) as unknown as RequestRow;
+  markUploadPurged(uploadId: string, nowIso = new Date().toISOString()): void {
     this.db
       .prepare(
-        `UPDATE uploads SET purged_at = ?
-         WHERE request_item_id IN (SELECT id FROM request_items WHERE request_id = ?)
-           AND purged_at IS NULL`
+        `UPDATE uploads
+         SET purged_at = ?, original_name = '[purged]', canonical_name = '[purged]', sha256 = ''
+         WHERE id = ? AND purged_at IS NULL`
       )
-      .run(nowIso, requestId);
-    this.db
-      .prepare("UPDATE request_items SET value_encrypted = NULL WHERE request_id = ?")
-      .run(requestId);
-    this.db
-      .prepare("UPDATE requests SET status = 'purged', next_reminder_at = NULL WHERE id = ?")
-      .run(requestId);
-    this.logAudit(req.workspace_id, req.id, "system", "request.purged", { purgedAt: nowIso });
+      .run(nowIso, uploadId);
+  }
+
+  markRequestPurged(requestId: string, nowIso = new Date().toISOString()): void {
+    this.inTransaction(() => {
+      const req = this.db.prepare("SELECT * FROM requests WHERE id = ?").get(requestId) as unknown as RequestRow;
+      this.db
+        .prepare(
+          `UPDATE uploads
+           SET purged_at = ?, original_name = '[purged]', canonical_name = '[purged]', sha256 = ''
+           WHERE request_item_id IN (SELECT id FROM request_items WHERE request_id = ?)`
+        )
+        .run(nowIso, requestId);
+      this.db
+        .prepare(
+          `UPDATE request_items
+           SET value_encrypted = NULL, client_note_encrypted = NULL, review_note = NULL, client_na = 0
+           WHERE request_id = ?`
+        )
+        .run(requestId);
+      this.db.prepare("DELETE FROM outbox_emails WHERE request_id = ?").run(requestId);
+      this.db.prepare("DELETE FROM otp_codes WHERE request_id = ?").run(requestId);
+      this.db.prepare("DELETE FROM client_sessions WHERE request_id = ?").run(requestId);
+      this.db
+        .prepare("UPDATE requests SET status = 'purged', next_reminder_at = NULL, token_encrypted = '' WHERE id = ?")
+        .run(requestId);
+      this.logAudit(req.workspace_id, req.id, "system", "request.purged", { purgedAt: nowIso });
+    });
   }
 
   createOtpCode(requestId: string, codeHash: string, ttlMinutes = 15, nowMs = Date.now()): void {

@@ -8,16 +8,23 @@ export async function runPurgeSweep(params: {
 }): Promise<{ requestsPurged: number; filesDeleted: number }> {
   const nowIso = params.nowIso ?? new Date().toISOString();
   const due = params.store.listPurgeDueRequests(nowIso);
+  let requestsPurged = 0;
   let filesDeleted = 0;
 
   for (const req of due) {
-    const uploads = params.store.listUploadsForRequest(req.id);
-    for (const u of uploads) {
-      await params.storage.delete(u.storage_key);
-      filesDeleted += 1;
+    try {
+      const uploads = params.store.listUploadsForRequest(req.id);
+      for (const u of uploads) {
+        await params.storage.delete(u.storage_key);
+        params.store.markUploadPurged(u.id, nowIso);
+        filesDeleted += 1;
+      }
+      params.store.markRequestPurged(req.id, nowIso);
+      requestsPurged += 1;
+    } catch (err) {
+      console.error(`[GatherGate Cron] purge failed for request ${req.id}:`, err);
     }
-    params.store.markRequestPurged(req.id, nowIso);
   }
 
-  return { requestsPurged: due.length, filesDeleted };
+  return { requestsPurged, filesDeleted };
 }

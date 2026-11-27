@@ -12,7 +12,6 @@ import { createStorageAdapter } from "../dist/adapters/storage.js";
 import { createApp } from "../dist/app.js";
 import { loadConfig } from "../dist/config.js";
 import { openDatabase } from "../dist/db/client.js";
-import { createSamplePdf } from "../dist/jobs/demo.js";
 
 const PORT = Number(process.env.SHOWCASE_PORT || 3093);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
@@ -25,7 +24,7 @@ const STATEMENT_CSV = [
   "Date,Description,Reference,Debit,Credit,Balance",
   "2026-07-02,OPENING BALANCE B/F,Q3-OPEN,,,48210.45",
   "2026-07-07,DIRECT CREDIT CITY OF MELBOURNE INV-1042,CR-88412,,6840.00,55050.45",
-  "2026-07-12,EFTPOS REECE PLUMBING SUPPLIES #219,INV-7731,1485.50,,53564.95",
+  "2026-07-12,EFTPOS BAYSIDE PIPE & TRADE #219,INV-7731,1485.50,,53564.95",
   "2026-07-18,BPAY ATO BAS PAYMENT Q2,ATO-009241,4120.00,,49444.95",
   "2026-07-25,DIRECT CREDIT HARBOURSIDE STRATA INV-1049,CR-89105,,9450.00,58894.95",
   "2026-08-03,EFTPOS BUNNINGS TRADE ACCOUNT,TR-44018,892.35,,58002.60",
@@ -34,15 +33,6 @@ const STATEMENT_CSV = [
   "2026-09-29,BANK SERVICE FEE BUSINESS EVERYDAY,FEE-0926,30.00,,64680.10",
   "2026-09-30,CLOSING BALANCE C/F,Q3-CLOSE,,,64680.10",
 ].join("\n") + "\n";
-
-const BANK_STATEMENT_PDF = createSamplePdf("NAB Business Everyday Account - Q3 Statement", [
-  "Account Holder: Harbourline Plumbing Pty Ltd (ABN 51 824 753 556)",
-  "BSB: 083-170   Account: 4481-9204   Statement Period: 01 Jul 2026 - 30 Sep 2026",
-  "Opening Balance (01 Jul 2026): $48,210.45 AUD",
-  "Total Credits (14 deposits): $84,120.00 AUD",
-  "Total Debits (31 payments): $67,650.35 AUD",
-  "Closing Balance (30 Sep 2026): $64,680.10 AUD",
-]);
 
 const BRAND_MARK_DARK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" fill="none">
   <path fill="#FAFAFA" d="M4 6H12V10H8V22H12V26H4V6ZM28 6H20V10H24V22H20V26H28V6Z"/>
@@ -146,8 +136,8 @@ td { font-size: 13.5px; padding: 13px 8px; border-bottom: 1px solid #EDF1EE; col
   <div>
     <div class="top">
       <div>
-        <div class="vendor">Reece Plumbing Supplies Pty Ltd</div>
-        <div class="meta">ABN 84 004 097 090 · 118 Burwood Hwy, Burwood VIC 3125<br>Trade Desk · (03) 9274 0000 · accounts@reece-trade.example.com.au</div>
+        <div class="vendor">Bayside Pipe &amp; Trade Supplies Pty Ltd</div>
+        <div class="meta">ABN 99 000 000 000 · 42 Example Trade Way, Port Melbourne VIC 3207<br>Trade Desk · (03) 7010 1111 · accounts@bayside-trade.example.com.au</div>
       </div>
       <div class="inv-tag">
         <h1>TAX INVOICE</h1>
@@ -172,7 +162,7 @@ td { font-size: 13.5px; padding: 13px 8px; border-bottom: 1px solid #EDF1EE; col
         <tr><td class="mono">CU-1520</td><td>Kembla Copper Pipe Type B 15mm x 6m</td><td class="num">12</td><td class="num">$48.50</td><td class="num">$582.00</td></tr>
         <tr><td class="mono">PV-9042</td><td>Thermostatic Mixing Valve DN20 AS4032</td><td class="num">2</td><td class="num">$245.00</td><td class="num">$490.00</td></tr>
         <tr><td class="mono">BR-3310</td><td>Brass Compression Elbow 15mm (Trade Pack 20)</td><td class="num">3</td><td class="num">$64.15</td><td class="num">$192.45</td></tr>
-        <tr><td class="mono">FR-0100</td><td>Trade Site Delivery — Melbourne Metro</td><td class="num">1</td><td class="num">$86.00</td><td class="num">$86.00</td></tr>
+        <tr><td class="mono">FR-0100</td><td>Trade Site Delivery - Melbourne Metro</td><td class="num">1</td><td class="num">$86.00</td><td class="num">$86.00</td></tr>
       </tbody>
     </table>
     <div class="totals">
@@ -330,7 +320,7 @@ async function captureInteractiveDemoFrames(browser, { basToken, basRequestId, i
   };
 
   // Part A: Client Portal (0 of 5 done -> inline ABN mod-89 error -> fix -> encrypted upload)
-  const portalUrl = "portal.harbouradvisory.com.au/c/q3-bas";
+  const portalUrl = "portal.harbour.example.com.au/c/q3-bas";
   const clientCtx = await browser.newContext({ viewport: { width: 1200, height: 720 }, deviceScaleFactor: 2 });
   const clientPage = await clientCtx.newPage();
   await clientPage.goto(`${BASE_URL}/c/${basToken}`);
@@ -372,7 +362,7 @@ async function captureInteractiveDemoFrames(browser, { basToken, basRequestId, i
   await invoiceCard.evaluate((el) => el.scrollIntoView({ behavior: "instant", block: "center" }));
   await hold(clientPage, 4, portalUrl, "03 · ENCRYPTED UPLOAD");
   await invoiceCard.locator('input[type="file"]').first().setInputFiles(invoicePath);
-  await invoiceCard.getByText("reece-plumbing-tax-invoice-7731.png").waitFor({ state: "visible" });
+  await invoiceCard.getByText("bayside-trade-tax-invoice-7731.png").waitFor({ state: "visible" });
   await hold(clientPage, 14, portalUrl, "03 · MAGIC-BYTE & AES-256-GCM VERIFIED");
   await clientCtx.close();
 
@@ -384,17 +374,25 @@ async function captureInteractiveDemoFrames(browser, { basToken, basRequestId, i
   });
   const opPage = await opCtx.newPage();
   await opPage.goto(`${BASE_URL}/login`);
-  await opPage.getByLabel("Email").fill("ops@harbouradvisory.com.au");
+  await opPage.getByLabel("Email").fill("ops@harbouradvisory.example.com.au");
   await opPage.getByLabel("Password", { exact: true }).fill("showcase-capture-123");
   await opPage.getByRole("button", { name: "Sign in" }).click();
   await opPage.waitForURL(`${BASE_URL}/`);
   await opPage.goto(`${BASE_URL}/requests/${basRequestId}`);
-  await opPage.getByText("reece-plumbing-tax-invoice-7731.png").waitFor({ state: "visible" });
+  await opPage.getByText("bayside-trade-tax-invoice-7731.png").waitFor({ state: "visible" });
   await waitForSettled(opPage);
   await installCursorHelper(opPage);
 
-  const previewBtn = opPage.locator("li").filter({ hasText: "reece-plumbing-tax-invoice-7731.png" }).first().getByRole("button", { name: "Preview" });
-  const prevBox = await previewBtn.boundingBox();
+  const previewBtn = opPage.locator("li").filter({ hasText: "bayside-trade-tax-invoice-7731.png" }).first().getByRole("button", { name: "Preview" });
+  await previewBtn.scrollIntoViewIfNeeded();
+  let prevBox = await previewBtn.boundingBox();
+  if (!prevBox || prevBox.y < 0 || prevBox.y + prevBox.height > 720) {
+    await previewBtn.evaluate((el) => el.scrollIntoView({ behavior: "instant", block: "center" }));
+    prevBox = await previewBtn.boundingBox();
+  }
+  if (!prevBox || prevBox.y < 0 || prevBox.y + prevBox.height > 720) {
+    throw new Error(`Preview button outside 1200x720 viewport: ${JSON.stringify(prevBox)}`);
+  }
   cursorPos = { x: 420, y: 260 };
   await opPage.evaluate(([cx, cy]) => window.__ggSetCursor(cx, cy, 0), [cursorPos.x, cursorPos.y]);
   await hold(opPage, 8, opUrl, "04 · OPERATOR REVIEW QUEUE");
@@ -406,13 +404,16 @@ async function captureInteractiveDemoFrames(browser, { basToken, basRequestId, i
   await waitForSettled(opPage);
   await hold(opPage, 18, opUrl, "04 · DECRYPTED INLINE PREVIEW");
 
+  cursorPos = { x: 760, y: 360 };
+  await opPage.evaluate(([cx, cy]) => window.__ggSetCursor(cx, cy, 0), [cursorPos.x, cursorPos.y]);
+
   const approveBtn = reviewDialog.getByRole("button", { name: /Approve/i });
   const appBox = await approveBtn.boundingBox();
   await moveCursorTo(opPage, appBox.x + appBox.width / 2, appBox.y + appBox.height / 2, 7, opUrl, "04 · APPROVE & LOCK");
   await clickPulse(opPage, opUrl, "04 · APPROVE & LOCK");
   await approveBtn.click();
   await reviewDialog.waitFor({ state: "hidden" });
-  const lockedCard = opPage.locator("[data-item-id]").filter({ hasText: "reece-plumbing-tax-invoice-7731.png" }).first();
+  const lockedCard = opPage.locator("[data-item-id]").filter({ hasText: "bayside-trade-tax-invoice-7731.png" }).first();
   await lockedCard.getByText("Locked").waitFor({ state: "visible" });
   await waitForSettled(opPage);
   await hold(opPage, 16, opUrl, "04 · ITEM LOCKED & AUDIT LOGGED");
@@ -425,7 +426,7 @@ function runPythonMediaPipeline(args) {
   const pyScript = `
 import json, os, subprocess, sys
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import imageio_ffmpeg
 
 mode = sys.argv[1]
@@ -468,6 +469,7 @@ elif mode == "demo_webp":
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     gdraw = ImageDraw.Draw(glow)
     gdraw.ellipse([1050, -270, 2190, 630], fill=(34, 168, 130, 26))
+    glow = glow.filter(ImageFilter.GaussianBlur(radius=160))
     stage_base = Image.alpha_composite(stage_base, glow)
 
     mask = Image.new("L", (WIN_W, WIN_H), 0)
@@ -563,7 +565,7 @@ async function main() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         workspaceName: "Harbour Advisory",
-        email: "ops@harbouradvisory.com.au",
+        email: "ops@harbouradvisory.example.com.au",
         password: "showcase-capture-123",
         loadDemo: true,
       }),
@@ -575,7 +577,7 @@ async function main() {
     await apiJson(`${BASE_URL}/api/account`, {
       method: "PUT",
       headers: { "content-type": "application/json", cookie: sessionCookie },
-      body: JSON.stringify({ displayName: "Intake Desk", email: "ops@harbouradvisory.com.au" }),
+      body: JSON.stringify({ displayName: "Intake Desk", email: "ops@harbouradvisory.example.com.au" }),
     });
 
     await apiJson(`${BASE_URL}/api/settings/branding`, {
@@ -583,7 +585,7 @@ async function main() {
       headers: { "content-type": "application/json", cookie: sessionCookie },
       body: JSON.stringify({
         brandColor: "#0F5243",
-        supportEmail: "help@harbouradvisory.com.au",
+        supportEmail: "help@harbouradvisory.example.com.au",
         supportPhone: "+61 3 9000 4120",
         logoDataUrl: null,
       }),
@@ -605,7 +607,7 @@ async function main() {
           templateId: agencyTpl.id,
           title: "Website & Brand Onboarding",
           clientName: "Bayside Studio Pty Ltd",
-          clientEmail: "hello@baysidestudio.com.au",
+          clientEmail: "hello@baysidestudio.example.com.au",
           dueAt: dueBayside,
           requireOtp: false,
         }),
@@ -620,7 +622,7 @@ async function main() {
       await apiJson(`${BASE_URL}/api/client/${agencyToken}/items/${agencyEmailItem.id}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ value: "projects@baysidestudio.com.au" }),
+        body: JSON.stringify({ value: "projects@baysidestudio.example.com.au" }),
       });
     }
 
@@ -633,7 +635,7 @@ async function main() {
           templateId: basTpl.id,
           title: "Q3 BAS & Bookkeeping Pack",
           clientName: "Daniel Brooks",
-          clientEmail: "daniel@brooksbuild.com.au",
+          clientEmail: "daniel@brooksbuild.example.com.au",
           dueAt: dueBrooks,
           requireOtp: false,
         }),
@@ -652,7 +654,7 @@ async function main() {
     const harbourToken = new URL(harbourBasReq.portal_url).pathname.split("/c/")[1];
 
     const fontCss = loadFontFaceCss();
-    const invoicePath = path.join(workDir, "reece-plumbing-tax-invoice-7731.png");
+    const invoicePath = path.join(workDir, "bayside-trade-tax-invoice-7731.png");
 
     browser = await chromium.launch();
     await createTaxInvoiceFixture(browser, fontCss, invoicePath);
@@ -680,23 +682,15 @@ async function main() {
       monoFontPath,
     ]);
 
-    // 2. Upload realistic Bank Statement PDF + Tax Invoice PNG into Harbourline BAS pack for static ReviewSheet shots.
+    // 2. Upload realistic Tax Invoice PNG into Harbourline BAS pack for static ReviewSheet shots.
     const harbourDetail = await (
       await apiJson(`${BASE_URL}/api/requests/${harbourBasReq.id}`, { headers: { cookie: sessionCookie } })
     ).json();
-    const bankItem = harbourDetail.items.find((i) => i.label.includes("Bank Statements"));
     const supplierItem = harbourDetail.items.find((i) => i.label.includes("Missing Supplier Tax Invoices"));
-    if (!bankItem || !supplierItem) throw new Error("Expected BAS checklist items not found");
-
-    const formStmt = new FormData();
-    formStmt.append("file", new Blob([BANK_STATEMENT_PDF], { type: "application/pdf" }), "NAB-Business-Q3-Statement.pdf");
-    await apiJson(`${BASE_URL}/api/client/${harbourToken}/items/${bankItem.id}`, {
-      method: "POST",
-      body: formStmt,
-    });
+    if (!supplierItem) throw new Error("Expected BAS supplier invoice checklist item not found");
 
     const formInv = new FormData();
-    formInv.append("file", new Blob([fs.readFileSync(invoicePath)], { type: "image/png" }), "reece-plumbing-tax-invoice-7731.png");
+    formInv.append("file", new Blob([fs.readFileSync(invoicePath)], { type: "image/png" }), "bayside-trade-tax-invoice-7731.png");
     await apiJson(`${BASE_URL}/api/client/${harbourToken}/items/${supplierItem.id}`, {
       method: "POST",
       body: formInv,
@@ -730,7 +724,7 @@ async function main() {
       await ctx.addInitScript((t) => window.localStorage.setItem("gathergate-theme", t), theme);
       const page = await ctx.newPage();
       await page.goto(`${BASE_URL}/login`);
-      await page.getByLabel("Email").fill("ops@harbouradvisory.com.au");
+      await page.getByLabel("Email").fill("ops@harbouradvisory.example.com.au");
       await page.getByLabel("Password", { exact: true }).fill("showcase-capture-123");
       await page.getByRole("button", { name: "Sign in" }).click();
       await page.waitForURL(`${BASE_URL}/`);
@@ -741,7 +735,7 @@ async function main() {
       runPythonMediaPipeline(["downscale", rawDash, dashOut, "1920", "1200"]);
 
       await page.goto(`${BASE_URL}/requests/${harbourBasReq.id}`);
-      const invRow = page.locator("li").filter({ hasText: "reece-plumbing-tax-invoice-7731.png" }).first();
+      const invRow = page.locator("li").filter({ hasText: "bayside-trade-tax-invoice-7731.png" }).first();
       await invRow.getByRole("button", { name: "Preview" }).click();
       const reviewDialog = page.getByRole("dialog");
       await reviewDialog.locator("img").waitFor({ state: "visible" });
@@ -763,6 +757,8 @@ async function main() {
       path.join(GH_ASSETS_DIR, "dashboard-dark.png"),
       path.join(GH_ASSETS_DIR, "review-dark.png")
     );
+    fs.copyFileSync(path.join(GH_ASSETS_DIR, "dashboard-dark.png"), path.join(SCREENSHOTS_DIR, "operator-dashboard-dark.png"));
+    fs.copyFileSync(path.join(GH_ASSETS_DIR, "review-dark.png"), path.join(SCREENSHOTS_DIR, "operator-review-dark.png"));
 
     // 4. Client portal desktop (2x -> 1920x1200)
     const desktopClientCtx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });

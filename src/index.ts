@@ -33,25 +33,38 @@ const server = serve(
 );
 
 let cronTimer: NodeJS.Timeout | undefined;
+let cronInFlight = false;
 if (config.cronIntervalMinutes > 0) {
   const runJobs = async () => {
+    if (cronInFlight) return;
+    cronInFlight = true;
     try {
-      const sent = await runReminderSweep({
-        store,
-        email,
-        baseUrl: config.baseUrl,
-        masterKey: config.masterKey,
-        config,
-        saveToOutbox: config.emailBackend === "console",
-      });
-      const purged = await runPurgeSweep({ store, storage });
+      let sent = 0;
+      let purged = { requestsPurged: 0, filesDeleted: 0 };
+      try {
+        sent = await runReminderSweep({
+          store,
+          email,
+          baseUrl: config.baseUrl,
+          masterKey: config.masterKey,
+          config,
+          saveToOutbox: config.emailBackend === "console",
+        });
+      } catch (err) {
+        console.error("[GatherGate Cron] reminder sweep failed:", err);
+      }
+      try {
+        purged = await runPurgeSweep({ store, storage });
+      } catch (err) {
+        console.error("[GatherGate Cron] purge sweep failed:", err);
+      }
       if (sent > 0 || purged.requestsPurged > 0) {
         console.log(
           `[GatherGate Cron] reminders_sent=${sent} requests_purged=${purged.requestsPurged} files_deleted=${purged.filesDeleted}`
         );
       }
-    } catch (err) {
-      console.error("[GatherGate Cron] sweep failed:", err);
+    } finally {
+      cronInFlight = false;
     }
   };
   cronTimer = setInterval(runJobs, config.cronIntervalMinutes * 60_000);
