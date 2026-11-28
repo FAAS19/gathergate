@@ -913,12 +913,12 @@ test("CLI serve: loads .env automatically, binds dynamic --port 0, serves /healt
 
 test("CLI hardening: WAL checkpoint updates header schema_v and compiled dist/index.js runs", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gathergate-cli-hardening-"));
+  let db: ReturnType<typeof openDatabase> | null = null;
   try {
     const dataDir = path.join(tmpDir, "data");
     const dbPath = path.join(dataDir, "gathergate.sqlite");
     const masterKey = crypto.randomBytes(32).toString("hex");
-    const db = openDatabase(dbPath);
-    db.close();
+    db = openDatabase(dbPath);
 
     const report = await runDoctor({
       env: {
@@ -949,6 +949,7 @@ test("CLI hardening: WAL checkpoint updates header schema_v and compiled dist/in
       assert.equal(verOut, getPackageVersion());
     }
   } finally {
+    db?.close();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });

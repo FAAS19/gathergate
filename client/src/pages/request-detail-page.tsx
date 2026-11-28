@@ -387,7 +387,7 @@ export function RequestDetailPage({
         duePopoverOpen ||
         Boolean(
           document.querySelector(
-            '[data-slot="dialog-content"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot="popover-content"]'
+            '[data-slot="dialog-content"], [data-slot="sidebar"][role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot="popover-content"]'
           )
         );
 

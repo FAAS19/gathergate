@@ -1712,21 +1712,35 @@ export function createApp(deps: GatherGateAppDeps) {
     };
     zip.addBuffer(Buffer.from(JSON.stringify(manifest, null, 2), "utf8"), "summary.json");
 
+    zip.on("error", (err) => {
+      zip.outputStream.destroy(err);
+    });
     for (const entry of entries) {
       const u = entry.upload;
-      const encStream = await storage.getStream(u.storage_key);
-      const decStream = createDecryptStream(
-        config.masterKey,
-        encStream,
-        {
-          version: u.enc_version,
-          ivHex: u.enc_iv,
-          tagHex: u.enc_tag,
-          saltHex: u.enc_salt,
-        },
-        u.storage_key
-      );
-      zip.addReadStream(decStream, entry.entryName, { compress: false });
+      zip.addReadStreamLazy(entry.entryName, { compress: false }, (cb) => {
+        storage
+          .getStream(u.storage_key)
+          .then((encStream) => {
+            const decStream = createDecryptStream(
+              config.masterKey,
+              encStream,
+              {
+                version: u.enc_version,
+                ivHex: u.enc_iv,
+                tagHex: u.enc_tag,
+                saltHex: u.enc_salt,
+              },
+              u.storage_key
+            );
+            decStream.on("error", (err) => {
+              zip.outputStream.destroy(err);
+            });
+            cb(null, decStream);
+          })
+          .catch((err) => {
+            cb(err instanceof Error ? err : new Error(String(err)));
+          });
+      });
     }
     zip.end();
 
@@ -1960,9 +1974,18 @@ export function createApp(deps: GatherGateAppDeps) {
     const auth = requireSessionOnly(c);
     if (auth.error) return auth.error;
     const emailSummary = summarizeWorkspaceEmail(auth.workspace);
+    let webhookSecret = "";
+    let webhookSecretError: string | undefined;
+    try {
+      webhookSecret = resolveWebhookSecret(auth.workspace, config.masterKey) || "";
+    } catch (err) {
+      webhookSecretError =
+        err instanceof Error ? err.message : "Saved webhook secret could not be decrypted.";
+    }
     return c.json({
       webhookUrl: auth.workspace.webhook_url || "",
-      webhookSecret: resolveWebhookSecret(auth.workspace, config.masterKey) || "",
+      webhookSecret,
+      ...(webhookSecretError ? { webhookSecretError } : {}),
       branding: publicBranding(auth.workspace),
       account: {
         id: auth.user.id,

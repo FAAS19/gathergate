@@ -39,12 +39,14 @@ function isMostlyPrintableUtf8(buf: Buffer): boolean {
   if (buf.length === 0) return false;
   // Reject NUL bytes anywhere in the upload (binary/executable payloads)
   if (buf.includes(0x00)) return false;
-  const sample = buf.subarray(0, Math.min(buf.length, 4096));
+  // Extend sample end across any trailing UTF-8 continuation bytes so split multi-byte characters validate strictly.
+  let sampleEnd = Math.min(buf.length, 4096);
+  while (sampleEnd < buf.length && sampleEnd < 4099 && (buf[sampleEnd] & 0xc0) === 0x80) {
+    sampleEnd += 1;
+  }
+  const sample = buf.subarray(0, sampleEnd);
   try {
-    // Stream mode tolerates valid multi-byte UTF-8 sequences split across the 4096-byte sample boundary.
-    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(sample, {
-      stream: buf.length > 4096,
-    });
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(sample);
     // Reject obvious HTML/script injection disguised as CSV/TXT
     if (/<\s*(script|html|svg|iframe)\b/i.test(decoded)) return false;
     return true;

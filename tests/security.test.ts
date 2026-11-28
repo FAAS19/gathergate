@@ -1509,11 +1509,14 @@ test("Security: SSRF IPv6 & credentialed URL guards, Cache-Control no-store, aud
 });
 
 test("Hardening: UTF-8 boundary CSV, OpenXML macro rejection, purge guards, CSRF Origin & /assets 404", async () => {
-  // 1. Multi-byte UTF-8 character straddling byte 4096 in CSV passes; OpenXML with vbaProject.bin fails closed
+  // 1. Multi-byte UTF-8 character straddling byte 4096 in CSV passes; invalid continuation & OpenXML macros fail closed
   const csvPrefix = Buffer.alloc(4095, 0x61);
   const multiBytePound = Buffer.from("£100\n", "utf8"); // 0xc2 0xa3 crosses 4096 boundary
   const csvBuf = Buffer.concat([csvPrefix, multiBytePound]);
   assert.equal(detectFileSignature(csvBuf, "ledger.csv")?.ext, "csv");
+
+  const invalidUtf8Buf = Buffer.concat([csvPrefix, Buffer.from([0xc2, 0xff])]);
+  assert.equal(detectFileSignature(invalidUtf8Buf, "corrupt.csv"), null);
 
   const macroDocx = Buffer.concat([
     Buffer.from([0x50, 0x4b, 0x03, 0x04]),
