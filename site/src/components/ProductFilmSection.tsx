@@ -127,9 +127,9 @@ export function ProductFilmSection() {
           onClick={(e) => {
             if (e.target === dialogRef.current) closeModal();
           }}
-          className="m-auto w-[min(1040px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-[var(--stage-border)] bg-[var(--stage-bg)] p-0 text-[var(--stage-ink)] shadow-2xl backdrop:bg-black/80 backdrop:backdrop-blur-md"
+          className="m-auto flex max-h-[calc(100dvh-2rem)] w-[min(1040px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-[var(--stage-border)] bg-[var(--stage-bg)] p-0 text-[var(--stage-ink)] shadow-2xl backdrop:bg-black/80 backdrop:backdrop-blur-md"
         >
-          <div className="flex items-center justify-between gap-4 border-b border-[var(--stage-border)] px-4 py-3 sm:px-5">
+          <div className="flex shrink-0 items-center justify-between gap-4 border-b border-[var(--stage-border)] px-4 py-3 sm:px-5">
             <div className="flex items-center gap-2.5">
               <h3
                 id="video-modal-title"
@@ -161,7 +161,7 @@ export function ProductFilmSection() {
             preload="auto"
             poster="./media/gathergate-launch-v2-poster.webp"
             aria-label="GatherGate 51-second product walkthrough"
-            className="block aspect-video w-full bg-[var(--stage-bg)]"
+            className="block aspect-video min-h-0 w-full max-h-[calc(100dvh-5.75rem)] bg-[var(--stage-bg)] object-contain"
           >
             <source
               src="./media/gathergate-launch-v2-web.mp4"

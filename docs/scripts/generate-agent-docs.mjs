@@ -148,20 +148,27 @@ function stripMdxToMarkdown(body, pageUrl) {
     return `- [${title}](${href})${desc}`;
   });
 
-  // Replace embedded HTML5 <figure><video>...</video></figure> blocks with canonical Markdown links
-  text = text.replace(/<figure\b[^>]*>[\s\S]*?<video\b[\s\S]*?<\/video>[\s\S]*?<\/figure>/gi, (block) => {
-    const watchUrl = `${SITE_ORIGIN}${SITE_ROOT}#watch`;
-    const sourceMatch = block.match(/<source\b[^>]*\bsrc=["']([^"']+)["']/i);
-    const trackMatch = block.match(/<track\b[^>]*\bsrc=["']([^"']+)["']/i);
-    const linesOut = [`- Watch product walkthrough: ${watchUrl}`];
-    if (sourceMatch) {
-      linesOut.push(`- Direct MP4 (1080p, 51s): ${resolveCanonicalHref(sourceMatch[1], pageUrl)}`);
-    }
-    if (trackMatch) {
-      linesOut.push(`- English WebVTT captions: ${resolveCanonicalHref(trackMatch[1], pageUrl)}`);
-    }
-    return linesOut.join("\n");
-  });
+  // Replace standalone HTML5 <figure> blocks containing <video> only outside fenced code blocks
+  text = text
+    .split(/(^[ \t]*```[\s\S]*?^[ \t]*```[ \t]*$)/gm)
+    .map((segment, idx) => {
+      if (idx % 2 === 1) return segment;
+      return segment.replace(/<figure\b[^>]*>[\s\S]*?<\/figure>/gi, (block) => {
+        if (!/<video\b[\s\S]*?<\/video>/i.test(block)) return block;
+        const watchUrl = `${SITE_ORIGIN}${SITE_ROOT}#watch`;
+        const sourceMatch = block.match(/<source\b[^>]*\bsrc=["']([^"']+)["']/i);
+        const trackMatch = block.match(/<track\b[^>]*\bsrc=["']([^"']+)["']/i);
+        const linesOut = [`- Watch product walkthrough: ${watchUrl}`];
+        if (sourceMatch) {
+          linesOut.push(`- Direct MP4 (1080p, 51s): ${resolveCanonicalHref(sourceMatch[1], pageUrl)}`);
+        }
+        if (trackMatch) {
+          linesOut.push(`- English WebVTT captions: ${resolveCanonicalHref(trackMatch[1], pageUrl)}`);
+        }
+        return linesOut.join("\n");
+      });
+    })
+    .join("");
 
   // Collapse excessive blank lines
   text = text.replace(/\n{3,}/g, "\n\n").trim();
