@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import poster480 from "../assets/media/gathergate-launch-v2-poster-480.webp";
-import poster768 from "../assets/media/gathergate-launch-v2-poster-768.webp";
+import poster480 from "../assets/media/gathergate-demo-poster-480.webp";
+import poster768 from "../assets/media/gathergate-demo-poster-768.webp";
 import { ArrowRight, PlayFill, X } from "./Icons";
 
 export function ProductFilmSection() {
@@ -163,17 +163,17 @@ export function ProductFilmSection() {
             autoPlay
             playsInline
             preload="auto"
-            poster="./media/gathergate-launch-v2-poster.webp"
+            poster="./media/gathergate-demo-poster.webp"
             aria-label="GatherGate 51-second product walkthrough"
             className="block aspect-video min-h-0 w-full max-h-[calc(100dvh-5.75rem)] bg-[var(--stage-bg)] object-contain"
           >
             <source
-              src="./media/gathergate-launch-v2-web.mp4"
+              src="./media/gathergate-demo.mp4"
               type="video/mp4"
             />
             <track
               kind="captions"
-              src="./media/gathergate-launch-v2.vtt"
+              src="./media/gathergate-demo.vtt"
               srcLang="en"
               label="English captions"
               default
