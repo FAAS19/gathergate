@@ -5,6 +5,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-28
+
+### Added
+- **Official MCP Registry Metadata:** Added `"mcpName": "app.gathergate/gathergate"` and `"homepage": "https://gathergate.app"` to `package.json`, aligned `server.json` (`name`, `websiteUrl`, `version`), and enforced `package.json` / `server.json` parity in `tests/mcp.test.ts`.
+
+### Changed
+- **Canonical `gathergate.app` Domain Cutover (#57):** Switched public links, OpenGraph tags, `llms.txt`, Starlight docs origin, deploy templates, and Cloudflare Workers custom domain from `gathergate.tensorforge.dev` to `gathergate.app`.
+- **Showcase Performance & Agentic Browsing (#55, #56):** Added static SSR prerendering, responsive WebP screenshots, Latin-subset fonts, inline SVG icons, strict `connect-src 'self'` CSP, and Markdown links in `llms.txt`.
+
 ## [1.1.0] - 2026-11-28
 
 ### Added

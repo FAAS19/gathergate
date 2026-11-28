@@ -1,6 +1,8 @@
 {
   "name": "gathergate",
-  "version": "1.1.0",
+  "version": "1.1.1",
+  "mcpName": "app.gathergate/gathergate",
+  "homepage": "https://gathergate.app",
   "description": "Self-hosted magic-link client document checklist, deterministic validator, and auto-chaser.",
   "type": "module",
   "license": "MIT",

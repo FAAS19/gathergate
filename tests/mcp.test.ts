@@ -819,8 +819,23 @@ test("MCP 2.0: strict zero-PII & zero-blob boundary, SEP-2640 SKILL.md resources
     // 6. Validate server.json manifest schema & fields (description <= 100 chars per schema)
     const serverJson = JSON.parse(
       fs.readFileSync(path.resolve("server.json"), "utf8")
-    ) as { name: string; description: string; remotes: Array<{ type: string; url: string }> };
-    assert.equal(serverJson.name, "dev.tensorforge/gathergate");
+    ) as {
+      name: string;
+      version: string;
+      websiteUrl?: string;
+      description: string;
+      packages: Array<{ version: string }>;
+      remotes: Array<{ type: string; url: string }>;
+    };
+    const rootPkg = JSON.parse(
+      fs.readFileSync(path.resolve("package.json"), "utf8")
+    ) as { mcpName?: string; homepage?: string; version: string };
+    assert.equal(serverJson.name, "app.gathergate/gathergate");
+    assert.equal(rootPkg.mcpName, serverJson.name);
+    assert.equal(serverJson.websiteUrl, "https://gathergate.app");
+    assert.equal(rootPkg.homepage, serverJson.websiteUrl);
+    assert.equal(serverJson.version, rootPkg.version);
+    assert.equal(serverJson.packages[0].version, rootPkg.version);
     assert.ok(serverJson.description.length > 0 && serverJson.description.length <= 100);
     assert.equal(serverJson.remotes[0].type, "streamable-http");
     assert.match(serverJson.remotes[0].url, /\/mcp$/);

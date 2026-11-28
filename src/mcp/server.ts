@@ -46,9 +46,9 @@ function loadServerVersion(): string {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const pkgPath = path.resolve(here, "..", "..", "package.json");
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as { version?: string };
-    return pkg.version || "1.1.0";
+    return pkg.version || "1.1.1";
   } catch {
-    return "1.1.0";
+    return "1.1.1";
   }
 }
 
