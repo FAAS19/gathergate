@@ -375,6 +375,8 @@ test("showcase site renders cleanly under /gathergate/ subpath with 0 broken ass
   expect(llmsRes.status()).toBe(200);
   expect(llmsRes.headers()["content-type"]).toContain("text/plain");
   const llmsBody = await llmsRes.text();
+  expect(llmsBody).toMatch(/^# GatherGate\r?$/m);
+  expect(llmsBody).toMatch(/\[[^\]]+\]\(https:\/\/[^)\s]+\)/);
   expect(llmsBody).toContain("GET http://127.0.0.1:3080/healthz");
   expect(llmsBody).toContain("MASTER_KEY");
   expect(llmsBody).toContain("https://gathergate.tensorforge.dev/#watch");
