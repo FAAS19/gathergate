@@ -8,7 +8,7 @@
   Cross-Origin-Resource-Policy: same-origin
   Referrer-Policy: no-referrer
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()
-  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self' data:; connect-src 'none'; frame-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests;
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-6XvQRMruEYNIiejWsFN/jedbyIpWOSb9XORMzP2/v9M='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self' data:; connect-src 'none'; frame-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests;
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
@@ -41,6 +41,14 @@
   Cross-Origin-Resource-Policy: cross-origin
   Cache-Control: public, max-age=86400
 
+/docs/favicon.svg
+  ! Cross-Origin-Resource-Policy
+  Cross-Origin-Resource-Policy: cross-origin
+  Cache-Control: public, max-age=86400
+
+/screenshots/*
+  Cache-Control: public, max-age=604800
+
 /demo/site.webmanifest
   Content-Type: application/manifest+json; charset=utf-8
   Cache-Control: public, max-age=86400
@@ -58,13 +66,15 @@
   Cache-Control: public, max-age=3600
 
 /media/*
-  Cache-Control: public, max-age=604800
+  Cache-Control: public, max-age=31536000, immutable
 
 /media/*.mp4
   Content-Type: video/mp4
 
 /media/*.vtt
   Content-Type: text/vtt; charset=utf-8
+  ! Cache-Control
+  Cache-Control: public, max-age=86400
 
 /media/*.webp
   Content-Type: image/webp

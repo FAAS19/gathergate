@@ -212,11 +212,13 @@ test("showcase site renders cleanly under /gathergate/ subpath with 0 broken ass
     expect(box!.y + box!.height).toBeLessThanOrEqual(viewport.height);
   }
 
-  // Wait for visible images on initial render to finish loading cleanly.
+  // Wait for eager above-the-fold images on initial render to finish loading cleanly.
   await expect
     .poll(async () =>
       page.evaluate(() => {
-        const imgs = Array.from(document.querySelectorAll("img"));
+        const imgs = Array.from(document.querySelectorAll("img")).filter(
+          (img) => img.loading !== "lazy"
+        );
         return imgs.length > 0 && imgs.every((img) => img.complete && img.naturalWidth > 0);
       })
     )
@@ -305,6 +307,19 @@ test("showcase site renders cleanly under /gathergate/ subpath with 0 broken ass
   await expectAccessible(page, testInfo, "pages-showcase-light");
   const themeToggle = page.getByRole("button", { name: /Switch to (dark|light) mode/i });
   await themeToggle.click();
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const heroImg = document.querySelector<HTMLImageElement>('img[fetchpriority="high"]');
+        return Boolean(
+          heroImg &&
+            heroImg.currentSrc.includes("operator-dashboard-dark-") &&
+            heroImg.complete &&
+            heroImg.naturalWidth > 0
+        );
+      })
+    )
+    .toBe(true);
   await expectAccessible(page, testInfo, "pages-showcase-dark");
   await themeToggle.click();
 

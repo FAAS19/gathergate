@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { CloudFooter } from "./components/CloudFooter";
 import { CompareSection } from "./components/CompareSection";
 import { FeatureBento } from "./components/FeatureBento";
@@ -7,7 +8,27 @@ import { ProductFilmSection } from "./components/ProductFilmSection";
 import { SelfHostSection } from "./components/SelfHostSection";
 import { WalkthroughSection } from "./components/WalkthroughSection";
 
+const THEME_STORAGE_KEY = "gathergate-site-theme";
+
 export function App() {
+  // Initialise false so SSR and initial hydration pass match before syncing pre-paint .dark class.
+  const [isDark, setIsDark] = useState(false);
+
+  useEffect(() => {
+    setIsDark(document.documentElement.classList.contains("dark"));
+  }, []);
+
+  function toggleTheme() {
+    const next = !isDark;
+    setIsDark(next);
+    document.documentElement.classList.toggle("dark", next);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next ? "dark" : "light");
+    } catch {
+      // Ignore storage errors in restricted contexts.
+    }
+  }
+
   return (
     <div className="min-h-[100dvh] bg-[var(--bg)] text-[var(--ink)]">
       <a
@@ -17,12 +38,12 @@ export function App() {
         Skip to content
       </a>
 
-      <Navbar />
+      <Navbar isDark={isDark} onToggleTheme={toggleTheme} />
 
       <main id="main-content">
-        <Hero />
+        <Hero isDark={isDark} />
         <ProductFilmSection />
-        <WalkthroughSection />
+        <WalkthroughSection isDark={isDark} />
         <FeatureBento />
         <SelfHostSection />
         <CompareSection />

@@ -1,6 +1,22 @@
-import { ArrowRight, LockSimple } from "@phosphor-icons/react";
+import dashboard1280 from "../assets/screenshots/operator-dashboard-1280.webp";
+import dashboard720 from "../assets/screenshots/operator-dashboard-720.webp";
+import dashboardDark1280 from "../assets/screenshots/operator-dashboard-dark-1280.webp";
+import dashboardDark720 from "../assets/screenshots/operator-dashboard-dark-720.webp";
+import { ArrowRight, LockSimple } from "./Icons";
 
-export function Hero() {
+interface HeroProps {
+  isDark: boolean;
+}
+
+export function Hero({ isDark }: HeroProps) {
+  const heroSrc = isDark ? dashboardDark1280 : dashboard1280;
+  const heroSrcSet = isDark
+    ? `${dashboardDark720} 720w, ${dashboardDark1280} 1280w`
+    : `${dashboard720} 720w, ${dashboard1280} 1280w`;
+  const heroAlt = isDark
+    ? "GatherGate operator dashboard in dark mode showing active client document requests, status filters, and review queue metrics"
+    : "GatherGate operator dashboard showing active client document requests, status filters, and review queue metrics";
+
   return (
     <section className="pt-10 pb-10 lg:pt-14 lg:pb-12">
       <div className="mx-auto max-w-[1280px] px-4 sm:px-6 lg:px-8">
@@ -46,21 +62,16 @@ export function Hero() {
                 </span>
               </div>
               <img
-                src="./screenshots/operator-dashboard.png"
-                alt="GatherGate operator dashboard showing active client document requests, status filters, and review queue metrics"
+                src={heroSrc}
+                srcSet={heroSrcSet}
+                sizes="(min-width: 1280px) 680px, (min-width: 1024px) 53vw, 94vw"
+                alt={heroAlt}
                 width={1280}
                 height={800}
                 loading="eager"
+                decoding="async"
                 fetchPriority="high"
-                className="block aspect-[16/10] w-full bg-[var(--surface-muted)] object-cover object-top dark:hidden"
-              />
-              <img
-                src="./screenshots/operator-dashboard-dark.png"
-                alt="GatherGate operator dashboard in dark mode showing active client document requests, status filters, and review queue metrics"
-                width={1280}
-                height={800}
-                loading="eager"
-                className="hidden aspect-[16/10] w-full bg-[var(--surface-muted)] object-cover object-top dark:block"
+                className="block aspect-[16/10] w-full bg-[var(--surface-muted)] object-cover object-top"
               />
             </div>
           </div>

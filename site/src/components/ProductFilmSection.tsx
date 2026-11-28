@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Play, X } from "@phosphor-icons/react";
+import poster480 from "../assets/media/gathergate-launch-v2-poster-480.webp";
+import poster768 from "../assets/media/gathergate-launch-v2-poster-768.webp";
+import { ArrowRight, PlayFill, X } from "./Icons";
 
 export function ProductFilmSection() {
   const [open, setOpen] = useState(false);
@@ -47,11 +49,14 @@ export function ProductFilmSection() {
           <div className="stage-dot-grid group relative flex w-full flex-col items-stretch gap-5 overflow-hidden rounded-xl border border-[var(--stage-border)] bg-[var(--stage-bg)] p-4 text-left transition-colors duration-200 hover:border-[var(--stage-accent)]/50 has-[button:focus-visible]:outline-2 has-[button:focus-visible]:outline-offset-2 has-[button:focus-visible]:outline-[var(--accent)] sm:flex-row sm:items-center sm:gap-7 sm:p-5 lg:gap-10 lg:p-6">
             <div className="relative aspect-video w-full shrink-0 overflow-hidden rounded-lg border border-[var(--stage-border)] bg-[var(--stage-bg)] sm:w-[272px] md:w-[320px] lg:w-[368px]">
               <img
-                src="./media/gathergate-launch-v2-poster.webp"
+                src={poster768}
+                srcSet={`${poster480} 480w, ${poster768} 768w`}
+                sizes="(min-width: 1024px) 368px, (min-width: 768px) 320px, (min-width: 640px) 272px, 92vw"
                 alt=""
-                width={1920}
-                height={1080}
+                width={768}
+                height={432}
                 loading="eager"
+                decoding="async"
                 className="block h-full w-full object-cover transition-transform duration-500 motion-safe:group-hover:scale-[1.03]"
               />
               <span
@@ -62,8 +67,7 @@ export function ProductFilmSection() {
                 aria-hidden="true"
                 className="pointer-events-none absolute top-1/2 left-1/2 flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white/25 bg-[var(--stage-bg)]/85 text-[var(--stage-ink)] shadow-xl backdrop-blur-md transition-all duration-200 motion-safe:group-hover:scale-110 group-hover:border-[var(--stage-accent)] group-hover:bg-[var(--stage-accent)] group-hover:text-[var(--stage-accent-ink)]"
               >
-                <Play
-                  weight="fill"
+                <PlayFill
                   className="size-5 translate-x-[1px]"
                   aria-hidden="true"
                 />
