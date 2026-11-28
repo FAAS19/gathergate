@@ -8,7 +8,7 @@
   Cross-Origin-Resource-Policy: same-origin
   Referrer-Policy: no-referrer
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-6XvQRMruEYNIiejWsFN/jedbyIpWOSb9XORMzP2/v9M='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self' data:; connect-src 'none'; frame-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests;
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-6XvQRMruEYNIiejWsFN/jedbyIpWOSb9XORMzP2/v9M='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self'; font-src 'self' data:; connect-src 'self'; frame-src 'self' blob:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests;
 
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
