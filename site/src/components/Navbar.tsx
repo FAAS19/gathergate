@@ -1,8 +1,6 @@
 import { useState } from "react";
-import { ArrowSquareOut, List, Moon, Sun, X } from "@phosphor-icons/react";
 import { BrandMark } from "./BrandMark";
-
-const THEME_STORAGE_KEY = "gathergate-site-theme";
+import { ArrowSquareOut, List, Moon, Sun, X } from "./Icons";
 
 const NAV_LINKS = [
   { label: "Walkthrough", href: "#walkthrough", external: false },
@@ -16,24 +14,13 @@ const NAV_LINKS = [
   },
 ] as const;
 
-export function Navbar() {
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [isDark, setIsDark] = useState(
-    () =>
-      typeof document !== "undefined" &&
-      document.documentElement.classList.contains("dark")
-  );
+interface NavbarProps {
+  isDark: boolean;
+  onToggleTheme: () => void;
+}
 
-  function toggleTheme() {
-    const next = !isDark;
-    setIsDark(next);
-    document.documentElement.classList.toggle("dark", next);
-    try {
-      localStorage.setItem(THEME_STORAGE_KEY, next ? "dark" : "light");
-    } catch {
-      // Ignore storage errors in restricted contexts.
-    }
-  }
+export function Navbar({ isDark, onToggleTheme }: NavbarProps) {
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
     <header className="sticky top-0 z-40 border-b border-[var(--border)] bg-[var(--bg)]/95 backdrop-blur-sm">
@@ -71,16 +58,13 @@ export function Navbar() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={toggleTheme}
+            onClick={onToggleTheme}
             aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
             aria-pressed={isDark}
             className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--ink)] transition-colors hover:bg-[var(--surface-muted)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
           >
-            {isDark ? (
-              <Sun className="size-4" aria-hidden="true" />
-            ) : (
-              <Moon className="size-4" aria-hidden="true" />
-            )}
+            <Sun className="hidden size-4 dark:block" aria-hidden="true" />
+            <Moon className="size-4 dark:hidden" aria-hidden="true" />
           </button>
 
           <a
