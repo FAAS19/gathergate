@@ -330,11 +330,11 @@ test("showcase site renders cleanly under /gathergate/ subpath with 0 broken ass
   await expect(showcaseVideo).toBeVisible();
   await expect(showcaseVideo.locator('source[type="video/mp4"]')).toHaveAttribute(
     "src",
-    "./media/gathergate-launch-v2-web.mp4"
+    "./media/gathergate-demo.mp4"
   );
   await expect(showcaseVideo.locator('track[kind="captions"]')).toHaveAttribute(
     "src",
-    "./media/gathergate-launch-v2.vtt"
+    "./media/gathergate-demo.vtt"
   );
   await expectAccessible(page, testInfo, "pages-showcase-video-modal");
 
@@ -353,17 +353,17 @@ test("showcase site renders cleanly under /gathergate/ subpath with 0 broken ass
   await videoDialog.getByRole("button", { name: "Close video" }).click();
   await expect(videoDialog).toHaveCount(0);
 
-  const posterRes = await page.request.get(`${baseUrl}/gathergate/media/gathergate-launch-v2-poster.webp`);
+  const posterRes = await page.request.get(`${baseUrl}/gathergate/media/gathergate-demo-poster.webp`);
   expect(posterRes.status()).toBe(200);
   expect(posterRes.headers()["content-type"]).toContain("image/webp");
 
-  const mp4RangeRes = await page.request.get(`${baseUrl}/gathergate/media/gathergate-launch-v2-web.mp4`, {
+  const mp4RangeRes = await page.request.get(`${baseUrl}/gathergate/media/gathergate-demo.mp4`, {
     headers: { Range: "bytes=0-1023" },
   });
   expect(mp4RangeRes.status()).toBe(206);
   expect(mp4RangeRes.headers()["content-type"]).toContain("video/mp4");
 
-  const vttRes = await page.request.get(`${baseUrl}/gathergate/media/gathergate-launch-v2.vtt`);
+  const vttRes = await page.request.get(`${baseUrl}/gathergate/media/gathergate-demo.vtt`);
   expect(vttRes.status()).toBe(200);
   expect(vttRes.headers()["content-type"]).toContain("text/vtt");
   const vttBody = await vttRes.text();
@@ -532,11 +532,11 @@ test("Astro Starlight docs render cleanly under /docs/ with search, navigation, 
   await expect(docsVideo).toBeVisible();
   await expect(docsVideo.locator('source[type="video/mp4"]')).toHaveAttribute(
     "src",
-    "../media/gathergate-launch-v2-web.mp4"
+    "../media/gathergate-demo.mp4"
   );
   await expect(docsVideo.locator('track[kind="captions"]')).toHaveAttribute(
     "src",
-    "../media/gathergate-launch-v2.vtt"
+    "../media/gathergate-demo.vtt"
   );
   await expectAccessible(page, testInfo, "pages-docs-index");
 
