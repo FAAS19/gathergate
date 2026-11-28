@@ -33,7 +33,7 @@ Self-hosted, open-source alternative to Content Snare and FileInvite. Collect cl
 
 </div>
 
-https://github.com/user-attachments/assets/8d4279c9-6d57-4704-b8c6-bd3d957bf0f6
+https://github.com/user-attachments/assets/a1c9b1d3-16b6-4778-af5d-9c890bb02a83
 
 <p align="center">
   <sub>51-second product walkthrough (1080p, audio) &middot; <a href="https://gathergate.tensorforge.dev/#watch">Watch with English captions on gathergate.tensorforge.dev</a></sub>
