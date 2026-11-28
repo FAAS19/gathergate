@@ -409,16 +409,18 @@ export function DashboardPage({
               >
                 {actionLabel}
               </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-7 text-muted-foreground hover:text-foreground"
-                title="Copy magic link"
-                aria-label="Copy magic link"
-                onClick={() => void handleCopyLink(r.portal_url)}
-              >
-                <Copy className="size-3.5" />
-              </Button>
+              {r.portal_url ? (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="size-7 text-muted-foreground hover:text-foreground"
+                  title="Copy magic link"
+                  aria-label="Copy magic link"
+                  onClick={() => void handleCopyLink(r.portal_url)}
+                >
+                  <Copy className="size-3.5" />
+                </Button>
+              ) : null}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -431,23 +433,27 @@ export function DashboardPage({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-52">
-                  <DropdownMenuItem asChild>
-                    {IS_DEMO ? (
-                      <Link to={demoPortalPath(r.portal_url)}>
-                        <ExternalLink className="size-3.5" />
-                        Open client portal
-                      </Link>
-                    ) : (
-                      <a href={r.portal_url} target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="size-3.5" />
-                        Open client portal
-                      </a>
-                    )}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => void handleCopyLink(r.portal_url)}>
-                    <Copy className="size-3.5" />
-                    Copy magic link
-                  </DropdownMenuItem>
+                  {r.portal_url && (
+                    <>
+                      <DropdownMenuItem asChild>
+                        {IS_DEMO ? (
+                          <Link to={demoPortalPath(r.portal_url)}>
+                            <ExternalLink className="size-3.5" />
+                            Open client portal
+                          </Link>
+                        ) : (
+                          <a href={r.portal_url} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink className="size-3.5" />
+                            Open client portal
+                          </a>
+                        )}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => void handleCopyLink(r.portal_url)}>
+                        <Copy className="size-3.5" />
+                        Copy magic link
+                      </DropdownMenuItem>
+                    </>
+                  )}
                   {active && (
                     <DropdownMenuItem
                       onClick={() => void handleBulkReminders([r.id], !r.reminders_paused)}
@@ -847,7 +853,6 @@ export function DashboardPage({
                           rowRefs.current[row.original.id] = el;
                         }}
                         data-selected={isSelected ? "true" : undefined}
-                        aria-selected={isSelected || undefined}
                         onClick={() => navigate(`/requests/${row.original.id}`)}
                         className={`cursor-pointer ${
                           isSelected ? "bg-muted/70 ring-1 ring-inset ring-primary/40" : ""

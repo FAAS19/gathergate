@@ -92,10 +92,11 @@ test("operator creates, customises, reviews via continuous preview, verifies ZIP
   const requestId = new URL(page.url()).pathname.split("/requests/")[1];
 
   // 3. Live request controls: edit due date, add required item, send manual reminder
+  const futureDue = new Date(Date.now() + 30 * 86400_000).toISOString().slice(0, 10);
   await page.getByRole("button", { name: "Set due date" }).click();
-  await page.getByLabel("Target due date").fill("2026-12-20");
+  await page.getByLabel("Target due date").fill(futureDue);
   await page.getByRole("button", { name: "Save" }).click();
-  await expect(page.getByRole("button", { name: "Due 2026-12-20" })).toBeVisible();
+  await expect(page.getByRole("button", { name: `Due ${futureDue}` })).toBeVisible();
 
   await page.getByRole("button", { name: "Add item" }).click();
   await page.getByLabel("Item label").fill("Supplier Invoice Photo");

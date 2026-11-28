@@ -4,6 +4,8 @@ services:
   gathergate:
     image: ghcr.io/faas19/gathergate:latest
     user: "1000:1000"
+    expose:
+      - "3080"
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -30,7 +32,7 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:3080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+          "fetch('http://127.0.0.1:'+((process.env.PORT||'').trim()||'3080')+'/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
         ]
       interval: 30s
       timeout: 5s

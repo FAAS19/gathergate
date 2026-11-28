@@ -201,12 +201,16 @@ describe("RequestDetailPage", () => {
     expect(await screen.findByText("1 of 2")).toBeInTheDocument();
     expect(screen.getAllByText("maya_statement_01.pdf").length).toBeGreaterThanOrEqual(1);
 
-    // Next document steps to image and supports zoom
-    await user.click(screen.getByRole("button", { name: "Next document" }));
+    // Keyboard J/K steps inside open ReviewSheet
+    await user.keyboard("j");
     expect(await screen.findByText("2 of 2")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Zoom in" }));
     expect(screen.getByRole("button", { name: "Reset zoom" })).toHaveTextContent("125%");
     expect(screen.getByAltText("maya_receipt_01.png")).toHaveAttribute("data-zoom", "125");
+    await user.keyboard("k");
+    expect(await screen.findByText("1 of 2")).toBeInTheDocument();
+    await user.keyboard("j");
+    expect(await screen.findByText("2 of 2")).toBeInTheDocument();
 
     // Esc closes preview sheet
     await user.keyboard("{Escape}");

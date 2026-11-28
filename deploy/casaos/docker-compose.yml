@@ -3,6 +3,7 @@ services:
   gathergate:
     image: ghcr.io/faas19/gathergate:latest
     restart: unless-stopped
+    stop_grace_period: 15s
     ports:
       - target: 3080
         published: "3080"
@@ -22,6 +23,8 @@ services:
       - type: bind
         source: /DATA/AppData/$AppID/data
         target: /data
+        bind:
+          create_host_path: true
     cap_drop:
       - ALL
     cap_add:
@@ -37,42 +40,47 @@ services:
       envs:
         - container: BASE_URL
           description:
-            en_us: Reachable LAN (http://<device-host>:3080) or public HTTPS origin for client magic links
+            en_US: Reachable LAN (http://<device-host>:3080) or public HTTPS origin for client magic links
         - container: TRUST_PROXY
           description:
-            en_us: Set to true only when running behind a trusted TLS reverse proxy
+            en_US: Set to true only when running behind a trusted TLS reverse proxy
         - container: MASTER_KEY
           description:
-            en_us: Optional 64-character hex key (openssl rand -hex 32); auto-generated in /data/.master.key if blank
+            en_US: Optional 64-character hex key (openssl rand -hex 32); auto-generated in /data/.master.key if blank
       ports:
         - container: "3080"
           description:
-            en_us: GatherGate Web UI, API, and stateless MCP port
+            en_US: GatherGate Web UI, API, and stateless MCP port
       volumes:
         - container: /data
           description:
-            en_us: Persistent SQLite WAL database and AES-256-GCM encrypted uploads
+            en_US: Persistent SQLite WAL database and AES-256-GCM encrypted uploads
 
 x-casaos:
+  id: app.gathergate.gathergate
   architectures:
     - amd64
     - arm64
   main: gathergate
   title:
-    en_us: GatherGate
+    en_US: GatherGate
   tagline:
-    en_us: Self-hosted magic-link client document checklist and encrypted intake vault
+    en_US: Self-hosted magic-link client document checklist and encrypted intake vault
   description:
-    en_us: >-
+    en_US: >-
       Collect client documents and validated IDs via passwordless magic links
       with AES-256-GCM encryption at rest, automated reminders, signed webhooks,
       and a metadata-only MCP 2.0 endpoint.
+  tips:
+    before_install:
+      en_US: >-
+        Set BASE_URL to your CasaOS LAN origin (e.g. http://casaos.local:3080)
+        or public HTTPS origin so generated client magic links work from client devices.
   developer: TensorForge
   author: TensorForge
-  category: Documents
+  category: Productivity
   port_map: "3080"
   scheme: http
   index: /
   icon: https://gathergate.app/favicon.svg
   thumbnail: https://gathergate.app/social-preview.png
-  store_app_id: gathergate

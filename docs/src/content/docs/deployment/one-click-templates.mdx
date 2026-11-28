@@ -5,7 +5,7 @@ description: Deploy GatherGate on Render, Coolify, Dokploy, Railway, Umbrel, Cas
 
 import { Tabs, TabItem } from "@astrojs/starlight/components";
 
-GatherGate ships audited deployment manifests under `deploy/` and a root `render.yaml` Blueprint for persistent container hosts. Every template pulls the signed multi-arch container image (`ghcr.io/faas19/gathergate:latest`, `linux/amd64` and `linux/arm64`), mounts persistent storage at `/data`, and runs healthchecks against `GET /healthz`.
+GatherGate ships audited deployment manifests under `deploy/` and a root `render.yaml` Blueprint for persistent container hosts. Every container template pulls the multi-arch container image (`ghcr.io/faas19/gathergate:latest`, `linux/amd64` and `linux/arm64` with BuildKit SBOM and provenance attestations) or builds from `Dockerfile` (Railway), mounts persistent storage at `/data`, and runs healthchecks against `GET /healthz`.
 
 ## Prerequisites (All Platforms)
 

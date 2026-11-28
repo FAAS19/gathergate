@@ -910,3 +910,45 @@ test("CLI serve: loads .env automatically, binds dynamic --port 0, serves /healt
     }
   }
 });
+
+test("CLI hardening: WAL checkpoint updates header schema_v and compiled dist/index.js runs", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gathergate-cli-hardening-"));
+  try {
+    const dataDir = path.join(tmpDir, "data");
+    const dbPath = path.join(dataDir, "gathergate.sqlite");
+    const masterKey = crypto.randomBytes(32).toString("hex");
+    const db = openDatabase(dbPath);
+    db.close();
+
+    const report = await runDoctor({
+      env: {
+        DATA_DIR: dataDir,
+        DB_PATH: dbPath,
+        MASTER_KEY: masterKey,
+        HOST: "127.0.0.1",
+        PORT: "39199",
+      },
+    });
+    const dbCheck = report.checks.find((c) => c.name === "database");
+    assert.equal(dbCheck?.status, "ok");
+    assert.match(dbCheck?.detail ?? "", /schema_v=5/);
+
+    const compiledEntry = path.resolve("dist", "index.js");
+    if (fs.existsSync(compiledEntry)) {
+      const verOut = await new Promise<string>((resolve, reject) => {
+        const child = spawn(process.execPath, [compiledEntry, "--version"], { stdio: ["ignore", "pipe", "pipe"] });
+        let stdout = "";
+        child.stdout.on("data", (d) => {
+          stdout += d;
+        });
+        child.on("exit", (code) => {
+          if (code === 0) resolve(stdout.trim());
+          else reject(new Error(`Compiled dist/index.js exited with ${code}`));
+        });
+      });
+      assert.equal(verOut, getPackageVersion());
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

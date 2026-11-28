@@ -387,7 +387,7 @@ export function RequestDetailPage({
         duePopoverOpen ||
         Boolean(
           document.querySelector(
-            '[data-slot="dialog-content"], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot="popover-content"]'
+            '[data-slot="dialog-content"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot="popover-content"]'
           )
         );
 
@@ -424,7 +424,11 @@ export function RequestDetailPage({
           return;
         }
         if (key === "a") {
-          if (data?.request.status !== "purged" && current.item.status === "submitted") {
+          if (
+            data?.request.status !== "purged" &&
+            data?.request.status !== "expired" &&
+            current.item.status === "submitted"
+          ) {
             e.preventDefault();
             const nextId = findNextReviewUploadId(reviewDocs, idx);
             void handleReview(current.item, "approved", undefined, {
@@ -435,7 +439,11 @@ export function RequestDetailPage({
           return;
         }
         if (key === "r") {
-          if (data?.request.status !== "purged" && current.item.status !== "pending") {
+          if (
+            data?.request.status !== "purged" &&
+            data?.request.status !== "expired" &&
+            current.item.status !== "pending"
+          ) {
             e.preventDefault();
             setResumeReviewAfterRevision(true);
             setReviseTarget(current.item);
@@ -487,7 +495,11 @@ export function RequestDetailPage({
       }
 
       if (key === "a") {
-        if (data?.request.status !== "purged" && activeItem.status === "submitted") {
+        if (
+          data?.request.status !== "purged" &&
+          data?.request.status !== "expired" &&
+          activeItem.status === "submitted"
+        ) {
           e.preventDefault();
           void handleReview(activeItem, "approved");
         }
@@ -495,7 +507,11 @@ export function RequestDetailPage({
       }
 
       if (key === "r") {
-        if (data?.request.status !== "purged" && activeItem.status !== "pending") {
+        if (
+          data?.request.status !== "purged" &&
+          data?.request.status !== "expired" &&
+          activeItem.status !== "pending"
+        ) {
           e.preventDefault();
           setResumeReviewAfterRevision(false);
           setReviseTarget(activeItem);
@@ -888,7 +904,7 @@ export function RequestDetailPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {request.status !== "purged" && submittedCount > 0 && (
+            {request.status !== "purged" && request.status !== "expired" && submittedCount > 0 && (
               <Button onClick={handleApproveAllSubmitted} disabled={batchApproving} size="sm">
                 <CheckCheck className="mr-1.5 size-4" />
                 {batchApproving ? "Approving..." : `Approve all submitted (${submittedCount})`}
@@ -954,9 +970,15 @@ export function RequestDetailPage({
               <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                 Passwordless client magic link
               </p>
-              <code className="mt-0.5 block truncate font-mono text-xs text-primary">
-                {data.portalUrl}
-              </code>
+              {data.portalUrl ? (
+                <code className="mt-0.5 block truncate font-mono text-xs text-primary">
+                  {data.portalUrl}
+                </code>
+              ) : (
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Magic link purged after retention window.
+                </p>
+              )}
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2">
               <Button
@@ -1248,7 +1270,7 @@ export function RequestDetailPage({
                               </div>
                             )}
 
-                            {request.status !== "purged" && item.status !== "pending" && (
+                            {request.status !== "purged" && request.status !== "expired" && item.status !== "pending" && (
                               <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-border/70 pt-3">
                                 {item.status !== "approved" && (
                                   <Button

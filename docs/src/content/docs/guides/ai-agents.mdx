@@ -224,9 +224,9 @@ For agents that read skills from disk, the exact same files live at `skills/gath
 | `list_requests` | `mcp:read` | Lists active/closed packs with `client_name` (non-purged), masked emails (`cl***@example.com.au`), item counts, and `review_url`. |
 | `get_request_status` | `mcp:read` | Returns pack metadata (`client_name` for non-purged packs, masked email), per-item status (`pending`, `submitted`, `approved`, `rejected`), `has_value`, `has_client_note`, `upload_count`, and `review_url`. |
 | `list_overdue_requests` | `mcp:read` | Lists overdue packs (or packs due within `within_days` `0..30`) with `client_name` (non-purged), masked email, and outstanding item labels. |
-| `create_request` | `requests:write` | Creates a checklist from a workspace template and optionally emails the client invite. Never returns the raw client magic token. |
-| `send_reminder` | `requests:write` | Sends a polite manual reminder for outstanding items, enforcing the 15-minute cooldown and per-request concurrency lock. |
-| `update_due_date` | `requests:write` | Updates or clears `due_at` on an active pack. |
+| `create_request` | `mcp:read` + `requests:write` | Creates a checklist from a workspace template and optionally emails the client invite. Never returns the raw client magic token. |
+| `send_reminder` | `mcp:read` + `requests:write` | Sends a polite manual reminder for outstanding items, enforcing the 15-minute cooldown and per-request concurrency lock. |
+| `update_due_date` | `mcp:read` + `requests:write` | Updates or clears `due_at` on an active pack. |
 
 ## Protocol Versions & Quick Smoke Check
 

@@ -2,7 +2,7 @@ manifestVersion: 1
 id: gathergate
 category: files
 name: GatherGate
-version: "1.1.1"
+version: "1.1.2"
 tagline: Self-hosted magic-link client document checklist and encrypted intake vault
 description: >-
   GatherGate is an open-source, self-hosted client document collection portal,
@@ -15,16 +15,17 @@ website: https://gathergate.app/
 dependencies: []
 repo: https://github.com/FAAS19/gathergate
 support: https://github.com/FAAS19/gathergate/issues
-port: 3080
+port: 3088
+storage:
+  dataRoot: data
 gallery:
   - https://gathergate.app/social-preview.png
 path: ""
 defaultUsername: ""
 defaultPassword: ""
 releaseNotes: >-
-  v1.1.1 switches canonical links to gathergate.app, aligns Official MCP Registry
-  metadata (app.gathergate/gathergate), and includes scoped workspace API keys,
-  6 signed webhook events with a 6-attempt retry queue, built-in stateless MCP 2.0,
-  and container permission hardening.
+  v1.1.2 hardens streaming ZIP export, fail-closed webhook signing, UTF-8/OpenXML
+  upload validation, MCP schema checks, ReviewSheet keyboard triage, and HTTP Range
+  media delivery.
 submitter: TensorForge
 submission: https://github.com/FAAS19/gathergate

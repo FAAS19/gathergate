@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS workspaces (
   email_from TEXT,
   email_reply_to TEXT,
   email_config_encrypted TEXT,
+  brand_color TEXT,
+  logo_mime TEXT,
+  logo_b64 TEXT,
+  support_email TEXT,
+  support_phone TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -98,6 +103,8 @@ CREATE TABLE IF NOT EXISTS request_items (
   config_json TEXT NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'pending',
   value_encrypted TEXT,
+  client_note_encrypted TEXT,
+  client_na INTEGER NOT NULL DEFAULT 0,
   review_note TEXT,
   updated_at TEXT NOT NULL
 );
@@ -160,6 +167,7 @@ CREATE TABLE IF NOT EXISTS outbox_emails (
   recipient TEXT NOT NULL,
   subject TEXT NOT NULL,
   text_body TEXT NOT NULL,
+  html_body TEXT,
   kind TEXT NOT NULL DEFAULT 'general',
   is_demo INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
@@ -360,6 +368,7 @@ function applyVersionedMigrations(db: DatabaseSync): void {
     );
   }
 
+  let appliedAny = false;
   for (const migration of MIGRATIONS) {
     if (applied.has(migration.version)) continue;
     db.exec("BEGIN");
@@ -372,10 +381,15 @@ function applyVersionedMigrations(db: DatabaseSync): void {
       );
       db.exec(`PRAGMA user_version = ${migration.version};`);
       db.exec("COMMIT");
+      appliedAny = true;
     } catch (err) {
       db.exec("ROLLBACK");
       throw err;
     }
+  }
+  if (appliedAny) {
+    // Checkpoint schema_migrations + user_version header offset 60 into main file so read-only doctor sees latest version.
+    db.exec("PRAGMA wal_checkpoint(PASSIVE);");
   }
 }
 

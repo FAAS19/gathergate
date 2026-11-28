@@ -3,7 +3,7 @@ import { useDropzone } from "react-dropzone";
 import { ArrowsClockwise, Camera, CircleNotch, CloudArrowUp, FileText, Trash } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { apiJson, apiUploadWithProgress, ApiError, formatBytes, type RequestItemDto } from "@/lib/api";
+import { apiJson, apiUploadWithProgress, ApiError, formatBytes, IS_DEMO, type RequestItemDto } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const GROUP_ACCEPT: Record<string, Record<string, string[]>> = {
@@ -93,7 +93,8 @@ export function FileField({
         });
         setThumbs((t) => ({ ...t, ...next }));
         // Replace = upload first, then remove the old file, so the item never drops back to pending.
-        if (replaceTarget.current) {
+        // The real backend already deletes prior uploads for single-file items inside the upload handler.
+        if (replaceTarget.current && (item.config.multiple || IS_DEMO)) {
           await apiJson(`/api/client/${token}/uploads/${replaceTarget.current}`, { method: "DELETE" }).catch(() => {});
           replaceTarget.current = null;
         }
@@ -105,13 +106,18 @@ export function FileField({
         replaceTarget.current = null;
       }
     },
-    [item.id, locked, maxMb, onChanged, token]
+    [item.config.multiple, item.id, locked, maxMb, onChanged, token]
   );
 
   const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop: (accepted, rejected) => {
       if (rejected.length && !accepted.length) {
-        setError(`That file type is not accepted here. Use ${typeLabel(item.config.allowedGroups)}.`);
+        const isTooMany = rejected.some((r) => r.errors?.some((e) => e.code === "too-many-files"));
+        setError(
+          isTooMany
+            ? "Only one file is accepted for this item."
+            : `That file type is not accepted here. Use ${typeLabel(item.config.allowedGroups)}.`
+        );
         return;
       }
       void upload(accepted);

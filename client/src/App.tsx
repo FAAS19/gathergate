@@ -130,9 +130,10 @@ function AppRoutes({ onReset }: { onReset: () => void }) {
 
   useEffect(() => {
     if (!isClientPortal) {
-      refreshSession();
+      if (!session) setLoading(true);
+      void refreshSession();
     }
-  }, [isClientPortal, refreshSession]);
+  }, [isClientPortal, refreshSession, session]);
 
   let content: ReactNode;
 
@@ -143,7 +144,7 @@ function AppRoutes({ onReset }: { onReset: () => void }) {
         <Route path="*" element={<ClientPortalPage />} />
       </Routes>
     );
-  } else if (loading) {
+  } else if (loading || (!session && !sessionError)) {
     content = (
       <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">
         Loading GatherGate...

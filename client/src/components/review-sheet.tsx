@@ -285,7 +285,7 @@ export function ReviewSheet({
                   J/K · A · R
                 </span>
               </div>
-              {requestStatus !== "purged" && (
+              {requestStatus !== "purged" && requestStatus !== "expired" && (
                 <div className="flex items-center gap-2">
                   <Button
                     type="button"

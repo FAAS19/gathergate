@@ -8,14 +8,21 @@
     "url": "https://github.com/FAAS19/gathergate",
     "source": "github"
   },
-  "version": "1.1.1",
+  "version": "1.1.2",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "gathergate",
-      "version": "1.1.1",
+      "version": "1.1.2",
       "runtimeHint": "npx",
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "-y",
+          "description": "Skip interactive npx package confirmation prompt"
+        }
+      ],
       "transport": {
         "type": "stdio"
       },

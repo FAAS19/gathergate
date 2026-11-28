@@ -46,9 +46,9 @@ function loadServerVersion(): string {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const pkgPath = path.resolve(here, "..", "..", "package.json");
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as { version?: string };
-    return pkg.version || "1.1.1";
+    return pkg.version || "1.1.2";
   } catch {
-    return "1.1.1";
+    return "1.1.2";
   }
 }
 
@@ -793,12 +793,58 @@ export async function handleMcpJsonRpc(
   return rpcError(id, -32601, `Method not found: ${msg.method}`, undefined, unknownMethodStatus, activeVersion);
 }
 
+const TOOL_ALLOWED_ARGS = new Map<string, Set<string>>(
+  MCP_TOOLS.map((tool) => [
+    tool.name,
+    new Set(Object.keys((tool.inputSchema.properties as Record<string, unknown> | undefined) ?? {})),
+  ])
+);
+
+function parseStrictIsoDate(raw: string): string | null {
+  const trimmed = raw.trim();
+  const match = trimmed.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|([+-]\d{2}):?(\d{2}))?)?$/i
+  );
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const utcCheck = new Date(Date.UTC(year, month - 1, day));
+  if (
+    utcCheck.getUTCFullYear() !== year ||
+    utcCheck.getUTCMonth() + 1 !== month ||
+    utcCheck.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  if (match[4] !== undefined) {
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = match[6] !== undefined ? Number(match[6]) : 0;
+    if (hour > 23 || minute > 59 || second > 59) return null;
+  }
+  if (match[7] !== undefined) {
+    const tzHour = Math.abs(Number(match[7]));
+    const tzMin = Number(match[8]);
+    if (tzHour > 23 || tzMin > 59) return null;
+  }
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 async function executeMcpTool(
   name: string,
   args: Record<string, unknown>,
   auth: McpAuthContext,
   deps: McpHandlerDeps
 ): Promise<Record<string, unknown>> {
+  const allowedKeys = TOOL_ALLOWED_ARGS.get(name);
+  if (!allowedKeys) return toolErr(`Unsupported tool: ${name}`);
+  const unknownKeys = Object.keys(args).filter((k) => !allowedKeys.has(k));
+  if (unknownKeys.length > 0) {
+    return toolErr(`Unknown argument(s) for ${name}: ${unknownKeys.join(", ")}.`);
+  }
+
   const { store, config, nowFn } = deps;
   const actorLabel = `mcp:${auth.apiKey.id}`;
 
@@ -934,6 +980,7 @@ async function executeMcpTool(
           Boolean(r.due_at) &&
           r.due_at! <= cutoffIso
       )
+      .sort((a, b) => a.due_at!.localeCompare(b.due_at!))
       .slice(0, limit);
 
     const overdue = rows.map((r) => {
@@ -970,6 +1017,9 @@ async function executeMcpTool(
     const title = typeof args.title === "string" ? args.title.trim() : "";
     const clientName = typeof args.client_name === "string" ? args.client_name.trim() : "";
     const clientEmail = typeof args.client_email === "string" ? args.client_email.trim().toLowerCase() : "";
+    if (args.welcome_note !== undefined && args.welcome_note !== null && typeof args.welcome_note !== "string") {
+      return toolErr("welcome_note must be a string.");
+    }
     const welcomeNote =
       typeof args.welcome_note === "string" && args.welcome_note.trim()
         ? args.welcome_note.trim()
@@ -983,6 +1033,7 @@ async function executeMcpTool(
       !clientName ||
       clientName.length > 120 ||
       hasCrLf(clientName) ||
+      clientEmail.length > 200 ||
       !isValidEmailAddress(clientEmail) ||
       (welcomeNote && welcomeNote.length > 2000)
     ) {
@@ -994,9 +1045,9 @@ async function executeMcpTool(
     let dueAt: string | null = null;
     if (args.due_at !== undefined && args.due_at !== null && args.due_at !== "") {
       if (typeof args.due_at !== "string") return toolErr("due_at must be an ISO 8601 string or null.");
-      const parsedDue = new Date(args.due_at);
-      if (Number.isNaN(parsedDue.getTime())) return toolErr("Invalid due_at timestamp.");
-      dueAt = parsedDue.toISOString();
+      const parsedIso = parseStrictIsoDate(args.due_at);
+      if (!parsedIso) return toolErr("Invalid due_at timestamp.");
+      dueAt = parsedIso;
     }
 
     const template = store.getTemplate(auth.workspace.id, templateId);
@@ -1064,11 +1115,8 @@ async function executeMcpTool(
         inviteSent = true;
       } catch (err) {
         rawInviteError = err instanceof Error ? err.message : String(err);
-        inviteError = config.multiTenant
-          ? "Invite email failed to send. Check outbound email settings."
-          : err instanceof Error
-            ? err.message
-            : "Invite email failed to send.";
+        // Never leak raw SMTP/Resend error text (may contain unmasked client email or mail-server internals) into LLM context.
+        inviteError = "Invite email failed to send. Check outbound email settings.";
       }
 
       if (inviteSent) {
@@ -1159,12 +1207,13 @@ async function executeMcpTool(
           isDemo: req.is_demo === 1,
         });
       } catch (err) {
-        const detail = config.multiTenant
-          ? "Reminder email failed to send. Check outbound email settings."
-          : err instanceof Error
-            ? err.message
-            : "Reminder email failed to send.";
-        return toolErr(detail);
+        const rawErr = err instanceof Error ? err.message : String(err);
+        safeLogAudit(store, auth.workspace.id, req.id, "system", "reminder.failed", {
+          to: req.client_email,
+          via: "mcp",
+          error: rawErr,
+        });
+        return toolErr("Reminder email failed to send. Check outbound email settings.");
       }
 
       const updated = store.recordManualReminderSent(
@@ -1203,9 +1252,9 @@ async function executeMcpTool(
     if (args.due_at === null || args.due_at === "") {
       nextDue = null;
     } else if (typeof args.due_at === "string") {
-      const parsed = new Date(args.due_at);
-      if (Number.isNaN(parsed.getTime())) return toolErr("Invalid due_at timestamp.");
-      nextDue = parsed.toISOString();
+      const parsedIso = parseStrictIsoDate(args.due_at);
+      if (!parsedIso) return toolErr("Invalid due_at timestamp.");
+      nextDue = parsedIso;
     } else {
       return toolErr("due_at must be an ISO 8601 string or null.");
     }

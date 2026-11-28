@@ -35,6 +35,7 @@ export function TextField({
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const lastSaved = useRef(saved);
+  const savingRef = useRef(false);
   const hintId = useId();
   const hint = item.validator_hint ?? VALIDATOR_OPTIONS.find((v) => v.value === item.validator)?.hint;
 
@@ -45,7 +46,8 @@ export function TextField({
 
   async function save() {
     const trimmed = value.trim();
-    if (!trimmed || trimmed === lastSaved.current.trim()) return;
+    if (savingRef.current || !trimmed || trimmed === lastSaved.current.trim()) return;
+    savingRef.current = true;
     setState("saving");
     setError(null);
     try {
@@ -65,6 +67,8 @@ export function TextField({
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save. Try again.");
       setState("error");
+    } finally {
+      savingRef.current = false;
     }
   }
 

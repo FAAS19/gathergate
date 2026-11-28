@@ -47,9 +47,9 @@ export function getPackageVersion(): string {
   try {
     const pkgPath = path.join(resolvePackageRoot(), "package.json");
     const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as { version?: string };
-    return pkg.version || "1.1.1";
+    return pkg.version || "1.1.2";
   } catch {
-    return "1.1.1";
+    return "1.1.2";
   }
 }
 
@@ -307,6 +307,8 @@ export async function runDoctor(options?: {
   const requiredAssets = [
     path.join(pkgRoot, "client", "dist", "index.html"),
     path.join(pkgRoot, "skills", "gathergate", "SKILL.md"),
+    path.join(pkgRoot, "skills", "gathergate", "references", "intake-workflows.md"),
+    path.join(pkgRoot, "skills", "gathergate", "references", "security-boundary.md"),
     path.join(pkgRoot, "server.json"),
   ];
   const missingAssets = requiredAssets
@@ -366,6 +368,7 @@ export async function runDoctor(options?: {
           });
         }
       } else {
+        await healthRes.body?.cancel().catch(() => {});
         checks.push({
           name: "remote_health",
           status: explicitUrl ? "fail" : "warn",
@@ -445,18 +448,21 @@ export async function runDoctor(options?: {
           signal: AbortSignal.timeout(5_000),
         });
         if (discoverRes.status === 401) {
+          await discoverRes.body?.cancel().catch(() => {});
           checks.push({
             name: "remote_mcp",
             status: "fail",
             detail: "POST /mcp rejected GATHERGATE_API_KEY with HTTP 401 (invalid, expired, or revoked key).",
           });
         } else if (discoverRes.status === 403) {
+          await discoverRes.body?.cancel().catch(() => {});
           checks.push({
             name: "remote_mcp",
             status: "fail",
             detail: 'POST /mcp returned HTTP 403 (ensure API key includes the "mcp:read" scope).',
           });
         } else if (!discoverRes.ok) {
+          await discoverRes.body?.cancel().catch(() => {});
           checks.push({
             name: "remote_mcp",
             status: "fail",
@@ -490,12 +496,18 @@ export async function runDoctor(options?: {
               redirect: "error",
               signal: AbortSignal.timeout(5_000),
             });
-            const toolsJson = toolsRes.ok
-              ? ((await toolsRes.json().catch(() => null)) as {
-                  error?: { code?: number; message?: string };
-                  result?: { tools?: unknown };
-                } | null)
-              : null;
+            let toolsJson: {
+              error?: { code?: number; message?: string };
+              result?: { tools?: unknown };
+            } | null = null;
+            if (toolsRes.ok) {
+              toolsJson = (await toolsRes.json().catch(() => null)) as {
+                error?: { code?: number; message?: string };
+                result?: { tools?: unknown };
+              } | null;
+            } else {
+              await toolsRes.body?.cancel().catch(() => {});
+            }
             if (!toolsRes.ok) {
               checks.push({
                 name: "remote_mcp",
@@ -680,9 +692,11 @@ export async function runMcpStdioBridge(options: McpBridgeOptions): Promise<numb
       if (effectiveVersion === MCP_MODERN_VERSION && method) {
         headers["mcp-method"] = method;
         if ((method === "tools/call" || method === "prompts/get") && typeof params.name === "string") {
-          headers["mcp-name"] = params.name.trim();
+          const trimmedName = params.name.trim();
+          if (/^[\x20-\x7e]+$/.test(trimmedName)) headers["mcp-name"] = trimmedName;
         } else if (method === "resources/read" && typeof params.uri === "string") {
-          headers["mcp-name"] = params.uri.trim();
+          const trimmedUri = params.uri.trim();
+          if (/^[\x20-\x7e]+$/.test(trimmedUri)) headers["mcp-name"] = trimmedUri;
         }
       }
 
@@ -714,14 +728,14 @@ export async function runMcpStdioBridge(options: McpBridgeOptions): Promise<numb
         }
 
         if (responseJson && responseJson.jsonrpc === "2.0") {
-          if (res.ok && method === "initialize") {
+          if (res.ok && !responseJson.error && method === "initialize") {
             const resultObj = responseJson.result as { protocolVersion?: unknown } | undefined;
             if (typeof resultObj?.protocolVersion === "string" && resultObj.protocolVersion.trim()) {
               negotiatedVersion = resultObj.protocolVersion.trim();
             } else if (resVersion) {
               negotiatedVersion = resVersion;
             }
-          } else if (res.ok && method === "server/discover") {
+          } else if (res.ok && !responseJson.error && method === "server/discover") {
             negotiatedVersion = resVersion || MCP_MODERN_VERSION;
           }
           if (expectsResponse) {

@@ -246,7 +246,9 @@ function SortableBuilderItem({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="10">10 MB</SelectItem>
+                    <SelectItem value="15">15 MB</SelectItem>
                     <SelectItem value="20">20 MB</SelectItem>
+                    <SelectItem value="25">25 MB</SelectItem>
                     <SelectItem value="50">50 MB</SelectItem>
                   </SelectContent>
                 </Select>
@@ -884,7 +886,7 @@ export function TemplatesPage({
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmDelete}
-              className="bg-destructive text-white hover:bg-destructive/90"
+              className="bg-red-700 text-white hover:bg-red-800 dark:bg-red-700 dark:hover:bg-red-600"
             >
               Delete
             </AlertDialogAction>

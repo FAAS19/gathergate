@@ -17,6 +17,11 @@ export default defineConfig({
       description:
         "Self-hosting, security, deterministic validator packs, and integration guides for GatherGate.",
       favicon: "/favicon.svg",
+      head: [
+        { tag: "meta", attrs: { property: "og:image", content: "https://gathergate.app/social-preview.png" } },
+        { tag: "meta", attrs: { property: "og:locale", content: "en_AU" } },
+        { tag: "meta", attrs: { name: "twitter:image", content: "https://gathergate.app/social-preview.png" } },
+      ],
       logo: {
         light: "./src/assets/logo-light.svg",
         dark: "./src/assets/logo-dark.svg",
