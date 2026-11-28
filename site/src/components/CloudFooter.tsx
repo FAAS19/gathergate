@@ -1,5 +1,5 @@
-import { ArrowRight } from "@phosphor-icons/react";
 import { BrandMark } from "./BrandMark";
+import { ArrowRight } from "./Icons";
 
 const FOOTER_LINKS = [
   { label: "Docs", href: "./docs/", external: false },

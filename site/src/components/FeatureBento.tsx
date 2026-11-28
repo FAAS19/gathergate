@@ -1,10 +1,5 @@
 import { useState } from "react";
-import {
-  NotePencil,
-  Palette,
-  Password,
-  UploadSimple,
-} from "@phosphor-icons/react";
+import { NotePencil, Palette, Password, UploadSimple } from "./Icons";
 
 type PlaygroundCheck = {
   valid: boolean;
