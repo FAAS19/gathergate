@@ -269,8 +269,8 @@ test("showcase site renders cleanly under /gathergate/ subpath with 0 broken ass
     },
     {
       name: /AI agent/i,
-      text: /gathergate\.tensorforge\.dev\/llms\.txt/,
-      copied: /^Read https:\/\/gathergate\.tensorforge\.dev\/llms\.txt and help me install GatherGate\.\nCheck whether Docker or Node\.js >= 22\.13 is installed/,
+      text: /gathergate\.app\/llms\.txt/,
+      copied: /^Read https:\/\/gathergate\.app\/llms\.txt and help me install GatherGate\.\nCheck whether Docker or Node\.js >= 22\.13 is installed/,
       alwaysFit: true,
     },
   ];
@@ -379,7 +379,7 @@ test("showcase site renders cleanly under /gathergate/ subpath with 0 broken ass
   expect(llmsBody).toMatch(/\[[^\]]+\]\(https:\/\/[^)\s]+\)/);
   expect(llmsBody).toContain("GET http://127.0.0.1:3080/healthz");
   expect(llmsBody).toContain("MASTER_KEY");
-  expect(llmsBody).toContain("https://gathergate.tensorforge.dev/#watch");
+  expect(llmsBody).toContain("https://gathergate.app/#watch");
 
   await expectAccessible(page, testInfo, "pages-showcase");
   expect(issues).toEqual([]);
@@ -543,15 +543,15 @@ test("Astro Starlight docs render cleanly under /docs/ with search, navigation, 
   // Verify Starlight sidebar external links never double-prefix /docs/ or add trailing slash to .txt
   await expect(page.locator("nav a", { hasText: "Full Docs (llms-full.txt)" })).toHaveAttribute(
     "href",
-    "https://gathergate.tensorforge.dev/docs/llms-full.txt"
+    "https://gathergate.app/docs/llms-full.txt"
   );
   await expect(page.locator("nav a", { hasText: "Interactive Demo" })).toHaveAttribute(
     "href",
-    "https://gathergate.tensorforge.dev/demo/#/"
+    "https://gathergate.app/demo/#/"
   );
   await expect(page.locator("nav a", { hasText: "GatherGate Home" })).toHaveAttribute(
     "href",
-    "https://gathergate.tensorforge.dev/"
+    "https://gathergate.app/"
   );
 
   await page.getByRole("link", { name: /Quickstart/i }).first().click();
@@ -588,7 +588,7 @@ test("Astro Starlight docs render cleanly under /docs/ with search, navigation, 
   expect(fullTxt).toContain("# GatherGate Documentation (Full Agent Reference)");
   expect(fullTxt).toContain("POST /mcp");
   expect(fullTxt).toContain("render.yaml");
-  expect(fullTxt).toContain("https://gathergate.tensorforge.dev/#watch");
+  expect(fullTxt).toContain("https://gathergate.app/#watch");
   expect(fullTxt).not.toContain("<video");
   expect(fullTxt).not.toContain("<figure");
   expect(fullTxt.includes("\u2014")).toBe(false);

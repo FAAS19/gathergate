@@ -1,5 +1,5 @@
 # Coolify service template for self-hosted GatherGate
-# Documentation: https://gathergate.tensorforge.dev/docs/deployment/one-click-templates/
+# Documentation: https://gathergate.app/docs/deployment/one-click-templates/
 services:
   gathergate:
     image: ghcr.io/faas19/gathergate:latest

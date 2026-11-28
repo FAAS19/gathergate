@@ -1,7 +1,7 @@
 import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
-const docsSite = (process.env.DOCS_SITE || "https://gathergate.tensorforge.dev").replace(/\/+$/, "");
+const docsSite = (process.env.DOCS_SITE || "https://gathergate.app").replace(/\/+$/, "");
 const docsBase = process.env.DOCS_BASE || "/docs";
 const normalizedDocsBase = docsBase.endsWith("/") ? docsBase : `${docsBase}/`;
 const siteRoot = normalizedDocsBase.replace(/docs\/$/, "") || "/";
