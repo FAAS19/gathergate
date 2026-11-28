@@ -2,7 +2,7 @@ import { ArrowRight, LockSimple } from "@phosphor-icons/react";
 
 export function Hero() {
   return (
-    <section className="pt-10 pb-14 lg:pt-14 lg:pb-20">
+    <section className="pt-10 pb-10 lg:pt-14 lg:pb-12">
       <div className="mx-auto max-w-[1280px] px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 items-center gap-10 lg:grid-cols-12 lg:gap-12">
           <div className="lg:col-span-5">
