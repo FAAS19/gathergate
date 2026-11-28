@@ -3,6 +3,7 @@ import { CompareSection } from "./components/CompareSection";
 import { FeatureBento } from "./components/FeatureBento";
 import { Hero } from "./components/Hero";
 import { Navbar } from "./components/Navbar";
+import { ProductFilmSection } from "./components/ProductFilmSection";
 import { SelfHostSection } from "./components/SelfHostSection";
 import { WalkthroughSection } from "./components/WalkthroughSection";
 
@@ -20,6 +21,7 @@ export function App() {
 
       <main id="main-content">
         <Hero />
+        <ProductFilmSection />
         <WalkthroughSection />
         <FeatureBento />
         <SelfHostSection />

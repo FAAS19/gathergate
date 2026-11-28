@@ -33,8 +33,10 @@ Self-hosted, open-source alternative to Content Snare and FileInvite. Collect cl
 
 </div>
 
+https://github.com/user-attachments/assets/8d4279c9-6d57-4704-b8c6-bd3d957bf0f6
+
 <p align="center">
-  <img src=".github/assets/demo-workflow.webp" width="100%" alt="GatherGate workflow: passwordless client ABN mod-89 validation, encrypted tax invoice upload, and dark-mode operator review" />
+  <sub>51-second product walkthrough (1080p, audio) &middot; <a href="https://gathergate.tensorforge.dev/#watch">Watch with English captions on gathergate.tensorforge.dev</a></sub>
 </p>
 
 ## Why GatherGate

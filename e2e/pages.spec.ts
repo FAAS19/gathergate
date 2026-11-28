@@ -20,6 +20,8 @@ const MIME_TYPES: Record<string, string> = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
+  ".mp4": "video/mp4",
+  ".vtt": "text/vtt; charset=utf-8",
   ".woff2": "font/woff2",
   ".woff": "font/woff",
   ".txt": "text/plain; charset=utf-8",
@@ -61,7 +63,11 @@ test.beforeAll(async () => {
     let rel: string | null = null;
     if (pathname.startsWith(PREFIX)) {
       rel = pathname.slice(PREFIX.length);
-    } else if (pathname.startsWith("/docs/") || pathname === "/favicon.svg") {
+    } else if (
+      pathname.startsWith("/docs/") ||
+      pathname.startsWith("/media/") ||
+      pathname === "/favicon.svg"
+    ) {
       rel = pathname.slice(1);
     }
     if (rel === null) {
@@ -95,9 +101,66 @@ test.beforeAll(async () => {
       return;
     }
 
+    const stat = fs.statSync(target);
     const ext = path.extname(target).toLowerCase();
-    res.writeHead(200, { "Content-Type": MIME_TYPES[ext] || "application/octet-stream" });
-    fs.createReadStream(target).pipe(res);
+    const contentType = MIME_TYPES[ext] || "application/octet-stream";
+    const rangeHeader = req.headers.range;
+
+    const pipeFile = (opts?: { start: number; end: number }) => {
+      const stream = opts ? fs.createReadStream(target, opts) : fs.createReadStream(target);
+      res.on("close", () => stream.destroy());
+      stream.on("error", () => {
+        if (!res.headersSent) {
+          res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+        }
+        res.end();
+      });
+      stream.pipe(res);
+    };
+
+    if (rangeHeader && rangeHeader.trim().startsWith("bytes=") && !rangeHeader.includes(",")) {
+      if (stat.size === 0) {
+        res.writeHead(416, { "Content-Range": "bytes */0" });
+        res.end();
+        return;
+      }
+      const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+      if (!match || (!match[1] && !match[2])) {
+        res.writeHead(416, { "Content-Range": `bytes */${stat.size}` });
+        res.end();
+        return;
+      }
+      const start = match[1] ? Number(match[1]) : Math.max(0, stat.size - Number(match[2]));
+      const end = match[2] && match[1] ? Math.min(stat.size - 1, Number(match[2])) : stat.size - 1;
+      if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stat.size) {
+        res.writeHead(416, { "Content-Range": `bytes */${stat.size}` });
+        res.end();
+        return;
+      }
+      res.writeHead(206, {
+        "Content-Type": contentType,
+        "Content-Range": `bytes ${start}-${end}/${stat.size}`,
+        "Accept-Ranges": "bytes",
+        "Content-Length": String(end - start + 1),
+      });
+      if (req.method === "HEAD") {
+        res.end();
+        return;
+      }
+      pipeFile({ start, end });
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Accept-Ranges": "bytes",
+      "Content-Length": String(stat.size),
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    pipeFile();
   });
 
   await new Promise<void>((resolve) => {
@@ -233,12 +296,73 @@ test("showcase site renders cleanly under /gathergate/ subpath with 0 broken ass
     expect(clipboardText.startsWith("$ ")).toBe(false);
   }
 
+  // Verify compact #watch walkthrough banner card, Light + Dark WCAG 2.2 AA, and native <dialog> focus trap.
+  const watchSection = page.locator("#watch");
+  await expect(watchSection.getByRole("heading", { name: "See GatherGate in action", level: 2 })).toBeVisible();
+  const watchTrigger = watchSection.getByRole("button", { name: "Watch demo" });
+  await expect(watchTrigger).toBeVisible();
+
+  await expectAccessible(page, testInfo, "pages-showcase-light");
+  const themeToggle = page.getByRole("button", { name: /Switch to (dark|light) mode/i });
+  await themeToggle.click();
+  await expectAccessible(page, testInfo, "pages-showcase-dark");
+  await themeToggle.click();
+
+  await watchTrigger.click();
+  const videoDialog = page.getByRole("dialog", { name: "GatherGate product demo" });
+  await expect(videoDialog).toBeVisible();
+  const showcaseVideo = videoDialog.locator("video");
+  await expect(showcaseVideo).toBeVisible();
+  await expect(showcaseVideo.locator('source[type="video/mp4"]')).toHaveAttribute(
+    "src",
+    "./media/gathergate-launch-v2-web.mp4"
+  );
+  await expect(showcaseVideo.locator('track[kind="captions"]')).toHaveAttribute(
+    "src",
+    "./media/gathergate-launch-v2.vtt"
+  );
+  await expectAccessible(page, testInfo, "pages-showcase-video-modal");
+
+  // Confirm Shift+Tab and Tab never escape the native top-layer <dialog> into background page content.
+  await page.keyboard.press("Shift+Tab");
+  expect(await page.evaluate(() => Boolean(document.activeElement?.closest("dialog[open]")))).toBe(true);
+  await page.keyboard.press("Tab");
+  expect(await page.evaluate(() => Boolean(document.activeElement?.closest("dialog[open]")))).toBe(true);
+
+  await page.keyboard.press("Escape");
+  await expect(videoDialog).toHaveCount(0);
+  await expect(watchTrigger).toBeFocused();
+
+  await watchTrigger.click();
+  await expect(videoDialog).toBeVisible();
+  await videoDialog.getByRole("button", { name: "Close video" }).click();
+  await expect(videoDialog).toHaveCount(0);
+
+  const posterRes = await page.request.get(`${baseUrl}/gathergate/media/gathergate-launch-v2-poster.webp`);
+  expect(posterRes.status()).toBe(200);
+  expect(posterRes.headers()["content-type"]).toContain("image/webp");
+
+  const mp4RangeRes = await page.request.get(`${baseUrl}/gathergate/media/gathergate-launch-v2-web.mp4`, {
+    headers: { Range: "bytes=0-1023" },
+  });
+  expect(mp4RangeRes.status()).toBe(206);
+  expect(mp4RangeRes.headers()["content-type"]).toContain("video/mp4");
+
+  const vttRes = await page.request.get(`${baseUrl}/gathergate/media/gathergate-launch-v2.vtt`);
+  expect(vttRes.status()).toBe(200);
+  expect(vttRes.headers()["content-type"]).toContain("text/vtt");
+  const vttBody = await vttRes.text();
+  expect(vttBody).toContain("WEBVTT");
+  expect(vttBody).toContain("GatherGate");
+  expect(vttBody).not.toContain("Gather Gate");
+
   const llmsRes = await page.request.get(`${baseUrl}/gathergate/llms.txt`);
   expect(llmsRes.status()).toBe(200);
   expect(llmsRes.headers()["content-type"]).toContain("text/plain");
   const llmsBody = await llmsRes.text();
   expect(llmsBody).toContain("GET http://127.0.0.1:3080/healthz");
   expect(llmsBody).toContain("MASTER_KEY");
+  expect(llmsBody).toContain("https://gathergate.tensorforge.dev/#watch");
 
   await expectAccessible(page, testInfo, "pages-showcase");
   expect(issues).toEqual([]);
@@ -386,6 +510,18 @@ test("Astro Starlight docs render cleanly under /docs/ with search, navigation, 
 
   await page.goto(`${baseUrl}/docs/`);
   await expect(page.getByRole("heading", { name: "GatherGate Documentation", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Product Walkthrough", level: 2 })).toBeVisible();
+  const docsVideo = page.locator("video");
+  await expect(docsVideo).toBeVisible();
+  await expect(docsVideo.locator('source[type="video/mp4"]')).toHaveAttribute(
+    "src",
+    "../media/gathergate-launch-v2-web.mp4"
+  );
+  await expect(docsVideo.locator('track[kind="captions"]')).toHaveAttribute(
+    "src",
+    "../media/gathergate-launch-v2.vtt"
+  );
+  await expectAccessible(page, testInfo, "pages-docs-index");
 
   // Verify Starlight sidebar external links never double-prefix /docs/ or add trailing slash to .txt
   await expect(page.locator("nav a", { hasText: "Full Docs (llms-full.txt)" })).toHaveAttribute(
@@ -435,6 +571,9 @@ test("Astro Starlight docs render cleanly under /docs/ with search, navigation, 
   expect(fullTxt).toContain("# GatherGate Documentation (Full Agent Reference)");
   expect(fullTxt).toContain("POST /mcp");
   expect(fullTxt).toContain("render.yaml");
+  expect(fullTxt).toContain("https://gathergate.tensorforge.dev/#watch");
+  expect(fullTxt).not.toContain("<video");
+  expect(fullTxt).not.toContain("<figure");
   expect(fullTxt.includes("\u2014")).toBe(false);
 
   for (const [mdPath, expectedText] of [
@@ -451,6 +590,8 @@ test("Astro Starlight docs render cleanly under /docs/ with search, navigation, 
     expect(mdText).toContain(expectedText);
     expect(mdText.includes("\u2014")).toBe(false);
     expect(mdText).not.toContain("import {");
+    expect(mdText).not.toContain("<video");
+    expect(mdText).not.toContain("<figure");
   }
 
   expect(issues).toEqual([]);

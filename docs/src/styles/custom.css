@@ -21,6 +21,7 @@
   --sl-color-gray-5: #26262c;
   --sl-color-gray-6: #121215;
   --sl-color-black: #09090b;
+  --gg-stage-bg: #09090b;
 }
 
 /* Daylight-first warm neutral light mode + pine accent */
@@ -65,4 +66,23 @@ h3,
     overflow-wrap: anywhere;
     word-break: break-word;
   }
+}
+
+.gg-video-frame {
+  margin: 1.25rem 0 0;
+}
+
+.gg-video-frame video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 0.75rem;
+  border: 1px solid var(--sl-color-gray-5);
+  background: var(--gg-stage-bg);
+}
+
+.gg-video-frame figcaption {
+  margin-top: 0.625rem;
+  font-size: 0.875rem;
+  color: var(--sl-color-gray-2);
 }

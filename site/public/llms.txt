@@ -3,6 +3,7 @@
 > Self-hosted, MIT-licenced magic-link client document intake portal, deterministic validator engine, and operator review console. Built on Node.js >= 22.13 (Node 24+ recommended), Hono (5 backend production dependencies), SQLite WAL (`node:sqlite`), AES-256-GCM per-record encryption, React 19, and Tailwind CSS v4 with zero telemetry.
 
 - Website: https://gathergate.tensorforge.dev/
+- Product walkthrough video (51s, 1080p, English captions): https://gathergate.tensorforge.dev/#watch
 - Documentation: https://gathergate.tensorforge.dev/docs/
 - Full compiled docs (agent reference): https://gathergate.tensorforge.dev/docs/llms-full.txt
 - Per-page raw Markdown: append `.md` to any docs slug (e.g. `https://gathergate.tensorforge.dev/docs/guides/ai-agents.md`, `https://gathergate.tensorforge.dev/docs/deployment/one-click-templates.md`)
