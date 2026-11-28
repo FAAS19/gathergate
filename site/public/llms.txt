@@ -2,17 +2,20 @@
 
 > Self-hosted, MIT-licenced magic-link client document intake portal, deterministic validator engine, and operator review console. Built on Node.js >= 22.13 (Node 24+ recommended), Hono (5 backend production dependencies), SQLite WAL (`node:sqlite`), AES-256-GCM per-record encryption, React 19, and Tailwind CSS v4 with zero telemetry.
 
-- Website: https://gathergate.tensorforge.dev/
-- Product walkthrough video (51s, 1080p, English captions): https://gathergate.tensorforge.dev/#watch
-- Documentation: https://gathergate.tensorforge.dev/docs/
-- Full compiled docs (agent reference): https://gathergate.tensorforge.dev/docs/llms-full.txt
-- Per-page raw Markdown: append `.md` to any docs slug (e.g. `https://gathergate.tensorforge.dev/docs/guides/ai-agents.md`, `https://gathergate.tensorforge.dev/docs/deployment/one-click-templates.md`)
-- Interactive browser demo (no server): https://gathergate.tensorforge.dev/demo/#/
-- Source repository: https://github.com/FAAS19/gathergate
-- MCP Registry manifest: https://github.com/FAAS19/gathergate/blob/main/server.json
-- Bundled Agent Skill (`SKILL.md`, `SEP-2640`): https://github.com/FAAS19/gathergate/blob/main/skills/gathergate/SKILL.md
-- Security policy: https://github.com/FAAS19/gathergate/blob/main/SECURITY.md
-- Contact: contact@tensorforge.dev
+## Resources
+
+- [GatherGate Website](https://gathergate.tensorforge.dev/): Product overview, interactive validator playground, and self-hosting commands.
+- [Product Walkthrough Video](https://gathergate.tensorforge.dev/#watch): 51-second end-to-end demo (1080p, English captions).
+- [Documentation](https://gathergate.tensorforge.dev/docs/): Self-hosting, security, validator pack, and MCP integration guides.
+- [Full Compiled Docs (llms-full.txt)](https://gathergate.tensorforge.dev/docs/llms-full.txt): Single-file agent reference for the full documentation set.
+- [AI Agents & MCP Guide (Markdown)](https://gathergate.tensorforge.dev/docs/guides/ai-agents.md): Per-page raw Markdown (append `.md` to any docs slug).
+- [1-Click Self-Hosted Deploy Templates (Markdown)](https://gathergate.tensorforge.dev/docs/deployment/one-click-templates.md): Render (`render.yaml`), Coolify, Dokploy, Railway, Umbrel, CasaOS, and Fly.io manifests.
+- [Interactive Browser Demo](https://gathergate.tensorforge.dev/demo/#/): Full client portal and operator review console in the browser (no server required).
+- [Source Repository](https://github.com/FAAS19/gathergate): MIT-licenced source code, Dockerfiles, and Playwright test suite.
+- [MCP Registry Manifest](https://github.com/FAAS19/gathergate/blob/main/server.json): Official MCP server registration metadata.
+- [Bundled Agent Skill (SKILL.md, SEP-2640)](https://github.com/FAAS19/gathergate/blob/main/skills/gathergate/SKILL.md): Agent skill instructions served via `skill://gathergate/SKILL.md`.
+- [Security Policy](https://github.com/FAAS19/gathergate/blob/main/SECURITY.md): Threat model and vulnerability disclosure policy.
+- [Contact](mailto:contact@tensorforge.dev): `contact@tensorforge.dev`
 
 ## Agent Installation Protocol
 
@@ -75,8 +78,8 @@ Every self-hosted GatherGate server exposes a stateless Streamable HTTP MCP endp
 - **Metadata-only invariant**: MCP tools (`list_templates`, `list_requests`, `get_request_status`, `list_overdue_requests`, `create_request`, `send_reminder`, `update_due_date`) return pack metadata (including `client_name` for non-purged requests and masked emails) and never expose decrypted TFNs/Medicare/NINO/SSN values, submitted item values, client notes, uploaded file names, file bytes, workspace secrets, or raw magic-link tokens.
 - **Zero-Docker stdio bridge**: Stdio-only MCP clients (such as Claude Desktop) can connect directly via `npx -y gathergate mcp` with `GATHERGATE_URL` and `GATHERGATE_API_KEY` (zero `mcp-remote` required; non-loopback endpoints require `https://`).
 - **Bundled Skill (`SEP-2640`)**: Discoverable via `skills/list` / `skills/get` and readable at `skill://gathergate/SKILL.md`.
-- **Agent setup guides**: https://gathergate.tensorforge.dev/docs/guides/ai-agents.md
-- **1-Click deploy manifests** (Render `render.yaml`, Coolify, Dokploy, Railway, Umbrel, CasaOS, Fly.io): https://gathergate.tensorforge.dev/docs/deployment/one-click-templates.md
+- **Agent setup guides**: [AI Agents & MCP 2.0](https://gathergate.tensorforge.dev/docs/guides/ai-agents.md)
+- **1-Click deploy manifests** (Render `render.yaml`, Coolify, Dokploy, Railway, Umbrel, CasaOS, Fly.io): [1-Click Deploy Templates](https://gathergate.tensorforge.dev/docs/deployment/one-click-templates.md)
 
 ## Agent Safety Rules
 

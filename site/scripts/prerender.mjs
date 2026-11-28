@@ -59,7 +59,7 @@ try {
   }
   html = html.replace(rootMarker, () => `<div id="root">${appHtml}</div>`);
 
-  // Extract Hero LCP image attributes and hoist one preload before the inlined <style> block.
+  // Extract Hero LCP image attributes and hoist one preload before the module <script>.
   const lcpImgMatch = appHtml.match(/<img\b[^>]*fetchpriority="high"[^>]*>/i);
   if (!lcpImgMatch) {
     throw new Error('Expected Hero LCP <img> with fetchpriority="high" in SSR markup');
@@ -98,8 +98,14 @@ try {
       throw new Error(`Inlined CSS referenced missing font/asset: ./assets/${match[2]}`);
     }
   }
-  html = html.replace(cssLinkRe, () => `${preloadTag}\n    <style>${inlinedCss}</style>\n  `);
-  fs.rmSync(cssAbsPath, { force: true });
+  html = html.replace(cssLinkRe, () => `<style>${inlinedCss}</style>\n  `);
+
+  // Place Hero LCP image preload before the module script so the 18 KB LCP WebP queues ahead of JS.
+  const moduleScriptRe = /<script\b[^>]*\btype="module"(?=[\s>])/i;
+  if (!moduleScriptRe.test(html)) {
+    throw new Error(`Expected module <script> in ${indexPath}`);
+  }
+  html = html.replace(moduleScriptRe, (m) => `${preloadTag}\n    ${m}`);
 
   // Fail closed if any root-relative /assets/ URL remains anywhere in the final document.
   if (/(["'\s,(])\/assets\//.test(html)) {
@@ -128,6 +134,7 @@ try {
   }
 
   fs.writeFileSync(indexPath, html, "utf8");
+  fs.rmSync(cssAbsPath, { force: true });
   console.log(
     `Prerendered site/dist/index.html (${Buffer.byteLength(html, "utf8").toLocaleString()} B, CSS inlined: ${Buffer.byteLength(inlinedCss, "utf8").toLocaleString()} B)`
   );
