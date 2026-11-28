@@ -1,11 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import {
-  Check,
-  Copy,
-  Database,
-  EnvelopeSimple,
-  ShieldCheck,
-} from "@phosphor-icons/react";
+import { Check, Copy, Database, EnvelopeSimple, ShieldCheck } from "./Icons";
 
 type DeployTabId = "npx" | "run" | "compose" | "agent";
 

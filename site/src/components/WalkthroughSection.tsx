@@ -1,11 +1,18 @@
 import { useRef, useState, type KeyboardEvent } from "react";
+import portalDesktop1280 from "../assets/screenshots/client-portal-desktop-1280.webp";
+import portalDesktop720 from "../assets/screenshots/client-portal-desktop-720.webp";
+import portalMobile540 from "../assets/screenshots/client-portal-mobile-540.webp";
+import review1280 from "../assets/screenshots/operator-review-1280.webp";
+import review720 from "../assets/screenshots/operator-review-720.webp";
+import reviewDark1280 from "../assets/screenshots/operator-review-dark-1280.webp";
+import reviewDark720 from "../assets/screenshots/operator-review-dark-720.webp";
 import {
   ArrowRight,
   CheckCircle,
   DeviceMobileCamera,
   ListChecks,
   LockSimple,
-} from "@phosphor-icons/react";
+} from "./Icons";
 
 type WalkthroughTabId = "operator" | "portal" | "mobile";
 
@@ -20,9 +27,20 @@ const TABS: readonly TabMeta[] = [
   { id: "mobile", label: "Mobile intake" },
 ];
 
-export function WalkthroughSection() {
+interface WalkthroughSectionProps {
+  isDark: boolean;
+}
+
+export function WalkthroughSection({ isDark }: WalkthroughSectionProps) {
   const [activeTab, setActiveTab] = useState<WalkthroughTabId>("operator");
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const reviewSrc = isDark ? reviewDark1280 : review1280;
+  const reviewSrcSet = isDark
+    ? `${reviewDark720} 720w, ${reviewDark1280} 1280w`
+    : `${review720} 720w, ${review1280} 1280w`;
+  const reviewAlt = isDark
+    ? "GatherGate inline review sheet in dark mode displaying a decrypted client tax invoice alongside approve and revision controls"
+    : "GatherGate inline review sheet displaying a decrypted client tax invoice alongside approve and revision controls";
 
   function handleKeyDown(e: KeyboardEvent<HTMLButtonElement>, index: number) {
     let nextIndex = index;
@@ -101,7 +119,7 @@ export function WalkthroughSection() {
               id="panel-operator"
               aria-labelledby="tab-operator"
               tabIndex={0}
-              className="animate-in fade-in duration-200 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--accent)] rounded-xl"
+              className="gg-tab-panel focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--accent)] rounded-xl"
             >
               <div className="frame-shadow overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
                 <div className="flex h-8 items-center gap-2 border-b border-[var(--border)] bg-[var(--surface-muted)] px-3.5">
@@ -114,18 +132,15 @@ export function WalkthroughSection() {
                   </span>
                 </div>
                 <img
-                  src="./screenshots/operator-review.png"
-                  alt="GatherGate inline review sheet displaying a decrypted client tax invoice alongside approve and revision controls"
+                  src={reviewSrc}
+                  srcSet={reviewSrcSet}
+                  sizes="(min-width: 1280px) 1214px, 94vw"
+                  alt={reviewAlt}
                   width={1280}
                   height={800}
-                  className="block aspect-[16/10] w-full bg-[var(--surface-muted)] object-cover object-top dark:hidden"
-                />
-                <img
-                  src="./screenshots/operator-review-dark.png"
-                  alt="GatherGate inline review sheet in dark mode displaying a decrypted client tax invoice alongside approve and revision controls"
-                  width={1280}
-                  height={800}
-                  className="hidden aspect-[16/10] w-full bg-[var(--surface-muted)] object-cover object-top dark:block"
+                  loading="lazy"
+                  decoding="async"
+                  className="block aspect-[16/10] w-full bg-[var(--surface-muted)] object-cover object-top"
                 />
               </div>
 
@@ -151,7 +166,7 @@ export function WalkthroughSection() {
               id="panel-portal"
               aria-labelledby="tab-portal"
               tabIndex={0}
-              className="animate-in fade-in duration-200 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--accent)] rounded-xl"
+              className="gg-tab-panel focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--accent)] rounded-xl"
             >
               <div className="frame-shadow overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)]">
                 <div className="flex h-8 items-center gap-2 border-b border-[var(--border)] bg-[var(--surface-muted)] px-3.5">
@@ -164,10 +179,14 @@ export function WalkthroughSection() {
                   </span>
                 </div>
                 <img
-                  src="./screenshots/client-portal-desktop.png"
+                  src={portalDesktop1280}
+                  srcSet={`${portalDesktop720} 720w, ${portalDesktop1280} 1280w`}
+                  sizes="(min-width: 1280px) 1214px, 94vw"
                   alt="GatherGate desktop client portal showing checklist sections, drag-and-drop uploads, and live validation feedback"
                   width={1280}
                   height={800}
+                  loading="lazy"
+                  decoding="async"
                   className="block aspect-[16/10] w-full bg-[var(--surface-muted)] object-cover object-top"
                 />
               </div>
@@ -195,16 +214,18 @@ export function WalkthroughSection() {
               id="panel-mobile"
               aria-labelledby="tab-mobile"
               tabIndex={0}
-              className="animate-in fade-in duration-200 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6 sm:p-10 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--accent)]"
+              className="gg-tab-panel rounded-xl border border-[var(--border)] bg-[var(--surface)] p-6 sm:p-10 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[var(--accent)]"
             >
               <div className="grid grid-cols-1 items-center gap-8 md:grid-cols-12">
                 <div className="flex justify-center md:col-span-5">
                   <div className="frame-shadow w-full max-w-[270px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg)] p-2">
                     <img
-                      src="./screenshots/client-portal-mobile.png"
+                      src={portalMobile540}
                       alt="GatherGate mobile client portal showing sticky progress bar and single-column document upload"
                       width={390}
                       height={844}
+                      loading="lazy"
+                      decoding="async"
                       className="block aspect-[390/844] w-full rounded-lg bg-[var(--surface-muted)] object-cover object-top"
                     />
                   </div>

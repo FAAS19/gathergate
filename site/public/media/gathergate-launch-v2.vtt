@@ -1,0 +1,33 @@
+WEBVTT
+
+1
+00:00:00.550 --> 00:00:02.950
+You know how messy client onboarding gets.
+
+2
+00:00:03.450 --> 00:00:10.450
+20 email threads, broken drive links, and finding out weeks later someone mistyped one digit in their ABN.
+
+3
+00:00:11.350 --> 00:00:12.950
+We built GatherGate to fix that.
+
+4
+00:00:13.550 --> 00:00:22.650
+You send one passwordless magic link. If your client mistypes a tax or bank number, deterministic checksums catch it right there before they even hit send.
+
+5
+00:00:23.650 --> 00:00:31.250
+Every upload is verified by its real file signature, then encrypted per record with AES-256-GCM on your own server.
+
+6
+00:00:32.150 --> 00:00:39.050
+On your side, preview decrypted files inline, hit A to approve and lock, and export a clean ZIP or signed webhook.
+
+7
+00:00:40.050 --> 00:00:44.350
+One self-hosted container, zero telemetry, MIT open source.
+
+8
+00:00:45.350 --> 00:00:48.250
+GatherGate, client intake without the chase.
