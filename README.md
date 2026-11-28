@@ -33,7 +33,7 @@ Self-hosted, open-source alternative to Content Snare and FileInvite. Collect cl
 
 </div>
 
-https://github.com/user-attachments/assets/a1c9b1d3-16b6-4778-af5d-9c890bb02a83
+https://github.com/user-attachments/assets/09ed3f8d-235d-4870-ab72-3722d67daae1
 
 <p align="center">
   <sub>51-second product walkthrough (1080p, audio) &middot; <a href="https://gathergate.app/#watch">Watch with English captions on gathergate.app</a></sub>
