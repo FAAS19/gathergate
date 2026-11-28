@@ -25,7 +25,7 @@ fs.writeFileSync(
     {
       name: "gathergate",
       compatibilityDate: "2026-11-27",
-      domains: ["gathergate.tensorforge.dev"],
+      domains: ["gathergate.app"],
       workersDev: false,
       previewUrls: false,
       assets: {

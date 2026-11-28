@@ -33,7 +33,7 @@ const COMMANDS: Record<
     label: "AI agent",
     isPrompt: true,
     command: [
-      "Read https://gathergate.tensorforge.dev/llms.txt and help me install GatherGate.",
+      "Read https://gathergate.app/llms.txt and help me install GatherGate.",
       "Check whether Docker or Node.js >= 22.13 is installed, ask my preferred port and storage path before making changes, start GatherGate, and verify GET /healthz returns 200.",
     ].join("\n"),
   },

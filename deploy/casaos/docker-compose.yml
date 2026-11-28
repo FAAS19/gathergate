@@ -73,6 +73,6 @@ x-casaos:
   port_map: "3080"
   scheme: http
   index: /
-  icon: https://gathergate.tensorforge.dev/favicon.svg
-  thumbnail: https://gathergate.tensorforge.dev/social-preview.png
+  icon: https://gathergate.app/favicon.svg
+  thumbnail: https://gathergate.app/social-preview.png
   store_app_id: gathergate

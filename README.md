@@ -21,11 +21,11 @@ Self-hosted, open-source alternative to Content Snare and FileInvite. Collect cl
 </p>
 
 <p>
-  <a href="https://gathergate.tensorforge.dev/demo/#/"><strong>Live Demo</strong></a> &middot;
-  <a href="https://gathergate.tensorforge.dev/docs/"><strong>Docs</strong></a> &middot;
-  <a href="https://gathergate.tensorforge.dev/">Showcase</a> &middot;
-  <a href="https://gathergate.tensorforge.dev/docs/guides/ai-agents/">AI Agents &amp; MCP 2.0</a> &middot;
-  <a href="https://gathergate.tensorforge.dev/docs/deployment/one-click-templates/">1-Click Deploy</a> &middot;
+  <a href="https://gathergate.app/demo/#/"><strong>Live Demo</strong></a> &middot;
+  <a href="https://gathergate.app/docs/"><strong>Docs</strong></a> &middot;
+  <a href="https://gathergate.app/">Showcase</a> &middot;
+  <a href="https://gathergate.app/docs/guides/ai-agents/">AI Agents &amp; MCP 2.0</a> &middot;
+  <a href="https://gathergate.app/docs/deployment/one-click-templates/">1-Click Deploy</a> &middot;
   <a href="#validator-packs">Validator Packs</a> &middot;
   <a href="#compare">Compare</a> &middot;
   <a href="CONTRIBUTING.md">Contributing</a>
@@ -36,7 +36,7 @@ Self-hosted, open-source alternative to Content Snare and FileInvite. Collect cl
 https://github.com/user-attachments/assets/a1c9b1d3-16b6-4778-af5d-9c890bb02a83
 
 <p align="center">
-  <sub>51-second product walkthrough (1080p, audio) &middot; <a href="https://gathergate.tensorforge.dev/#watch">Watch with English captions on gathergate.tensorforge.dev</a></sub>
+  <sub>51-second product walkthrough (1080p, audio) &middot; <a href="https://gathergate.app/#watch">Watch with English captions on gathergate.app</a></sub>
 </p>
 
 ## Why GatherGate
@@ -47,7 +47,7 @@ https://github.com/user-attachments/assets/a1c9b1d3-16b6-4778-af5d-9c890bb02a83
 
 ## Quickstart
 
-Explore the interactive static demo in your browser at **[gathergate.tensorforge.dev/demo/](https://gathergate.tensorforge.dev/demo/#/)**, or run directly with Node.js (`>= 22.13`):
+Explore the interactive static demo in your browser at **[gathergate.app/demo/](https://gathergate.app/demo/#/)**, or run directly with Node.js (`>= 22.13`):
 
 ```bash
 npx gathergate
@@ -77,7 +77,7 @@ npx gathergate setup --client claude-desktop --url http://127.0.0.1:3080  # Gene
 GATHERGATE_API_KEY=gg_live_... npx gathergate mcp               # Built-in stdio-to-HTTP MCP bridge
 ```
 
-Or deploy on persistent container hosts with 1-click templates: [Render Blueprint](https://render.com/deploy?repo=https://github.com/FAAS19/gathergate) ([`render.yaml`](render.yaml)), [Coolify](deploy/coolify/docker-compose.yml), [Dokploy](deploy/dokploy/docker-compose.yml), [Railway](deploy/railway/railway.json), [Umbrel](deploy/umbrel/umbrel-app.yml), [CasaOS](deploy/casaos/docker-compose.yml), and [Fly.io](deploy/fly/fly.toml) (see the [1-Click Self-Hosted Deploy Guide](https://gathergate.tensorforge.dev/docs/deployment/one-click-templates/)).
+Or deploy on persistent container hosts with 1-click templates: [Render Blueprint](https://render.com/deploy?repo=https://github.com/FAAS19/gathergate) ([`render.yaml`](render.yaml)), [Coolify](deploy/coolify/docker-compose.yml), [Dokploy](deploy/dokploy/docker-compose.yml), [Railway](deploy/railway/railway.json), [Umbrel](deploy/umbrel/umbrel-app.yml), [CasaOS](deploy/casaos/docker-compose.yml), and [Fly.io](deploy/fly/fly.toml) (see the [1-Click Self-Hosted Deploy Guide](https://gathergate.app/docs/deployment/one-click-templates/)).
 
 When `MASTER_KEY` is unset, GatherGate generates a 32-byte key at `DATA_DIR/.master.key` and displays a banner until you move `MASTER_KEY` into your environment (see [`.env.example`](.env.example)). Open `http://127.0.0.1:3080` to initialise your workspace.
 
@@ -111,7 +111,7 @@ Built on Node.js 24 (`node:sqlite` WAL + `node:crypto`), Hono (5 production depe
 - **Magic-byte inspection**: Verifies real file signatures (`PDF`, `PNG`, `JPEG`, `WebP`, `DOCX`, `XLSX`, `CSV`, `TXT`) before storage and rejects executables, HTML, SVG uploads, and arbitrary ZIPs.
 - **Sandboxed inline previews**: Decrypted previews stream with `Content-Security-Policy: default-src 'none'; sandbox`, `X-Content-Type-Options: nosniff`, and `Referrer-Policy: no-referrer`.
 - **Canonical ZIP export, 6 signed webhooks & scoped API keys**: Export consistently named packs (`{client}_{item}_{seq}.{ext}` + `summary.json`), deliver 6 HMAC-SHA256 lifecycle events (`request.opened`, `item.submitted`, `request.in_review`, `request.completed`, `request.overdue`, `request.purged`) backed by a 6-attempt SQLite retry queue (5 exponential retries) with dead-letter replay, and automate via SHA-256-hashed scoped workspace API keys (`gg_live_...`).
-- **Built-in stateless MCP 2.0 server & Agent Skill**: Expose `POST /mcp` (`2026-07-28` + legacy revisions), zero-dependency stdio bridge (`npx gathergate mcp`), Official MCP Registry manifest ([`server.json`](server.json)), and bundled `SEP-2640` skill ([`skills/gathergate/SKILL.md`](skills/gathergate/SKILL.md)) with a strict metadata-only boundary (zero raw IDs, notes, files, or magic tokens in LLM context). See the [AI Agents & MCP 2.0 Guide](https://gathergate.tensorforge.dev/docs/guides/ai-agents/).
+- **Built-in stateless MCP 2.0 server & Agent Skill**: Expose `POST /mcp` (`2026-07-28` + legacy revisions), zero-dependency stdio bridge (`npx gathergate mcp`), Official MCP Registry manifest ([`server.json`](server.json)), and bundled `SEP-2640` skill ([`skills/gathergate/SKILL.md`](skills/gathergate/SKILL.md)) with a strict metadata-only boundary (zero raw IDs, notes, files, or magic tokens in LLM context). See the [AI Agents & MCP 2.0 Guide](https://gathergate.app/docs/guides/ai-agents/).
 - **Scheduled retention auto-purge**: Automatically deletes completed encrypted blobs, erases stored field values, and shreds prior webhook payload rows after your retention window (14 days default for TFN, Medicare, UK NINO, and US SSN packs, 30 days otherwise).
 
 ## Validator Packs
