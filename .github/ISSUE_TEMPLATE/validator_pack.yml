@@ -1,12 +1,12 @@
 name: Country / Domain Validator Pack
-description: Propose or contribute a deterministic Validator Pack (e.g. UK, NZ, US, CA, EU)
+description: Propose or contribute a deterministic Validator Pack (e.g. NZ, CA, SG, JP)
 labels: ["enhancement", "validator-pack", "good first issue"]
 body:
   - type: input
     id: country
     attributes:
       label: Country or domain
-      placeholder: "e.g. United Kingdom (uk), New Zealand (nz), United States (us)"
+      placeholder: "e.g. New Zealand (nz), Canada (ca), Singapore (sg)"
     validations:
       required: true
 
@@ -16,8 +16,8 @@ body:
       label: Identifiers & checksum algorithms
       description: List each identifier, format, and official checksum/validation specification.
       placeholder: |
-        - UK UTR: 10 digits, HMRC weighted mod-11 checksum
-        - UK NINO: prefix rules + format (masked/sensitive)
+        - NZ IRD: 8 or 9 digits, Inland Revenue mod-11 checksum (sensitive)
+        - CA SIN: 9 digits, Luhn mod-10 checksum (masked/sensitive)
     validations:
       required: true
 

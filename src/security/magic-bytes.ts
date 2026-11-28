@@ -36,13 +36,15 @@ function startsWithBytes(buf: Buffer, sig: number[]): boolean {
 }
 
 function isMostlyPrintableUtf8(buf: Buffer): boolean {
-  const sample = buf.subarray(0, Math.min(buf.length, 4096));
-  if (sample.length === 0) return false;
-  // Reject NUL bytes (binary/executable files)
-  for (let i = 0; i < sample.length; i++) {
-    const b = sample[i];
-    if (b === 0x00) return false;
+  if (buf.length === 0) return false;
+  // Reject NUL bytes anywhere in the upload (binary/executable payloads)
+  if (buf.includes(0x00)) return false;
+  // Extend sample end across any trailing UTF-8 continuation bytes so split multi-byte characters validate strictly.
+  let sampleEnd = Math.min(buf.length, 4096);
+  while (sampleEnd < buf.length && sampleEnd < 4099 && (buf[sampleEnd] & 0xc0) === 0x80) {
+    sampleEnd += 1;
   }
+  const sample = buf.subarray(0, sampleEnd);
   try {
     const decoded = new TextDecoder("utf-8", { fatal: true }).decode(sample);
     // Reject obvious HTML/script injection disguised as CSV/TXT
@@ -53,16 +55,24 @@ function isMostlyPrintableUtf8(buf: Buffer): boolean {
   }
 }
 
+const ZIP_EOCD_MARKER = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+
 function detectOpenXmlSubType(buf: Buffer): DetectedFileType | null {
-  // Inspect ZIP entry names without external parsers to distinguish DOCX vs XLSX
-  const ascii = buf.toString("latin1");
-  if (ascii.includes("word/document.xml")) {
+  // Zero-copy Buffer.includes avoids doubling up to 50 MB of RAM via buf.toString("latin1").
+  if (!buf.includes(ZIP_EOCD_MARKER) || !buf.includes("[Content_Types].xml", 0, "latin1")) {
+    return null;
+  }
+  // Reject macro-enabled Office documents (.docm/.xlsm)
+  if (buf.includes("vbaProject.bin", 0, "latin1")) {
+    return null;
+  }
+  if (buf.includes("word/document.xml", 0, "latin1")) {
     return {
       mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       ext: "docx",
     };
   }
-  if (ascii.includes("xl/workbook.xml")) {
+  if (buf.includes("xl/workbook.xml", 0, "latin1")) {
     return {
       mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       ext: "xlsx",

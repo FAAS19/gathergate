@@ -173,7 +173,14 @@ export function ClientsPage({
                     onClick={() => setSelectedEmail(client.email)}
                   >
                     <TableCell>
-                      <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedEmail(client.email);
+                        }}
+                        className="flex w-full cursor-pointer items-center gap-3 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
                         <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/12 text-xs font-semibold text-primary">
                           {getInitials(client.name, "C")}
                         </span>
@@ -181,7 +188,7 @@ export function ClientsPage({
                           <p className="truncate font-medium text-foreground">{client.name}</p>
                           <p className="truncate text-xs text-muted-foreground">{client.email}</p>
                         </div>
-                      </div>
+                      </button>
                     </TableCell>
                     <TableCell className="tabular-nums">
                       <div className="flex items-center gap-2">

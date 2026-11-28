@@ -69,6 +69,7 @@ import {
   type ApiKeyScope,
 } from "./security/auth.js";
 import {
+  createDecryptStream,
   decryptBuffer,
   decryptField,
   encryptBuffer,
@@ -300,6 +301,11 @@ function acceptsApplicationJson(acceptHeader: string): boolean {
   return bestSpecificity > 0 && bestQuality > 0;
 }
 
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1";
+}
+
 function isAllowedMcpOrigin(originHeader: string, baseUrl: string, multiTenant: boolean): boolean {
   let parsed: URL;
   try {
@@ -309,16 +315,15 @@ function isAllowedMcpOrigin(originHeader: string, baseUrl: string, multiTenant: 
   }
   if (parsed.origin !== originHeader) return false;
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  let parsedBase: URL;
   try {
-    if (parsed.origin === new URL(baseUrl).origin) return true;
+    parsedBase = new URL(baseUrl);
   } catch {
     return false;
   }
-  if (!multiTenant && (parsed.protocol === "http:" || parsed.protocol === "https:")) {
-    const host = parsed.hostname.toLowerCase();
-    if (host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1") {
-      return true;
-    }
+  if (parsed.origin === parsedBase.origin) return true;
+  if (!multiTenant && isLoopbackHost(parsedBase.hostname) && isLoopbackHost(parsed.hostname)) {
+    return true;
   }
   return false;
 }
@@ -366,7 +371,7 @@ export function createApp(deps: GatherGateAppDeps) {
   const { config, storage, email } = deps;
   const store = new Store(deps.db);
   const app = new Hono<AppEnv>();
-  const secureCookie = config.baseUrl.startsWith("https://");
+  const secureCookie = /^https:\/\//i.test(config.baseUrl);
   const clientDistDir = deps.clientDistDir ?? resolveDefaultClientDistDir();
   const nowFn = deps.now ?? (() => Date.now());
   const limiter = new RateLimiter(nowFn);
@@ -434,6 +439,32 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   const inFlightReminders = new Set<string>();
+
+  // Same-site CSRF defense-in-depth on cookie-authenticated operator mutations.
+  app.use("/api/*", async (c, next) => {
+    const method = c.req.method.toUpperCase();
+    if (
+      method !== "GET" &&
+      method !== "HEAD" &&
+      method !== "OPTIONS" &&
+      !c.req.path.startsWith("/api/client/") &&
+      !c.req.header("authorization")?.trim() &&
+      Boolean(getCookie(c, SESSION_COOKIE))
+    ) {
+      const originHeader = c.req.header("origin")?.trim();
+      if (originHeader) {
+        if (!isAllowedMcpOrigin(originHeader, config.baseUrl, config.multiTenant)) {
+          return c.json({ error: "Cross-origin request blocked." }, 403);
+        }
+      } else {
+        const fetchSite = c.req.header("sec-fetch-site")?.trim().toLowerCase();
+        if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
+          return c.json({ error: "Cross-origin request blocked." }, 403);
+        }
+      }
+    }
+    return next();
+  });
 
   app.use("/mcp", async (c, next) => {
     const originHeader = c.req.header("origin")?.trim();
@@ -1620,11 +1651,26 @@ export function createApp(deps: GatherGateAppDeps) {
     const items = store.listRequestItems(request.id);
     const uploads = store.listUploadsForRequest(request.id);
 
-    const decryptedFiles: Array<{ entryName: string; data: Buffer }> = [];
+    const entries: Array<{ upload: UploadRow; entryName: string }> = [];
     const usedNames = new Set<string>();
     try {
       for (const u of uploads) {
-        const data = await decryptStoredUpload(storage, config.masterKey, u);
+        // Pre-flight stream decryption verifies AES-GCM tag & storage availability without buffering files in RAM.
+        const encStream = await storage.getStream(u.storage_key);
+        const verifyStream = createDecryptStream(
+          config.masterKey,
+          encStream,
+          {
+            version: u.enc_version,
+            ivHex: u.enc_iv,
+            tagHex: u.enc_tag,
+            saltHex: u.enc_salt,
+          },
+          u.storage_key
+        );
+        for await (const _chunk of verifyStream) {
+          // drain to authenticate GCM tag
+        }
         let entryName = `files/${u.canonical_name}`;
         if (usedNames.has(entryName)) {
           const ext = path.extname(u.canonical_name);
@@ -1632,7 +1678,7 @@ export function createApp(deps: GatherGateAppDeps) {
           entryName = `files/${stem}_${u.id.slice(-4)}${ext}`;
         }
         usedNames.add(entryName);
-        decryptedFiles.push({ entryName, data });
+        entries.push({ upload: u, entryName });
       }
     } catch {
       return c.json({ error: "Could not decrypt one or more pack files." }, 500);
@@ -1666,13 +1712,44 @@ export function createApp(deps: GatherGateAppDeps) {
     };
     zip.addBuffer(Buffer.from(JSON.stringify(manifest, null, 2), "utf8"), "summary.json");
 
-    for (const file of decryptedFiles) {
-      zip.addBuffer(file.data, file.entryName, { compress: false });
+    zip.on("error", (err) => {
+      zip.outputStream.destroy(err);
+    });
+    for (const entry of entries) {
+      const u = entry.upload;
+      zip.addReadStreamLazy(entry.entryName, { compress: false }, (cb) => {
+        storage
+          .getStream(u.storage_key)
+          .then((encStream) => {
+            const decStream = createDecryptStream(
+              config.masterKey,
+              encStream,
+              {
+                version: u.enc_version,
+                ivHex: u.enc_iv,
+                tagHex: u.enc_tag,
+                saltHex: u.enc_salt,
+              },
+              u.storage_key
+            );
+            decStream.on("error", (err) => {
+              zip.outputStream.destroy(err);
+            });
+            cb(null, decStream);
+          })
+          .catch((err) => {
+            cb(err instanceof Error ? err : new Error(String(err)));
+          });
+      });
     }
     zip.end();
 
     store.logAudit(auth.workspace.id, request.id, "operator", "request.exported_zip", {
+      by: auth.user.email,
       fileCount: uploads.length,
+      includesSensitiveValues: items.some(
+        (it) => SENSITIVE_VALIDATORS.has(it.validator) && Boolean(it.value_encrypted)
+      ),
     });
 
     const filename = `${slugify(request.client_name, "client")}-${slugify(request.title, "pack")}.zip`;
@@ -1897,9 +1974,18 @@ export function createApp(deps: GatherGateAppDeps) {
     const auth = requireSessionOnly(c);
     if (auth.error) return auth.error;
     const emailSummary = summarizeWorkspaceEmail(auth.workspace);
+    let webhookSecret = "";
+    let webhookSecretError: string | undefined;
+    try {
+      webhookSecret = resolveWebhookSecret(auth.workspace, config.masterKey) || "";
+    } catch (err) {
+      webhookSecretError =
+        err instanceof Error ? err.message : "Saved webhook secret could not be decrypted.";
+    }
     return c.json({
       webhookUrl: auth.workspace.webhook_url || "",
-      webhookSecret: resolveWebhookSecret(auth.workspace, config.masterKey) || "",
+      webhookSecret,
+      ...(webhookSecretError ? { webhookSecretError } : {}),
       branding: publicBranding(auth.workspace),
       account: {
         id: auth.user.id,
@@ -3099,6 +3185,14 @@ export function createApp(deps: GatherGateAppDeps) {
   });
 
   app.post("/mcp", async (c) => {
+    const contentType = c.req.header("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+    if (contentType !== "application/json") {
+      return c.json(
+        { error: "Unsupported Media Type: POST /mcp requires Content-Type: application/json." },
+        415
+      );
+    }
+
     const acceptHeader = c.req.header("accept")?.trim();
     if (acceptHeader && !acceptsApplicationJson(acceptHeader)) {
       return c.json({ error: "Not Acceptable: POST /mcp responds with application/json." }, 406);
@@ -3218,6 +3312,8 @@ export function createApp(deps: GatherGateAppDeps) {
       })
     );
   }
+
+  app.all("/assets/*", (c) => c.text("Not found", 404));
 
   app.get("*", (c) => {
     const indexPath = path.join(clientDistDir, "index.html");

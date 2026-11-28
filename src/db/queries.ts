@@ -1313,7 +1313,8 @@ export class Store {
     return this.db
       .prepare(
         `SELECT * FROM requests
-         WHERE status IN ('completed', 'expired')
+         WHERE is_demo = 0
+           AND status IN ('completed', 'expired')
            AND purge_at IS NOT NULL
            AND purge_at <= ?`
       )
@@ -1344,7 +1345,13 @@ export class Store {
       const req = this.db.prepare("SELECT * FROM requests WHERE id = ?").get(requestId) as unknown as
         | RequestRow
         | undefined;
-      if (!req || req.status === "purged") {
+      if (
+        !req ||
+        req.status === "purged" ||
+        (req.status !== "completed" && req.status !== "expired") ||
+        !req.purge_at ||
+        req.purge_at > nowIso
+      ) {
         return { finalized: false };
       }
       this.db

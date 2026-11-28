@@ -147,7 +147,7 @@ export function startServer(overrides?: StartServerOverrides): void {
         cronPromise = null;
       });
     };
-    cronTimer = setInterval(runJobs, config.cronIntervalMinutes * 60_000);
+    cronTimer = setInterval(runJobs, Math.min(config.cronIntervalMinutes * 60_000, 2_147_483_647));
     cronTimer.unref();
   }
 

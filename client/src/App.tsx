@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   BrowserRouter,
   HashRouter,
@@ -115,6 +115,8 @@ function AppRoutes({ onReset }: { onReset: () => void }) {
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [loading, setLoading] = useState(!isClientPortal);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
   const refreshSession = useCallback(async () => {
     setSessionError(null);
@@ -130,7 +132,8 @@ function AppRoutes({ onReset }: { onReset: () => void }) {
 
   useEffect(() => {
     if (!isClientPortal) {
-      refreshSession();
+      if (!sessionRef.current) setLoading(true);
+      void refreshSession();
     }
   }, [isClientPortal, refreshSession]);
 
@@ -143,7 +146,7 @@ function AppRoutes({ onReset }: { onReset: () => void }) {
         <Route path="*" element={<ClientPortalPage />} />
       </Routes>
     );
-  } else if (loading) {
+  } else if (loading || (!session && !sessionError)) {
     content = (
       <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">
         Loading GatherGate...

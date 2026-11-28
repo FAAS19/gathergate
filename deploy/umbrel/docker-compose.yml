@@ -1,5 +1,3 @@
-version: "3.7"
-
 services:
   app_proxy:
     environment:
@@ -19,8 +17,9 @@ services:
       HOST: "0.0.0.0"
       PORT: "3080"
       DATA_DIR: /data
-      # Set to a reachable LAN origin (http://<device-host>:3080) or public HTTPS origin before creating requests.
-      BASE_URL: ${BASE_URL:-http://umbrel.local:3080}
+      MASTER_KEY: ${APP_SEED}
+      # Set to a reachable LAN origin (http://<device-host>:3088) or public HTTPS origin before creating requests.
+      BASE_URL: ${BASE_URL:-http://${DEVICE_DOMAIN_NAME:-umbrel.local}:${APP_PROXY_PORT:-3088}}
       TRUST_PROXY: "true"
       TZ: UTC
     volumes:

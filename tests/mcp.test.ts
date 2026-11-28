@@ -1241,3 +1241,206 @@ test("MCP 2.0 hardening: /.well-known 404, CORS preflight, Accept 406, protocol 
     ctx.cleanup();
   }
 });
+
+test("MCP 2.0 hardening: strict args, strict ISO due_at, sanitised email errors, ASC overdue order & HTTP 415", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gathergate-mcp-hardening-"));
+  const config = loadConfig({
+    NODE_ENV: "test",
+    DATA_DIR: tmpDir,
+    MASTER_KEY: crypto.randomBytes(32).toString("hex"),
+    BASE_URL: "http://127.0.0.1:3080",
+    EMAIL_BACKEND: "console",
+    STORAGE_BACKEND: "local",
+    MULTI_TENANT: "false",
+  });
+  const db = openDatabase(path.join(tmpDir, "test.sqlite"));
+  const storage = createStorageAdapter(config);
+  const throwingEmail = {
+    async send() {
+      throw new Error("550 5.1.1 <secret-client@example.com> user unknown on smtp.internal:587");
+    },
+  };
+  const { app, store } = createApp({
+    config,
+    db,
+    storage,
+    email: throwingEmail,
+    now: () => Date.parse("2026-11-28T00:00:00.000Z"),
+  });
+
+  try {
+    const setupRes = await app.request("/api/setup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workspaceName: "Single Tenant Firm",
+        email: "ops@single.test",
+        password: "single-secure-password",
+        loadDemo: false,
+      }),
+    });
+    assert.equal(setupRes.status, 200);
+    const cookie = extractCookie(setupRes.headers.get("set-cookie"), "gg_session");
+    const keyRes = await app.request("/api/api-keys", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ name: "Agent", scopes: ["mcp:read", "requests:write"] }),
+    });
+    const { secret } = (await keyRes.json()) as { secret: string };
+    const auth = { authorization: `Bearer ${secret}`, "content-type": "application/json" };
+
+    // 1. POST /mcp rejects non-JSON Content-Type with HTTP 415
+    const badCt = await app.request("/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${secret}`, "content-type": "text/plain" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    assert.equal(badCt.status, 415);
+
+    const tplsRes = (await (
+      await app.request("/mcp", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "list_templates", arguments: {} } }),
+      })
+    ).json()) as { result: { structuredContent: { templates: Array<{ template_id: string }> } } };
+    const tplId = tplsRes.result.structuredContent.templates[0].template_id;
+
+    // 2. Reject unknown args (e.g. send_email typo) & invalid rollover due_at
+    const unknownArgRes = (await (
+      await app.request("/mcp", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 3,
+          method: "tools/call",
+          params: {
+            name: "create_request",
+            arguments: {
+              template_id: tplId,
+              title: "Typo Test",
+              client_name: "Bob",
+              client_email: "bob@example.com",
+              send_email: false,
+            },
+          },
+        }),
+      })
+    ).json()) as { result: { isError: boolean; content: Array<{ text: string }> } };
+    assert.equal(unknownArgRes.result.isError, true);
+    assert.match(unknownArgRes.result.content[0].text, /Unknown argument/i);
+
+    const rolloverDueRes = (await (
+      await app.request("/mcp", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 4,
+          method: "tools/call",
+          params: {
+            name: "create_request",
+            arguments: {
+              template_id: tplId,
+              title: "Rollover Date",
+              client_name: "Bob",
+              client_email: "bob@example.com",
+              due_at: "2026-02-31",
+            },
+          },
+        }),
+      })
+    ).json()) as { result: { isError: boolean } };
+    assert.equal(rolloverDueRes.result.isError, true);
+
+    // 3. Sanitised email errors in MULTI_TENANT=false (never leak raw email / SMTP host)
+    const createFailMail = (await (
+      await app.request("/mcp", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 5,
+          method: "tools/call",
+          params: {
+            name: "create_request",
+            arguments: {
+              template_id: tplId,
+              title: "Fail Mail",
+              client_name: "Secret Client",
+              client_email: "secret-client@example.com",
+              due_at: "2026-11-01",
+            },
+          },
+        }),
+      })
+    ).json()) as { result: { isError: boolean; structuredContent: { request_id: string; invite_error: string } } };
+    assert.equal(createFailMail.result.isError, false);
+    assert.equal(
+      createFailMail.result.structuredContent.invite_error,
+      "Invite email failed to send. Check outbound email settings."
+    );
+    const req1Id = createFailMail.result.structuredContent.request_id;
+
+    const remindFail = (await (
+      await app.request("/mcp", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 6,
+          method: "tools/call",
+          params: { name: "send_reminder", arguments: { request_id: req1Id } },
+        }),
+      })
+    ).json()) as { result: { isError: boolean; content: Array<{ text: string }> } };
+    assert.equal(remindFail.result.isError, true);
+    assert.equal(
+      remindFail.result.content[0].text,
+      "Reminder email failed to send. Check outbound email settings."
+    );
+    assert.equal(remindFail.result.content[0].text.includes("secret-client@example.com"), false);
+
+    // 4. list_overdue_requests sorts oldest due_at ASC before slicing
+    const createOlder = (await (
+      await app.request("/mcp", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 7,
+          method: "tools/call",
+          params: {
+            name: "create_request",
+            arguments: {
+              template_id: tplId,
+              title: "Oldest Overdue",
+              client_name: "Old",
+              client_email: "old@example.com",
+              due_at: "2026-10-01",
+              send_invite: false,
+            },
+          },
+        }),
+      })
+    ).json()) as { result: { structuredContent: { request_id: string } } };
+
+    const overdueRes = (await (
+      await app.request("/mcp", {
+        method: "POST",
+        headers: auth,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 8,
+          method: "tools/call",
+          params: { name: "list_overdue_requests", arguments: { limit: 1 } },
+        }),
+      })
+    ).json()) as { result: { structuredContent: { requests: Array<{ request_id: string }> } } };
+    assert.equal(overdueRes.result.structuredContent.requests[0].request_id, createOlder.result.structuredContent.request_id);
+  } finally {
+    db.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

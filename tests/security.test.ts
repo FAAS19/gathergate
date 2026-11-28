@@ -17,6 +17,7 @@ import { runPurgeSweep } from "../src/jobs/purge.js";
 import { dispatchCompletionWebhook } from "../src/jobs/webhook.js";
 import { createDecryptStream, decryptBuffer, encryptBuffer, hmacSha256Hex } from "../src/security/crypto.js";
 import { extractClientIp } from "../src/security/rate-limit.js";
+import { detectFileSignature } from "../src/security/magic-bytes.js";
 import { isNonPublicIp, validateWebhookEndpoint } from "../src/security/ssrf.js";
 
 function extractCookie(setCookieHeader: string | null, name: string): string {
@@ -1504,5 +1505,94 @@ test("Security: SSRF IPv6 & credentialed URL guards, Cache-Control no-store, aud
     );
   } finally {
     await new Promise<void>((resolve) => smtpProbe.close(() => resolve()));
+  }
+});
+
+test("Hardening: UTF-8 boundary CSV, OpenXML macro rejection, purge guards, CSRF Origin & /assets 404", async () => {
+  // 1. Multi-byte UTF-8 character straddling byte 4096 in CSV passes; invalid continuation & OpenXML macros fail closed
+  const csvPrefix = Buffer.alloc(4095, 0x61);
+  const multiBytePound = Buffer.from("£100\n", "utf8"); // 0xc2 0xa3 crosses 4096 boundary
+  const csvBuf = Buffer.concat([csvPrefix, multiBytePound]);
+  assert.equal(detectFileSignature(csvBuf, "ledger.csv")?.ext, "csv");
+
+  const invalidUtf8Buf = Buffer.concat([csvPrefix, Buffer.from([0xc2, 0xff])]);
+  assert.equal(detectFileSignature(invalidUtf8Buf, "corrupt.csv"), null);
+
+  const macroDocx = Buffer.concat([
+    Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+    Buffer.from("[Content_Types].xmlword/document.xmlvbaProject.bin", "latin1"),
+    Buffer.from([0x50, 0x4b, 0x05, 0x06]),
+  ]);
+  assert.equal(detectFileSignature(macroDocx, "macro.docx"), null);
+
+  const validDocx = Buffer.concat([
+    Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+    Buffer.from("[Content_Types].xmlword/document.xml", "latin1"),
+    Buffer.from([0x50, 0x4b, 0x05, 0x06]),
+  ]);
+  assert.equal(detectFileSignature(validDocx, "clean.docx")?.ext, "docx");
+
+  // 2. Purge skips is_demo=1 and refuses reopened requests; missing /assets/* returns 404; cross-origin cookie POST returns 403
+  const ctx = await bootSecurityApp();
+  try {
+    const setupRes = await ctx.app.request("/api/setup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        workspaceName: "Hardening Practice",
+        email: "ops@hardening.test",
+        password: "super-secure-password",
+        loadDemo: true,
+      }),
+    });
+    assert.equal(setupRes.status, 200);
+    const cookie = extractCookie(setupRes.headers.get("set-cookie"), "gg_session");
+
+    // Mark demo request completed with past purge_at; runPurgeSweep must skip is_demo=1
+    const wsId = (ctx.db.prepare("SELECT id FROM workspaces LIMIT 1").get() as { id: string }).id;
+    const pastIso = new Date(Date.now() - 86400_000).toISOString();
+    ctx.db
+      .prepare("UPDATE requests SET status = 'completed', purge_at = ? WHERE workspace_id = ? AND is_demo = 1")
+      .run(pastIso, wsId);
+    const purgeDemoRes = await runPurgeSweep({
+      store: ctx.store,
+      storage: ctx.storage,
+      masterKey: ctx.config.masterKey,
+      nowIso: new Date().toISOString(),
+    });
+    assert.equal(purgeDemoRes.requestsPurged, 0);
+
+    // Reopened request cannot be purged by markRequestPurged
+    const createRes = await ctx.app.request("/api/requests", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Reopen Guard Pack",
+        clientName: "Alice",
+        clientEmail: "alice@example.com",
+        sendInvite: false,
+        items: [{ label: "ABN", kind: "text", required: true, validator: "au_abn_mod89" }],
+      }),
+    });
+    const { id: reqId } = (await createRes.json()) as { id: string };
+    assert.equal(ctx.store.markRequestPurged(reqId, new Date().toISOString()).finalized, false);
+
+    // Missing /assets/* returns 404 (not 200 HTML SPA fallback)
+    const missingAsset = await ctx.app.request("/assets/does-not-exist-chunk.js");
+    assert.equal(missingAsset.status, 404);
+
+    // Cross-origin cookie mutation blocked (CSRF defense)
+    const csrfRes = await ctx.app.request("/api/templates", {
+      method: "POST",
+      headers: {
+        cookie,
+        origin: "https://evil.example",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "CSRF", items: [{ label: "A", kind: "text" }] }),
+    });
+    assert.equal(csrfRes.status, 403);
+  } finally {
+    ctx.cleanup();
   }
 });

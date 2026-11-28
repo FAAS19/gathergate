@@ -95,7 +95,7 @@ function SidebarBrandHeader({ workspaceName }: { workspaceName?: string }) {
 
   return (
     <div className="flex items-center justify-between gap-2">
-      <Link to="/" className="min-w-0 flex-1 focus:outline-none">
+      <Link to="/" className="min-w-0 flex-1 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <BrandMark subtitle={workspaceName} />
       </Link>
       <Button

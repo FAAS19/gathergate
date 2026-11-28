@@ -5,7 +5,7 @@ description: Deploy GatherGate on Render, Coolify, Dokploy, Railway, Umbrel, Cas
 
 import { Tabs, TabItem } from "@astrojs/starlight/components";
 
-GatherGate ships audited deployment manifests under `deploy/` and a root `render.yaml` Blueprint for persistent container hosts. Every template pulls the signed multi-arch container image (`ghcr.io/faas19/gathergate:latest`, `linux/amd64` and `linux/arm64`), mounts persistent storage at `/data`, and runs healthchecks against `GET /healthz`.
+GatherGate ships audited deployment manifests under `deploy/` and a root `render.yaml` Blueprint for persistent container hosts. Every container template pulls the multi-arch container image (`ghcr.io/faas19/gathergate:latest`, `linux/amd64` and `linux/arm64` with BuildKit SBOM and provenance attestations) or builds from `Dockerfile` (Railway), mounts persistent storage at `/data`, and runs healthchecks against `GET /healthz`.
 
 ## Prerequisites (All Platforms)
 
@@ -52,7 +52,7 @@ Manifests live at [`deploy/umbrel/umbrel-app.yml`](https://github.com/FAAS19/gat
 
 - Runs as non-root `user: "1000:1000"` (`node:24-alpine`) with `${APP_DATA_DIR}/data:/data` and `app_proxy` routing to `gathergate_web_1:3080`.
 - `app_proxy` configures `PROXY_AUTH_WHITELIST` strictly for the client magic-link portal (`/c/*`), static bundle assets (`/assets/*`, `/favicon.svg`, `/site.webmanifest`), client API (`/api/client/*`), public workspace logo (`/api/public/*`), Bearer-authenticated MCP (`/mcp`), and `/healthz`. Recipients can open magic links without an Umbrel session (protected by GatherGate's 256-bit magic token and optional 6-digit email OTP) and AI agents can authenticate directly to `POST /mcp` with a scoped Bearer API key (`mcp:read`), while the operator console and REST API routes (`/api/requests*`) remain behind both Umbrel login and GatherGate authentication.
-- Before creating client checklists, set `BASE_URL` to a reachable origin so generated magic links work from client devices: use `http://<device-host>:3080` (for example `http://umbrel.local:3080`) for LAN-only access, or your public `https://...` origin behind a TLS reverse proxy (keep direct container access restricted to the trusted proxy whenever `TRUST_PROXY=true`).
+- Before creating client checklists, set `BASE_URL` to a reachable origin so generated magic links work from client devices: use `http://<device-host>:3088` (for example `http://umbrel.local:3088`) for LAN-only access, or your public `https://...` origin behind a TLS reverse proxy (keep direct container access restricted to the trusted proxy whenever `TRUST_PROXY=true`).
 - Ready for custom Umbrel Community App Stores or upstream submission to `getumbrel/umbrel-apps`.
   </TabItem>
   <TabItem label="CasaOS">

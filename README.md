@@ -12,7 +12,7 @@ Self-hosted, open-source alternative to Content Snare and FileInvite. Collect cl
 
 <p>
   <a href="https://github.com/FAAS19/gathergate/actions/workflows/ci.yml"><img src="https://github.com/FAAS19/gathergate/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/release-v1.1.1-007ec6?style=flat" alt="Release v1.1.1" /></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/release-v1.1.2-007ec6?style=flat" alt="Release v1.1.2" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-dfb317?style=flat" alt="MIT Licence" /></a>
   <a href="SECURITY.md"><img src="https://img.shields.io/badge/telemetry-zero-2ea043?style=flat" alt="Zero telemetry" /></a>
   <a href="package.json"><img src="https://img.shields.io/badge/node-%3E%3D22.13-339933?style=flat&logo=nodedotjs&logoColor=white" alt="Node >= 22.13" /></a>

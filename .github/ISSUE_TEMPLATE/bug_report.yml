@@ -33,6 +33,7 @@ body:
       label: Deployment mode
       options:
         - Docker (docker compose / docker run)
+        - npx gathergate
         - Local Node.js (npm start / npm run dev)
         - Other
     validations:
@@ -42,6 +43,6 @@ body:
     id: version
     attributes:
       label: Version / commit SHA & Node version
-      placeholder: "e.g. v1.0.0, Node 24.x"
+      placeholder: "e.g. v1.1.2, Node 24.x"
     validations:
       required: true

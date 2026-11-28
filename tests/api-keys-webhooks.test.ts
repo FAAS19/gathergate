@@ -13,6 +13,7 @@ import { openDatabase } from "../src/db/client.js";
 import { runPurgeSweep } from "../src/jobs/purge.js";
 import {
   postPinnedHttps,
+  resolveWebhookSecret,
   runOverdueSweep,
   runWebhookRetrySweep,
   WEBHOOK_RETRY_DELAYS_MS,
@@ -900,5 +901,56 @@ test("Webhooks: postPinnedHttps connects strictly to pinned IP and preserves TLS
     );
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("Webhooks: resolveWebhookSecret fails closed and dead-letters instead of sending unsigned payloads", async () => {
+  let fetchCalled = false;
+  const mockFetch = (async () => {
+    fetchCalled = true;
+    return new Response("ok", { status: 200 });
+  }) as typeof fetch;
+
+  const ctx = await bootApp({ multiTenant: true, fetchImpl: mockFetch });
+  try {
+    assert.throws(
+      () => resolveWebhookSecret({ id: "ws_1", webhook_secret: "v1:bad:iv:tag:cipher" }, ctx.config.masterKey),
+      /decrypt/i
+    );
+    assert.throws(
+      () => resolveWebhookSecret({ id: "ws_1", webhook_secret: "v1:bad:iv:tag:cipher" }, undefined),
+      /MASTER_KEY/i
+    );
+
+    const wsId = (ctx.db.prepare("SELECT id FROM workspaces LIMIT 1").get() as { id: string }).id;
+    ctx.db
+      .prepare("UPDATE workspaces SET webhook_url = ?, webhook_secret = ? WHERE id = ?")
+      .run("https://hooks.example.com/in", "v1:00:00:00:AAAA", wsId);
+
+    const createRes = await ctx.app.request("/api/requests", {
+      method: "POST",
+      headers: { cookie: ctx.cookie, "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Fail Closed Secret",
+        clientName: "Dana",
+        clientEmail: "dana@example.com",
+        sendInvite: false,
+        items: [{ label: "Email", kind: "text", required: true, validator: "email" }],
+      }),
+    });
+    assert.equal(createRes.status, 201);
+    const { portalUrl } = (await createRes.json()) as { portalUrl: string };
+    const token = portalUrl.split("/c/")[1];
+    assert.equal((await ctx.app.request(`/api/client/${token}`)).status, 200);
+    assert.equal(fetchCalled, false, "Corrupt encrypted webhook secret must never transmit unsigned payload");
+
+    const listRes = (await (
+      await ctx.app.request("/api/settings/webhook/deliveries", { headers: { cookie: ctx.cookie } })
+    ).json()) as { deliveries: Array<{ status: string; last_error: string }> };
+    assert.equal(listRes.deliveries.length, 1);
+    assert.equal(listRes.deliveries[0].status, "dead_letter");
+    assert.match(listRes.deliveries[0].last_error, /decrypt/i);
+  } finally {
+    ctx.cleanup();
   }
 });

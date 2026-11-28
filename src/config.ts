@@ -101,6 +101,19 @@ function parsePort(val: string | undefined, fallback: number): number {
   return parsed;
 }
 
+function validateBaseUrl(rawUrl: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`Invalid BASE_URL "${rawUrl}"; expected an http:// or https:// URL.`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Invalid BASE_URL "${rawUrl}"; expected http:// or https://.`);
+  }
+  return rawUrl;
+}
+
 function resolveDefaultBaseUrl(env: NodeJS.ProcessEnv, host: string, port: number): string {
   const explicit = env.BASE_URL?.trim();
   if (explicit) return explicit.replace(/\/+$/, "");
@@ -216,12 +229,20 @@ export function inspectConfig(env: NodeJS.ProcessEnv = process.env): ConfigInspe
     errors.push("SMTP_HOST is required when EMAIL_BACKEND=smtp");
   }
 
+  const rawBaseUrl = resolveDefaultBaseUrl(env, host, port ?? 3080);
+  let baseUrl = rawBaseUrl;
+  try {
+    baseUrl = validateBaseUrl(rawBaseUrl);
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : String(err));
+  }
+
   return {
     dataDir,
     dbPath,
     host,
     port,
-    baseUrl: resolveDefaultBaseUrl(env, host, port ?? 3080),
+    baseUrl,
     storageBackend,
     emailBackend,
     masterKeyState,
@@ -247,12 +268,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const port = parsePort(env.PORT, 3080);
   const host = (env.HOST || "127.0.0.1").trim();
+  const baseUrl = validateBaseUrl(resolveDefaultBaseUrl(env, host, port));
   const resolvedKey = resolveMasterKey(env, dataDir);
 
   const config: AppConfig = {
     port,
     host,
-    baseUrl: resolveDefaultBaseUrl(env, host, port),
+    baseUrl,
     dataDir,
     dbPath,
     masterKey: resolvedKey.key,

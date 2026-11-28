@@ -41,11 +41,14 @@ export function resolveWebhookSecret(
 ): string | null {
   const raw = workspace.webhook_secret?.trim();
   if (!raw) return null;
-  if (raw.startsWith("v1:") && masterKey) {
+  if (raw.startsWith("v1:")) {
+    if (!masterKey) {
+      throw new Error("Webhook secret could not be decrypted (MASTER_KEY missing).");
+    }
     try {
       return decryptField(masterKey, raw, `${workspace.id}:webhook`);
     } catch {
-      return null;
+      throw new Error("Webhook secret could not be decrypted (check MASTER_KEY).");
     }
   }
   return raw;
@@ -115,6 +118,7 @@ export function postPinnedHttps(params: {
         port: parsed.port ? Number(parsed.port) : 443,
         path: `${parsed.pathname}${parsed.search}`,
         method: "POST",
+        agent: false,
         ...(isIpLiteral ? {} : { servername: unbracketedHost }),
         headers: {
           ...params.headers,
@@ -132,7 +136,8 @@ export function postPinnedHttps(params: {
       },
       (res) => {
         const status = res.statusCode ?? 0;
-        res.resume();
+        res.on("error", () => {});
+        res.destroy();
         resolve({ ok: status >= 200 && status < 300, status });
       }
     );
@@ -491,7 +496,35 @@ export async function attemptWebhookDelivery(params: {
     };
   }
 
-  const webhookSecret = resolveWebhookSecret(workspace, params.masterKey);
+  let webhookSecret: string | null;
+  try {
+    webhookSecret = resolveWebhookSecret(workspace, params.masterKey);
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : "Webhook secret could not be decrypted.";
+    const failNowMs = params.nowMs ?? Date.now();
+    const failNowIso = new Date(failNowMs).toISOString();
+    const updated = params.store.completeWebhookDeliveryAttempt({
+      id: priorDelivery.id,
+      claimToken,
+      targetUrl: url,
+      status: "dead_letter",
+      attempts: nextAttemptNumber,
+      lastStatusCode: null,
+      lastError: errMsg,
+      nextAttemptAt: null,
+      deliveredAt: null,
+      nowIso: failNowIso,
+    });
+    if (!updated) return { dispatched: false, skipped: true, delivery: priorDelivery };
+    safeLogAudit(params.store, workspace.id, priorDelivery.request_id, "system", "webhook.failed", {
+      deliveryId: priorDelivery.id,
+      event: priorDelivery.event,
+      error: errMsg,
+      attempt: nextAttemptNumber,
+      nextStatus: updated.status,
+    });
+    return { dispatched: false, error: errMsg, delivery: updated };
+  }
   const headers = buildSignedHeaders(
     webhookSecret,
     priorDelivery.event,
@@ -668,20 +701,24 @@ export async function runWebhookRetrySweep(params: {
   let deadLetter = 0;
 
   for (const row of due) {
-    const res = await attemptWebhookDelivery({
-      store: params.store,
-      delivery: row,
-      masterKey: params.masterKey,
-      multiTenant: params.multiTenant,
-      fetchImpl: params.fetchImpl,
-      lookupImpl: params.lookupImpl,
-      nowMs: fixedNowMs ?? Date.now(),
-    });
-    if (res.skipped) continue;
-    processed += 1;
-    if (res.delivery.status === "delivered") delivered += 1;
-    else if (res.delivery.status === "retrying") retrying += 1;
-    else if (res.delivery.status === "dead_letter") deadLetter += 1;
+    try {
+      const res = await attemptWebhookDelivery({
+        store: params.store,
+        delivery: row,
+        masterKey: params.masterKey,
+        multiTenant: params.multiTenant,
+        fetchImpl: params.fetchImpl,
+        lookupImpl: params.lookupImpl,
+        nowMs: fixedNowMs ?? Date.now(),
+      });
+      if (res.skipped) continue;
+      processed += 1;
+      if (res.delivery.status === "delivered") delivered += 1;
+      else if (res.delivery.status === "retrying") retrying += 1;
+      else if (res.delivery.status === "dead_letter") deadLetter += 1;
+    } catch (err) {
+      console.error(`[GatherGate Cron] webhook retry failed for delivery ${row.id}:`, err);
+    }
   }
 
   return { processed, delivered, retrying, deadLetter };
@@ -703,50 +740,54 @@ export async function runOverdueSweep(params: {
 
   for (const req of overdue) {
     if (!req.due_at) continue;
-    const itemNowMs = fixedNowMs ?? Date.now();
-    const itemNowIso = new Date(itemNowMs).toISOString();
-    const workspace = params.store.getWorkspaceById(req.workspace_id);
-    const targetUrl = workspace?.webhook_url?.trim() || "";
-    const webhookDelivery =
-      workspace && targetUrl
-        ? {
-            targetUrl,
-            payloadJson: buildWebhookEventPayload({
-              store: params.store,
-              workspace,
-              request: req,
-              event: "request.overdue",
-              masterKey: params.masterKey,
-              baseUrl: params.baseUrl,
-              nowIso: itemNowIso,
-            }),
-            maxAttempts: MAX_WEBHOOK_ATTEMPTS,
-          }
-        : null;
+    try {
+      const itemNowMs = fixedNowMs ?? Date.now();
+      const itemNowIso = new Date(itemNowMs).toISOString();
+      const workspace = params.store.getWorkspaceById(req.workspace_id);
+      const targetUrl = workspace?.webhook_url?.trim() || "";
+      const webhookDelivery =
+        workspace && targetUrl
+          ? {
+              targetUrl,
+              payloadJson: buildWebhookEventPayload({
+                store: params.store,
+                workspace,
+                request: req,
+                event: "request.overdue",
+                masterKey: params.masterKey,
+                baseUrl: params.baseUrl,
+                nowIso: itemNowIso,
+              }),
+              maxAttempts: MAX_WEBHOOK_ATTEMPTS,
+            }
+          : null;
 
-    // Atomically verify due_at still matches, set overdue_notified_at, log audit, and queue delivery.
-    const claimed = params.store.claimOverdueNotification({
-      requestId: req.id,
-      workspaceId: req.workspace_id,
-      expectedDueAt: req.due_at,
-      nowIso: itemNowIso,
-      webhookDelivery,
-    });
-    if (!claimed.claimed) continue;
-
-    if (claimed.delivery && workspace) {
-      await attemptWebhookDelivery({
-        store: params.store,
-        delivery: claimed.delivery,
-        masterKey: params.masterKey,
-        multiTenant: params.multiTenant,
-        fetchImpl: params.fetchImpl,
-        lookupImpl: params.lookupImpl,
-        nowMs: itemNowMs,
-        workspaceOverride: workspace,
+      // Atomically verify due_at still matches, set overdue_notified_at, log audit, and queue delivery.
+      const claimed = params.store.claimOverdueNotification({
+        requestId: req.id,
+        workspaceId: req.workspace_id,
+        expectedDueAt: req.due_at,
+        nowIso: itemNowIso,
+        webhookDelivery,
       });
+      if (!claimed.claimed) continue;
+
+      if (claimed.delivery && workspace) {
+        await attemptWebhookDelivery({
+          store: params.store,
+          delivery: claimed.delivery,
+          masterKey: params.masterKey,
+          multiTenant: params.multiTenant,
+          fetchImpl: params.fetchImpl,
+          lookupImpl: params.lookupImpl,
+          nowMs: itemNowMs,
+          workspaceOverride: workspace,
+        });
+      }
+      notified += 1;
+    } catch (err) {
+      console.error(`[GatherGate Cron] overdue sweep failed for request ${req.id}:`, err);
     }
-    notified += 1;
   }
 
   return notified;
@@ -813,7 +854,15 @@ export async function dispatchTestWebhook(params: {
     workspace: { id: params.workspace.id, name: params.workspace.name },
     message: "GatherGate HMAC-SHA256 webhook verification test.",
   });
-  const webhookSecret = resolveWebhookSecret(params.workspace, params.masterKey);
+  let webhookSecret: string | null;
+  try {
+    webhookSecret = resolveWebhookSecret(params.workspace, params.masterKey);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Webhook secret could not be decrypted.",
+    };
+  }
   const headers = buildSignedHeaders(webhookSecret, "webhook.test", body);
   return postWebhookRequest({
     url,

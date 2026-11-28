@@ -35,17 +35,27 @@ export function TextField({
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const lastSaved = useRef(saved);
+  const savingRef = useRef(false);
+  const pendingSaveRef = useRef(false);
+  const latestValueRef = useRef(value);
+  latestValueRef.current = value;
   const hintId = useId();
   const hint = item.validator_hint ?? VALIDATOR_OPTIONS.find((v) => v.value === item.validator)?.hint;
 
   useEffect(() => {
     setValue(saved);
     lastSaved.current = saved;
+    latestValueRef.current = saved;
   }, [saved]);
 
   async function save() {
-    const trimmed = value.trim();
+    if (savingRef.current) {
+      pendingSaveRef.current = true;
+      return;
+    }
+    const trimmed = latestValueRef.current.trim();
     if (!trimmed || trimmed === lastSaved.current.trim()) return;
+    savingRef.current = true;
     setState("saving");
     setError(null);
     try {
@@ -53,18 +63,32 @@ export function TextField({
         method: "POST",
         body: JSON.stringify({ value: trimmed }),
       });
+      const noNewerEdit = latestValueRef.current.trim() === trimmed;
       // Never leave a sensitive identifier sitting in the field once it is stored masked.
       if (res.item?.isSensitiveMasked) {
-        setValue("");
-        lastSaved.current = "";
+        if (noNewerEdit) {
+          setValue("");
+          latestValueRef.current = "";
+          lastSaved.current = "";
+        }
       } else {
         lastSaved.current = trimmed;
       }
-      setState("saved");
+      if (noNewerEdit) {
+        setState("saved");
+      }
       await onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save. Try again.");
       setState("error");
+    } finally {
+      savingRef.current = false;
+      if (pendingSaveRef.current) {
+        pendingSaveRef.current = false;
+        if (latestValueRef.current.trim() && latestValueRef.current.trim() !== lastSaved.current.trim()) {
+          void save();
+        }
+      }
     }
   }
 

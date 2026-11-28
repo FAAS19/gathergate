@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and [Sem
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-11-29
+
+### Fixed
+- **Backend, Webhooks & Streaming Export:** Switched `GET /api/requests/:id/export.zip` to sequential pre-flight GCM tag verification plus `createDecryptStream` ZIP streaming (eliminating full-pack RAM buffering) with operator attribution in audit logs; made `resolveWebhookSecret` fail closed (dead-letter instead of sending unsigned webhooks) and isolated per-row errors in `runWebhookRetrySweep` and `runOverdueSweep`; fixed UTF-8 multi-byte `.csv`/`.txt` rejection across byte 4096 and replaced full-buffer OpenXML string conversion with zero-copy checks blocking `vbaProject.bin` macros; excluded `is_demo = 1` packs and reopened packs from `runPurgeSweep` / `markRequestPurged`; returned HTTP 404 for missing `/assets/*` files; added same-site CSRF `Origin` / `Sec-Fetch-Site` validation on cookie-authenticated API mutations; validated `BASE_URL` and clamped `CRON_INTERVAL_MINUTES` timer delay.
+- **MCP 2.0 & CLI:** Sanitised outbound email errors in MCP tool responses unconditionally (preventing unmasked email leaks in `MULTI_TENANT=false` audit trails); enforced `additionalProperties: false`, strict calendar-valid ISO 8601 `due_at`, `client_email` length bounds, `due_at ASC` overdue sorting, and HTTP `415` `Content-Type: application/json` enforcement on `POST /mcp`; guarded loopback `Origin` fallback to loopback `BASE_URL` hosts; drained unconsumed HTTP probe bodies and switched `src/index.ts` to `process.exitCode` for clean Windows teardown; checkpointed WAL migrations so `doctor` reads updated `schema_v`.
+- **Frontend & Accessibility:** Fixed `ReviewSheet` keyboard triage (`J`/`K`/`ArrowLeft`/`ArrowRight`/`A`/`R`/`?`) blocked by Radix `[role="dialog"]` selector; eliminated `/c/:token` to Operator error flash; made `/clients` rows keyboard-activatable; added `15` MB and `25` MB presets to Template Builder; guarded single-file replace deletes, `too-many-files` drop errors, Enter+Blur double-POSTs, expired/purged action guards, dark-mode delete contrast, and focus rings.
+- **Live Site, Docs & Deploy Manifests:** Added Cloudflare Workers Static Assets `Range` / `206 Partial Content` Worker for `/media/*.mp4`, root `robots.txt`, canonical `/` link, and Docs `og:image`; updated `ai-agents.mdx`, `one-click-templates.mdx`, `.env.example`, issue templates, `server.json` (`-y` `runtimeArguments`), and `deploy/{casaos,umbrel,dokploy}/` manifests.
+
 ## [1.1.1] - 2026-11-28
 
 ### Added

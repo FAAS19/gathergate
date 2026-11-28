@@ -17,5 +17,6 @@ checkNodeVersion();
 const { runCli } = await import("./cli.js");
 const exitCode = await runCli(process.argv.slice(2));
 if (exitCode !== 0) {
-  process.exit(exitCode);
+  // Let Node's event loop drain undici/fetch handles cleanly before exiting.
+  process.exitCode = exitCode;
 }
